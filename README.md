@@ -183,17 +183,31 @@ When a jurisdiction is set, artifact edge caching is disabled regardless of the
 feature flag, and downloads use `Cache-Control: no-store`. See
 [data residency](docs/data-residency.md) for guarantees and migration limitations.
 
-## Migration verification
+## Testing
 
-Start the local Worker with `bun run dev` and copy its printed URL. In another
-terminal, run the HTTP contract suite and a real Turbo upload/download round trip:
+| Layer          | Command                                                 | Needs                                                        |
+| -------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| Unit           | `bun run test`                                          | nothing: no Wrangler, credentials, or network                |
+| Running Worker | `TURBO_API=<url> TURBO_TOKEN=<token> bun run test:live` | `bun run dev` or a deployed URL                              |
+| Local stack    | `bun run test:stack`                                    | `deploy.config.ts` and `.env` secrets; runs workerd locally  |
+| Deployed stage | `bun run test:deployed`                                 | Cloudflare credentials; deploys, then destroys, a test stage |
 
-```sh
-TURBO_API=http://localhost:1337 TURBO_TOKEN=<local-token> bun run test:api
-TURBO_API=http://localhost:1337 TURBO_TOKEN=<local-token> bun run test:e2e
-```
+Every layer runs the same shared suites from `apps/server/tests/support`:
 
-Use the actual port printed by Alchemy. These checks use isolated team names and
-leave test artifacts to expire through bucket retention. The Turbo test creates
-a temporary workspace, verifies an upload, deletes local outputs and cache, then
-requires a remote cache hit and restored output. Neither check deploys resources.
+- **HTTP contract** (`contract.ts`): status, auth, validation, upload/download
+  with metadata, team isolation, metadata queries, and events.
+- **Permission matrix** (`permission-matrix.ts`): a table of principal ×
+  operation → expected status. Later milestones add principals (scoped tokens,
+  OIDC identities, roles) and rows here; every layer picks them up.
+- **Real turbo** (`turbo.ts`): a temporary workspace builds with
+  `--cache=remote:rw` (cache miss, upload), deletes outputs and `.turbo`, then
+  requires a `--cache=remote:r` cache hit that restores the output.
+
+Unit tests drive the Worker handler (`apps/server/src/api.ts`) in process with an
+in-memory bucket, and serve it on a local port for the turbo round trip. The
+stack suites (`tests/stack.test.ts`) deploy the root `alchemy.run.ts` with
+Alchemy's `Test` harness: locally by default (workerd with local R2/D1/KV, the
+`alchemy dev` topology), or to a real stage with `ALCHEMY_TEST_DEV=0`, named by
+`ALCHEMY_TEST_STAGE` (default `test_$USER`). Set `NO_DESTROY=1` to keep it.
+Deploy a real stage only when you intend to. All suites use unique team names
+and leave artifacts to expire through bucket retention.

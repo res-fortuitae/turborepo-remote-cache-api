@@ -11,6 +11,7 @@
     "apps/*/scripts/**/*.ts",
     "deploy.config.example.ts",
     "deploy.config.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
   ]
 }
