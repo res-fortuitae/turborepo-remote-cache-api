@@ -11,16 +11,17 @@
     "deploy": "bun apps/server/scripts/alchemy.ts deploy",
     "destroy": "bun apps/server/scripts/alchemy.ts destroy",
     "typecheck": "bun check && turbo run typecheck",
-    "test": "turbo run test",
+    "test": "bun test scripts && turbo run test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "bun run lint && bun run typecheck && bun run format:check",
+    "check": "bun run check:boundaries && bun run lint && bun run typecheck && bun run format:check",
     "test:api": "bash apps/server/tests/curl.sh",
     "test:e2e": "bun apps/server/tests/turbo-e2e.ts",
     "plan": "bun apps/server/scripts/alchemy.ts plan",
-    "setup": "bun apps/server/scripts/setup.ts"
+    "setup": "bun apps/server/scripts/setup.ts",
+    "check:boundaries": "bun scripts/check-boundaries.ts"
   },
   "devDependencies": {
     "@effect/platform-bun": "^4.0.6",
@@ -32,7 +33,8 @@
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
     "turbo": "2.11.10",
-    "typescript": "^7"
+    "typescript": "^7",
+    "typescript-parser": "npm:typescript@^6.0.2"
   },
   "packageManager": "bun@1.4.3"
 }

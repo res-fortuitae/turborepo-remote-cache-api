@@ -13,6 +13,10 @@ This Bun + Turborepo monorepo contains:
 - `packages/cli`: CLI scaffold.
 - `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.
 
+Domain package skeletons and the allowed dependency graph are documented in
+[ADR-0001: package boundaries and Effect layers](docs/adr/0001-package-boundaries-and-effect-layers.md).
+Run `bun run check:boundaries` to validate workspace dependencies and imports.
+
 The single root `alchemy.run.ts` composes infrastructure. Run `dev`, `deploy`, and
 `destroy` from the repository root. Environment files and local `.alchemy` state
 also live at the root. When upgrading from the previous layout, move ignored
