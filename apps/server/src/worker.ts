@@ -2,7 +2,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import { AuditLogNoop } from "@repo/audit";
+import { AuditLogLive, AuditSinkUnconfigured } from "@repo/audit";
 import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
 import { D1Client, DatabaseLive } from "@repo/db";
@@ -117,16 +117,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     // D1 and KV bindings resolve per request (see @repo/db's README).
+    // Audit rows wait in the outbox until the Pipelines stream exists (STV-459).
     const authLayer = AuthLive.pipe(
       Layer.provide(
         Layer.mergeAll(
-          DatabaseLive.pipe(Layer.provide(Layer.effect(D1Client, d1.raw))),
+          AuditLogLive.pipe(Layer.provide(AuditSinkUnconfigured)),
           SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
           authConfig,
           MailerNoop,
-          AuditLogNoop,
         ),
       ),
+      Layer.provide(DatabaseLive.pipe(Layer.provide(Layer.effect(D1Client, d1.raw)))),
     );
 
     const artifacts = artifactApi({

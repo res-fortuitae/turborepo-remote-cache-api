@@ -99,6 +99,9 @@
       "name": "@repo/audit",
       "version": "0.0.0",
       "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "@repo/db": "workspace:*",
+        "drizzle-orm": "1.0.0-rc.5",
         "effect": "^4.0.6",
       },
       "devDependencies": {
