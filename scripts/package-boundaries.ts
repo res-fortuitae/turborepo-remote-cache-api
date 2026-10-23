@@ -48,6 +48,9 @@ export const dependencies: DependencyPolicy = {
 
 const entrypoints = new Set(["@repo/server", "@repo/dashboard", "@repo/cli", "@repo/action"]);
 
+// Alchemy resolves a Worker's runtime bindings from the resource declarations it yields.
+const infraHosts = new Set(["@repo/server"]);
+
 interface Manifest {
   name: string;
   dependencies?: Record<string, string>;
@@ -105,7 +108,9 @@ export function checkBoundaries(root: string): string[] {
       (!allowed && !entrypoints.has(name)) ||
       (allowed
         ? !allowed.includes(target)
-        : target === "@repo/config" || target === "@repo/infra" || entrypoints.has(target))
+        : target === "@repo/config" ||
+          (target === "@repo/infra" && !infraHosts.has(name)) ||
+          entrypoints.has(target))
     ) {
       errors.push(`${location}: forbidden dependency ${name} -> ${target}`);
     }

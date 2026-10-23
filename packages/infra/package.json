@@ -14,6 +14,10 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
   },
+  "dependencies": {
+    "alchemy": "2.0.0-beta.83",
+    "effect": "^4.0.6"
+  },
   "devDependencies": {
     "@repo/config": "workspace:*",
     "@types/bun": "latest",

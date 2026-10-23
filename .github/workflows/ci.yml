@@ -38,4 +38,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ALCHEMY_PASSWORD: ${{ secrets.ALCHEMY_PASSWORD }}
           TURBO_TOKEN: ${{ secrets.STAGING_TURBO_TOKEN }}
+          CACHE_TOKEN_SIGNING_KEY: ${{ secrets.STAGING_CACHE_TOKEN_SIGNING_KEY }}
+          BETTER_AUTH_SECRET: ${{ secrets.STAGING_BETTER_AUTH_SECRET }}
         run: bun run plan
