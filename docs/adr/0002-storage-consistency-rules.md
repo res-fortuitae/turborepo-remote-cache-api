@@ -38,7 +38,7 @@ Each store is reached only through a service tag in its owning package (see
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Artifacts                                    | **R2** + Workers Cache API                                                                         | Values over 25 MiB and the write rate rule out KV. turborepo-remote-cache-cloudflare offered KV storage; we don't.                                                                    |
 | better-auth sessions                         | KV secondary storage **+** `storeSessionInDatabase: true`                                          | KV gives fast reads. Sensitive actions (admin changes, elevation, token issue) check the D1 session, because KV revocation can lag.                                                   |
-| better-auth rate limiting                    | **Workers Rate Limiting binding** (or a DO)                                                        | KV counters aren't atomic and would exceed the per-key write limit.                                                                                                                   |
+| better-auth rate limiting                    | **D1** (`storage: "database"`), later the Workers Rate Limiting binding or a DO                    | KV counters aren't atomic and would exceed the per-key write limit. D1 upserts are atomic.                                                                                            |
 | API key lookups                              | KV secondary storage, **no per-request writes**                                                    | Turn off per-key `rateLimit`, remaining counts and per-verify `lastRequest`. Record `lastUsed` at most once a minute in the background. Revocation can lag up to 60 s; document this. |
 | Device-auth codes                            | **D1**                                                                                             | The browser approves in one location while the CLI polls from another.                                                                                                                |
 | GitHub/OIDC JWKS cache                       | KV                                                                                                 | Read-heavy and rarely changes; refetchable from the issuer.                                                                                                                           |
@@ -72,8 +72,10 @@ table's size.
 
 **KV caches.** `@repo/oidc` owns the `KvNamespace` tag and `JwksCache`. KV read or
 write failures and corrupt values count as a miss and fall back to the issuer; an
-unknown `kid` calls `refresh`. Auth's `SecondaryStorage` reuses the same rules when
-STV-432 adds it.
+unknown `kid` calls `refresh`. Auth's `SecondaryStorage` follows the same rules,
+except that delete failures are surfaced: a sign-out must not silently leave a cached
+session behind. Each package defines its own small KV interface, because ADR 0001 has
+no shared runtime package both may import.
 
 Device-auth codes live in better-auth's D1 tables (STV-432). Sessions, API keys and
 rate limiting follow the table above when their issues configure better-auth.
