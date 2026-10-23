@@ -176,6 +176,11 @@
     "packages/credentials": {
       "name": "@repo/credentials",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/coordinator": "workspace:*",
+        "effect": "^4.0.6",
+        "jose": "^6.2.13",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
