@@ -35,8 +35,13 @@
       "name": "@repo/server",
       "dependencies": {
         "@repo/api-spec": "workspace:*",
+        "@repo/audit": "workspace:*",
+        "@repo/auth": "workspace:*",
         "@repo/coordinator": "workspace:*",
+        "@repo/db": "workspace:*",
+        "@repo/deploy-config": "workspace:*",
         "@repo/infra": "workspace:*",
+        "@repo/mailer": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
       },
@@ -93,6 +98,9 @@
     "packages/audit": {
       "name": "@repo/audit",
       "version": "0.0.0",
+      "dependencies": {
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -102,6 +110,15 @@
     "packages/auth": {
       "name": "@repo/auth",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/audit": "workspace:*",
+        "@repo/db": "workspace:*",
+        "@repo/deploy-config": "workspace:*",
+        "@repo/mailer": "workspace:*",
+        "better-auth": "^1.7.12",
+        "drizzle-orm": "1.0.0-rc.5",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -203,6 +220,9 @@
     "packages/deploy-config": {
       "name": "@repo/deploy-config",
       "version": "0.0.0",
+      "dependencies": {
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -225,6 +245,9 @@
     "packages/mailer": {
       "name": "@repo/mailer",
       "version": "0.0.0",
+      "dependencies": {
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",

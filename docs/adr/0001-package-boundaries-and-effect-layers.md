@@ -19,7 +19,9 @@ call services, translate typed failures, and compose layers.
 
 A domain package exports only service tags, named `*Live` and `*Test` layers, Schemas,
 Schema-tagged errors, and types through `src/index.ts`. Implementation helpers stay
-private. Cloudflare's required Durable Object class export is a platform adapter
+private. A package may also export a `./testing` entry point for Test layers that
+need Bun or Node adapters (`@repo/db/testing`, `@repo/auth/testing`), keeping them out
+of Worker bundles. Cloudflare's required Durable Object class export is a platform adapter
 exception owned by `@repo/coordinator`. Its client service remains runtime agnostic.
 `@repo/infra` is a separate build-time exception: it exports Alchemy resource declarations,
 not runtime domain services. `packages/config` remains shared TypeScript/lint/format

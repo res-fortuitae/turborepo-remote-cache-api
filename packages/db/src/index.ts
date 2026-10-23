@@ -1,6 +1,7 @@
 export { D1Client, Database, DatabaseError, DatabaseLive } from "./database.ts";
 
 export type {
+  DatabaseDrizzle,
   DatabaseQueries,
   DatabaseStatement,
   DatabaseBatch,

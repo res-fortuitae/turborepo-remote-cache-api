@@ -2,7 +2,12 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import { AuditLogNoop } from "@repo/audit";
+import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
+import { D1Client, DatabaseLive } from "@repo/db";
+import { AuthConfig } from "@repo/deploy-config";
+import { MailerNoop } from "@repo/mailer";
 import {
   ArtifactBucket,
   BasinSqlToken,
@@ -16,11 +21,21 @@ import {
 } from "@repo/infra";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { artifactApi } from "./api.ts";
+import { authRoute, isAuthPath } from "./auth.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
 import { resolveDeployment } from "./deployment.ts";
 import * as EdgeCache from "./edge-cache.ts";
+
+const decodeAuthEnvironment = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    AUTH_BASE_URL: Schema.optional(Schema.String),
+    GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
+  }),
+);
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
@@ -30,30 +45,47 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const config = yield* Effect.promise(() => loadDeployConfig());
     const stage = yield* Stage;
+    const domain = workerDomain(config, stage);
+
+    const env: Record<string, string> = {
+      EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
+    };
+
+    // Without a domain, Better Auth derives its URL from each request.
+    if (domain !== undefined) env.AUTH_BASE_URL = `https://${domain}`;
+
+    if (config.githubApp !== undefined) env.GITHUB_CLIENT_ID = config.githubApp.clientId;
 
     return {
       main: import.meta.url,
       assets: DashboardAssets,
-      domain: workerDomain(config, stage),
+      domain,
+      // Better Auth uses AsyncLocalStorage from node:async_hooks.
+      compatibility: { flags: ["nodejs_compat"] },
       limits: config.limits.cpuMs === undefined ? undefined : { cpuMs: config.limits.cpuMs },
-      env: { EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled) },
+      env,
     };
   }),
   Effect.gen(function* () {
     const bucket = yield* Cloudflare.R2.ReadWriteBucket(ArtifactBucket);
     // Bound now so domain packages can wrap them in their own tags (STV-512).
-    yield* Cloudflare.D1.QueryDatabase(Database);
-    yield* Cloudflare.KV.ReadWriteNamespace(CacheNamespace);
+    const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(CacheNamespace);
     yield* Coordinator;
     yield* RateLimiter;
 
-    for (const secret of [yield* SigningKey, yield* BetterAuthSecret]) {
-      yield* Cloudflare.SecretsStore.ReadSecret(secret);
-    }
+    yield* Cloudflare.SecretsStore.ReadSecret(yield* SigningKey);
+    const authSecret = yield* Cloudflare.SecretsStore.ReadSecret(yield* BetterAuthSecret);
 
-    for (const secret of [yield* GitHubOAuthSecret, yield* BasinSqlToken]) {
-      if (Option.isSome(secret)) yield* Cloudflare.SecretsStore.ReadSecret(secret.value);
-    }
+    const githubOAuthSecret = yield* GitHubOAuthSecret;
+
+    const githubSecret = Option.isSome(githubOAuthSecret)
+      ? Option.some(yield* Cloudflare.SecretsStore.ReadSecret(githubOAuthSecret.value))
+      : Option.none();
+
+    const basinSecret = yield* BasinSqlToken;
+
+    if (Option.isSome(basinSecret)) yield* Cloudflare.SecretsStore.ReadSecret(basinSecret.value);
 
     // Bound to the Worker as a secret at deploy time.
     const token = yield* Config.Redacted("TURBO_TOKEN");
@@ -62,13 +94,57 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const edgeCacheEnabled = environment.EDGE_CACHE_ENABLED === "true";
     const execution = yield* Cloudflare.Workers.WorkerExecutionContext;
 
+    // The deploy step writes these variables; a bad value is a deployment bug.
+    const authEnvironment = yield* Effect.orDie(decodeAuthEnvironment(environment));
+
+    const authConfig = Layer.effect(
+      AuthConfig,
+      Effect.gen(function* () {
+        const clientId = authEnvironment.GITHUB_CLIENT_ID;
+
+        const github =
+          Option.isSome(githubSecret) && clientId !== undefined
+            ? { clientId, clientSecret: yield* githubSecret.value }
+            : undefined;
+
+        return {
+          secret: yield* authSecret,
+          baseURL: authEnvironment.AUTH_BASE_URL,
+          trustedOrigins: [],
+          github,
+        };
+      }),
+    );
+
+    // D1 and KV bindings resolve per request (see @repo/db's README).
+    const authLayer = AuthLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          DatabaseLive.pipe(Layer.provide(Layer.effect(D1Client, d1.raw))),
+          SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
+          authConfig,
+          MailerNoop,
+          AuditLogNoop,
+        ),
+      ),
+    );
+
+    const artifacts = artifactApi({
+      bucket,
+      token,
+      edgeCacheEnabled,
+      cache: EdgeCache.createArtifactCache(edgeCacheEnabled),
+      waitUntil: execution.waitUntil,
+    });
+
+    const auth = authRoute(authLayer);
+
     return {
-      fetch: artifactApi({
-        bucket,
-        token,
-        edgeCacheEnabled,
-        cache: EdgeCache.createArtifactCache(edgeCacheEnabled),
-        waitUntil: execution.waitUntil,
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const { pathname } = new URL(request.url, "http://localhost");
+
+        return yield* isAuthPath(pathname) ? auth : artifacts;
       }),
     };
   }).pipe(
