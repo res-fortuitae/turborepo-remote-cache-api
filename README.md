@@ -8,7 +8,9 @@ This Bun + Turborepo monorepo contains:
 
 - `apps/server`: existing Cloudflare Worker and R2 resource declarations.
 - `apps/dashboard`: dashboard scaffold (application shell follows in STV-466).
-- `packages/shared`: Effect schemas and redacted bearer token types.
+- `packages/api-spec`: shared Effect HttpApi groups, transport schemas and tagged API errors
+  ([contract and consumption guide](packages/api-spec/README.md)).
+- `packages/shared`: compatibility schema exports and redacted bearer token types.
 - `packages/action`: GitHub Action scaffold.
 - `packages/cli`: CLI scaffold.
 - `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.

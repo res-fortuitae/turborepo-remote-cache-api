@@ -8,7 +8,7 @@ interface DependencyPolicy {
 
 // Values are the packages a consumer may depend on, never the reverse.
 export const dependencies: DependencyPolicy = {
-  "@repo/shared": [],
+  "@repo/shared": ["@repo/api-spec"],
   "@repo/api-spec": [],
   "@repo/deploy-config": [],
   "@repo/infra": [],
