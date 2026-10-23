@@ -15,6 +15,7 @@
         "oxlint": "1.89.0",
         "turbo": "2.11.10",
         "typescript": "^7",
+        "typescript-parser": "npm:typescript@^6.0.2",
       },
     },
     "apps/dashboard": {
@@ -56,12 +57,75 @@
         "typescript": "^7",
       },
     },
+    "packages/analytics": {
+      "name": "@repo/analytics",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/api-spec": {
+      "name": "@repo/api-spec",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/artifacts": {
+      "name": "@repo/artifacts",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/audit": {
+      "name": "@repo/audit",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/auth": {
+      "name": "@repo/auth",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/authz": {
+      "name": "@repo/authz",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
     "packages/cli": {
       "name": "@repo/cli",
       "version": "0.0.0",
       "dependencies": {
         "@repo/shared": "workspace:*",
       },
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/client-core": {
+      "name": "@repo/client-core",
+      "version": "0.0.0",
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -88,6 +152,78 @@
       "peerDependencies": {
         "oxfmt": "0.74.0",
         "oxlint": "1.89.0",
+      },
+    },
+    "packages/coordinator": {
+      "name": "@repo/coordinator",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/credentials": {
+      "name": "@repo/credentials",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/db": {
+      "name": "@repo/db",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/deploy-config": {
+      "name": "@repo/deploy-config",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/infra": {
+      "name": "@repo/infra",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/mailer": {
+      "name": "@repo/mailer",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/oidc": {
+      "name": "@repo/oidc",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/ratelimit": {
+      "name": "@repo/ratelimit",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
       },
     },
     "packages/shared": {
@@ -474,11 +610,41 @@
 
     "@repo/action": ["@repo/action@workspace:packages/action"],
 
+    "@repo/analytics": ["@repo/analytics@workspace:packages/analytics"],
+
+    "@repo/api-spec": ["@repo/api-spec@workspace:packages/api-spec"],
+
+    "@repo/artifacts": ["@repo/artifacts@workspace:packages/artifacts"],
+
+    "@repo/audit": ["@repo/audit@workspace:packages/audit"],
+
+    "@repo/auth": ["@repo/auth@workspace:packages/auth"],
+
+    "@repo/authz": ["@repo/authz@workspace:packages/authz"],
+
     "@repo/cli": ["@repo/cli@workspace:packages/cli"],
+
+    "@repo/client-core": ["@repo/client-core@workspace:packages/client-core"],
 
     "@repo/config": ["@repo/config@workspace:packages/config"],
 
+    "@repo/coordinator": ["@repo/coordinator@workspace:packages/coordinator"],
+
+    "@repo/credentials": ["@repo/credentials@workspace:packages/credentials"],
+
     "@repo/dashboard": ["@repo/dashboard@workspace:apps/dashboard"],
+
+    "@repo/db": ["@repo/db@workspace:packages/db"],
+
+    "@repo/deploy-config": ["@repo/deploy-config@workspace:packages/deploy-config"],
+
+    "@repo/infra": ["@repo/infra@workspace:packages/infra"],
+
+    "@repo/mailer": ["@repo/mailer@workspace:packages/mailer"],
+
+    "@repo/oidc": ["@repo/oidc@workspace:packages/oidc"],
+
+    "@repo/ratelimit": ["@repo/ratelimit@workspace:packages/ratelimit"],
 
     "@repo/server": ["@repo/server@workspace:apps/server"],
 
@@ -953,6 +1119,8 @@
     "type-check": ["type-check@0.4.0", "", { "dependencies": { "prelude-ls": "^1.2.1" } }, "sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew=="],
 
     "typescript": ["typescript@7.0.2", "", { "optionalDependencies": { "@typescript/typescript-aix-ppc64": "7.0.2", "@typescript/typescript-darwin-arm64": "7.0.2", "@typescript/typescript-darwin-x64": "7.0.2", "@typescript/typescript-freebsd-arm64": "7.0.2", "@typescript/typescript-freebsd-x64": "7.0.2", "@typescript/typescript-linux-arm": "7.0.2", "@typescript/typescript-linux-arm64": "7.0.2", "@typescript/typescript-linux-loong64": "7.0.2", "@typescript/typescript-linux-mips64el": "7.0.2", "@typescript/typescript-linux-ppc64": "7.0.2", "@typescript/typescript-linux-riscv64": "7.0.2", "@typescript/typescript-linux-s390x": "7.0.2", "@typescript/typescript-linux-x64": "7.0.2", "@typescript/typescript-netbsd-arm64": "7.0.2", "@typescript/typescript-netbsd-x64": "7.0.2", "@typescript/typescript-openbsd-arm64": "7.0.2", "@typescript/typescript-openbsd-x64": "7.0.2", "@typescript/typescript-sunos-x64": "7.0.2", "@typescript/typescript-win32-arm64": "7.0.2", "@typescript/typescript-win32-x64": "7.0.2" }, "bin": { "tsc": "bin/tsc" } }, "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA=="],
+
+    "typescript-parser": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "undici": ["undici@8.12.3", "", {}, "sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw=="],
 
