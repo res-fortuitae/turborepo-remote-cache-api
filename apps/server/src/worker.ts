@@ -4,10 +4,23 @@ import * as Config from "effect/Config";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { Coordinator, CoordinatorLive } from "@repo/coordinator";
+import {
+  ArtifactBucket,
+  BasinSqlToken,
+  BetterAuthSecret,
+  CacheNamespace,
+  DashboardAssets,
+  Database,
+  GitHubOAuthSecret,
+  RateLimiter,
+  SigningKey,
+} from "@repo/infra";
 import { ArtifactQueryRequest, CacheEvents } from "@repo/shared";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { ArtifactBucket } from "./bucket.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
 import { resolveDeployment } from "./deployment.ts";
@@ -103,6 +116,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     return {
       main: import.meta.url,
+      assets: DashboardAssets,
       domain: workerDomain(config, stage),
       limits: config.limits.cpuMs === undefined ? undefined : { cpuMs: config.limits.cpuMs },
       env: { EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled) },
@@ -110,6 +124,20 @@ export default class Api extends Cloudflare.Worker<Api>()(
   }),
   Effect.gen(function* () {
     const bucket = yield* Cloudflare.R2.ReadWriteBucket(ArtifactBucket);
+    // Bound now so domain packages can wrap them in their own tags (STV-512).
+    yield* Cloudflare.D1.QueryDatabase(Database);
+    yield* Cloudflare.KV.ReadWriteNamespace(CacheNamespace);
+    yield* Coordinator;
+    yield* RateLimiter;
+
+    for (const secret of [yield* SigningKey, yield* BetterAuthSecret]) {
+      yield* Cloudflare.SecretsStore.ReadSecret(secret);
+    }
+
+    for (const secret of [yield* GitHubOAuthSecret, yield* BasinSqlToken]) {
+      if (Option.isSome(secret)) yield* Cloudflare.SecretsStore.ReadSecret(secret.value);
+    }
+
     // Bound to the Worker as a secret at deploy time.
     const token = yield* Config.Redacted("TURBO_TOKEN");
     const environment = yield* Cloudflare.Workers.WorkerEnvironment;
@@ -352,5 +380,16 @@ export default class Api extends Cloudflare.Worker<Api>()(
         }),
       ),
     };
-  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Cloudflare.R2.ReadWriteBucketBinding,
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.KV.ReadWriteNamespaceBinding,
+        Cloudflare.SecretsStore.ReadSecretBinding,
+        Cloudflare.Workers.RateLimitBinding,
+        CoordinatorLive,
+      ),
+    ),
+  ),
 ) {}

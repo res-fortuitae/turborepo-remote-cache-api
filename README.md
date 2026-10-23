@@ -57,7 +57,7 @@ files there are not automatically loaded or executed by the current API.
 ```sh
 bun install
 bun run setup          # asks for domain, jurisdiction, edge cache, and stage names
-cp .env.example .env   # set TURBO_TOKEN to a long random string (e.g. `openssl rand -hex 32`)
+cp .env.example .env   # set TURBO_TOKEN and each secret to a long random string (e.g. `openssl rand -hex 32`)
 bun run deploy         # first run prompts for Cloudflare login and bootstraps the state store
 ```
 
@@ -106,7 +106,8 @@ Upstream sync is disabled by default. In your fork:
 4. Commit your non-secret `deploy.config.ts`. Create a protected GitHub environment
    named `staging`, with required reviewers, and configure `CLOUDFLARE_API_TOKEN`,
    `CLOUDFLARE_ACCOUNT_ID`, `ALCHEMY_PASSWORD` (if required by your state setup), and
-   `STAGING_TURBO_TOKEN`. Use staging credentials and approve only trusted upstream
+   `STAGING_TURBO_TOKEN`, `STAGING_CACHE_TOKEN_SIGNING_KEY`, and
+   `STAGING_BETTER_AUTH_SECRET`. Use staging credentials and approve only trusted upstream
    code: Alchemy evaluates repository TypeScript while planning. Provision the
    staging state store once through an explicitly authorized staging deployment;
    a read-only plan cannot bootstrap an absent state store.
@@ -147,9 +148,27 @@ turbo run build
 
 Artifacts are stored in R2 under `<teamId|slug|default>/<hash>`, and the `x-artifact-*` headers are kept as R2 custom metadata.
 
+## Cloudflare resources
+
+`@repo/infra` declares every resource; the root `alchemy.run.ts` composes them and
+the API Worker binds them:
+
+| Resource               | Binding                                                                | Purpose                                                             |
+| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| R2 bucket `Artifacts`  | `Artifacts`                                                            | Cache artifacts, with lifecycle rules                               |
+| D1 database `Database` | `Database`                                                             | System of record                                                    |
+| KV namespace `Cache`   | `Cache`                                                                | Rebuildable caches only (auth secondary storage, JWKS, drill-downs) |
+| Durable Object         | `Coordinator`                                                          | Revocation epochs and other strongly consistent primitives          |
+| Secrets Store secrets  | `SigningKey`, `BetterAuthSecret`, `GitHubOAuthSecret`, `BasinSqlToken` | Stored as `<stage>_<ENV_NAME>` in the account store                 |
+| Rate Limiting          | `RATE_LIMITER`                                                         | Request ceilings (`@repo/ratelimit`)                                |
+| Static assets          | `ASSETS`                                                               | Dashboard build in `apps/dashboard/public`                          |
+
+The GitHub OAuth and Basin secrets are created only when their variables are set.
+Cloudflare allows one Secrets Store per account; Alchemy adopts it and never deletes it.
+
 ## Retention
 
-The R2 bucket has lifecycle rules (`apps/server/src/bucket.ts`): artifacts are deleted
+The R2 bucket has lifecycle rules (`packages/infra/src/index.ts`): artifacts are deleted
 `limits.artifactRetentionDays` (30 by default) days after upload, and incomplete
 multipart uploads are aborted after a day. Cloudflare applies these natively, so
 no cron Worker is needed. Choose `jurisdiction` before creating the bucket;

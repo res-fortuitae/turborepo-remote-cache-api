@@ -27,8 +27,12 @@ tooling, never deployment or domain configuration. Vendored rules remain untouch
 
 The root `alchemy.run.ts` remains the single infrastructure composition root. Environment
 files and Alchemy state remain at the root; dev, deploy, and destroy use root scripts.
-Resource declarations can move to `@repo/infra` under STV-428 without creating another
-stack or moving state. Only the root composition imports infra; apps receive its bindings.
+Resource declarations live in `@repo/infra` (STV-428) without another stack or moved
+state. The root composition provides `InfraConfig` and imports infra. The Worker host
+(`apps/server`) is the one app that may import it too: Alchemy resolves a Worker's
+runtime bindings from the resource declarations it yields, so the Worker yields them
+and wraps the bindings in the consuming packages' tags. Other apps and all domain
+packages never import infra.
 
 ## Package map and allowed dependencies
 
@@ -37,25 +41,25 @@ right. These are permission ceilings, not dependencies to preinstall. All runtim
 packages may use external libraries explicitly declared in their manifests.
 `@repo/config` is allowed as a development dependency for tooling only.
 
-| Consumer                       | Owns / provides                                                                  | Allowed workspace providers                                   | Follow-up issues                       |
-| ------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------- |
-| `@repo/api-spec`               | HttpApi groups, transport Schemas                                                | none                                                          | STV-427                                |
-| `@repo/deploy-config`          | deployment Schema, AuthConfig, InstanceCeilings                                  | none                                                          | STV-498, STV-494                       |
-| `@repo/infra`                  | Alchemy resource declarations                                                    | none                                                          | STV-428, STV-500, STV-502              |
-| `@repo/db`                     | Database, repositories, migrations; D1Client tag                                 | api-spec, deploy-config                                       | STV-429                                |
-| `@repo/mailer`                 | Mailer; Email binding tag                                                        | deploy-config                                                 | STV-495                                |
-| `@repo/ratelimit`              | RateLimiter; Rate Limiting binding tag                                           | deploy-config                                                 | STV-446                                |
-| `@repo/coordinator`            | Coordinator client, DO class; namespace tag                                      | api-spec, deploy-config                                       | STV-483, STV-504                       |
-| `@repo/audit`                  | AuditLog, outbox, reconciler, hash chain; AuditSink tag                          | api-spec, db                                                  | STV-457–459, STV-482                   |
-| `@repo/auth`                   | Auth, identity and role definitions                                              | api-spec, deploy-config, db, mailer, audit                    | STV-432 and sub-issues                 |
-| `@repo/authz`                  | Authorization: single policy decision point                                      | api-spec, db, auth                                            | STV-439–441                            |
-| `@repo/credentials`            | CacheTokenSigner/Verifier, CredentialResolver, DPoP, KeyStore                    | api-spec, deploy-config, db, auth, coordinator                | STV-442, STV-443, STV-445, STV-486     |
-| `@repo/oidc`                   | OidcVerifier, issuer registry, TrustPolicyMatcher, JwksCache                     | api-spec, deploy-config, db                                   | STV-447–449, STV-451, STV-487, STV-491 |
-| `@repo/artifacts`              | ArtifactStore, EdgeCache, quotas, generation; R2Bucket and ExecutionContext tags | api-spec, deploy-config, db, authz, credentials, coordinator  | STV-476, STV-492, STV-504, STV-505     |
-| `@repo/analytics`              | AnalyticsEmitter/Query, rollups; stream and BasinSqlClient tags                  | api-spec, db                                                  | STV-462–465                            |
-| `@repo/client-core`            | exchange client, DPoP signer; HttpClient requirement                             | api-spec                                                      | STV-484                                |
-| `@repo/shared`                 | existing artifact Schemas and TurboToken compatibility types                     | none                                                          | migrate contracts in STV-427           |
-| server, dashboard, cli, action | routing, presentation, layer composition                                         | domain packages and legacy shared; never another app or infra | respective application issues          |
+| Consumer                       | Owns / provides                                                                  | Allowed workspace providers                                                 | Follow-up issues                       |
+| ------------------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------- |
+| `@repo/api-spec`               | HttpApi groups, transport Schemas                                                | none                                                                        | STV-427                                |
+| `@repo/deploy-config`          | deployment Schema, AuthConfig, InstanceCeilings                                  | none                                                                        | STV-498, STV-494                       |
+| `@repo/infra`                  | Alchemy resource declarations                                                    | none                                                                        | STV-428, STV-500, STV-502              |
+| `@repo/db`                     | Database, repositories, migrations; D1Client tag                                 | api-spec, deploy-config                                                     | STV-429                                |
+| `@repo/mailer`                 | Mailer; Email binding tag                                                        | deploy-config                                                               | STV-495                                |
+| `@repo/ratelimit`              | RateLimiter; Rate Limiting binding tag                                           | deploy-config                                                               | STV-446                                |
+| `@repo/coordinator`            | Coordinator client, DO class; namespace tag                                      | api-spec, deploy-config                                                     | STV-483, STV-504                       |
+| `@repo/audit`                  | AuditLog, outbox, reconciler, hash chain; AuditSink tag                          | api-spec, db                                                                | STV-457–459, STV-482                   |
+| `@repo/auth`                   | Auth, identity and role definitions                                              | api-spec, deploy-config, db, mailer, audit                                  | STV-432 and sub-issues                 |
+| `@repo/authz`                  | Authorization: single policy decision point                                      | api-spec, db, auth                                                          | STV-439–441                            |
+| `@repo/credentials`            | CacheTokenSigner/Verifier, CredentialResolver, DPoP, KeyStore                    | api-spec, deploy-config, db, auth, coordinator                              | STV-442, STV-443, STV-445, STV-486     |
+| `@repo/oidc`                   | OidcVerifier, issuer registry, TrustPolicyMatcher, JwksCache                     | api-spec, deploy-config, db                                                 | STV-447–449, STV-451, STV-487, STV-491 |
+| `@repo/artifacts`              | ArtifactStore, EdgeCache, quotas, generation; R2Bucket and ExecutionContext tags | api-spec, deploy-config, db, authz, credentials, coordinator                | STV-476, STV-492, STV-504, STV-505     |
+| `@repo/analytics`              | AnalyticsEmitter/Query, rollups; stream and BasinSqlClient tags                  | api-spec, db                                                                | STV-462–465                            |
+| `@repo/client-core`            | exchange client, DPoP signer; HttpClient requirement                             | api-spec                                                                    | STV-484                                |
+| `@repo/shared`                 | existing artifact Schemas and TurboToken compatibility types                     | none                                                                        | migrate contracts in STV-427           |
+| server, dashboard, cli, action | routing, presentation, layer composition                                         | domain packages and legacy shared; never another app; infra only for server | respective application issues          |
 
 This graph refines the ticket's broad foundation → persistence → identity → domains →
 apps ordering. In particular **auth depends on audit, audit depends on db, and audit

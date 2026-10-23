@@ -8,6 +8,7 @@
         "@effect/platform-bun": "^4.0.6",
         "@effect/platform-node": "^4.0.6",
         "@repo/config": "workspace:*",
+        "@repo/infra": "workspace:*",
         "@types/bun": "latest",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
@@ -33,6 +34,8 @@
     "apps/server": {
       "name": "@repo/server",
       "dependencies": {
+        "@repo/coordinator": "workspace:*",
+        "@repo/infra": "workspace:*",
         "@repo/shared": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
@@ -157,6 +160,10 @@
     "packages/coordinator": {
       "name": "@repo/coordinator",
       "version": "0.0.0",
+      "dependencies": {
+        "alchemy": "2.0.0-beta.83",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -193,6 +200,10 @@
     "packages/infra": {
       "name": "@repo/infra",
       "version": "0.0.0",
+      "dependencies": {
+        "alchemy": "2.0.0-beta.83",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
