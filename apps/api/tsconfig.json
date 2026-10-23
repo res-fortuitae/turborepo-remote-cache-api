@@ -1,5 +1,5 @@
 {
-  "include": ["src/**/*.ts", "alchemy.run.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "alchemy.run.ts", "deploy.config.ts"],
   "compilerOptions": {
     // Environment setup & latest features
     "lib": ["ESNext"],
