@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "bun test tests",
     "typecheck": "bun check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
