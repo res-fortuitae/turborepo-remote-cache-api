@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "bun check",
-    "test": "bun test --pass-with-no-tests",
+    "test": "bun test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",

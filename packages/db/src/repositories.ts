@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { Database } from "./database.ts";
-import { project, projectGrant, trustPolicy } from "./schema/index.ts";
+import { oidcJti, project, projectGrant, trustPolicy } from "./schema/index.ts";
 
 export type Project = typeof project.$inferSelect;
 
@@ -115,3 +115,41 @@ export class TrustPolicyRepo extends Context.Service<
 >()("@repo/db/TrustPolicyRepo") {}
 
 export const TrustPolicyRepoLive = Layer.effect(TrustPolicyRepo, trustPolicyRepo);
+
+const replayGuard = Effect.gen(function* () {
+  const database = yield* Database;
+
+  return {
+    /**
+     * Records a token id once. Returns false if it was already used and has
+     * not expired; one statement, so concurrent claims cannot both win.
+     */
+    claim: (issuer: string, jti: string, expiresAt: number, now: number) =>
+      database
+        .query("ReplayGuard.claim", (db) =>
+          db
+            .insert(oidcJti)
+            .values({ issuer, jti, expiresAt })
+            .onConflictDoUpdate({
+              target: [oidcJti.issuer, oidcJti.jti],
+              set: { expiresAt: sql`excluded.expires_at` },
+              setWhere: lte(oidcJti.expiresAt, now),
+            })
+            .returning({ jti: oidcJti.jti }),
+        )
+        .pipe(Effect.map((rows) => rows.length > 0)),
+    /** Deletes ids whose token can no longer be presented. */
+    purgeExpired: (now: number) =>
+      database
+        .query("ReplayGuard.purgeExpired", (db) =>
+          db.delete(oidcJti).where(lte(oidcJti.expiresAt, now)).returning({ jti: oidcJti.jti }),
+        )
+        .pipe(Effect.map((rows) => rows.length)),
+  };
+});
+
+export class ReplayGuard extends Context.Service<ReplayGuard, Effect.Success<typeof replayGuard>>()(
+  "@repo/db/ReplayGuard",
+) {}
+
+export const ReplayGuardLive = Layer.effect(ReplayGuard, replayGuard);

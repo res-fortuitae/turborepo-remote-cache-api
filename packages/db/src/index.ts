@@ -14,6 +14,8 @@ export {
   GrantRepoLive,
   TrustPolicyRepo,
   TrustPolicyRepoLive,
+  ReplayGuard,
+  ReplayGuardLive,
 } from "./repositories.ts";
 
 export type {

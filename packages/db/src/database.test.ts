@@ -6,6 +6,8 @@ import {
   GrantRepoLive,
   ProjectRepo,
   ProjectRepoLive,
+  ReplayGuard,
+  ReplayGuardLive,
   TrustPolicyRepo,
   TrustPolicyRepoLive,
 } from "./repositories.ts";
@@ -18,14 +20,21 @@ describe.each([
   ["SQLite", DatabaseTest],
   ["local D1", DatabaseLocalTest],
 ] as const)("%s", (_name, databaseLayer) => {
-  const repos = Layer.mergeAll(ProjectRepoLive, GrantRepoLive, TrustPolicyRepoLive).pipe(
-    Layer.provideMerge(databaseLayer),
-  );
+  const repos = Layer.mergeAll(
+    ProjectRepoLive,
+    GrantRepoLive,
+    TrustPolicyRepoLive,
+    ReplayGuardLive,
+  ).pipe(Layer.provideMerge(databaseLayer));
 
   const project = { id: "p1", orgId: "org1", slug: "cache", name: "Cache", createdAt: 1 };
 
   const run = <A, E>(
-    program: Effect.Effect<A, E, Database | ProjectRepo | GrantRepo | TrustPolicyRepo>,
+    program: Effect.Effect<
+      A,
+      E,
+      Database | ProjectRepo | GrantRepo | TrustPolicyRepo | ReplayGuard
+    >,
     // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- bun:test executes Effects at this test boundary.
   ) => Effect.runPromise(program.pipe(Effect.provide(repos)));
 
@@ -127,6 +136,32 @@ describe.each([
             .pipe(Effect.result);
 
           expect(Result.isFailure(sync)).toBe(true);
+        }),
+      );
+    });
+
+    test("replay guard accepts a token id once until it expires", async () => {
+      await run(
+        Effect.gen(function* () {
+          const guard = yield* ReplayGuard;
+          expect(yield* guard.claim("https://issuer", "j1", 100, 10)).toBe(true);
+          expect(yield* guard.claim("https://issuer", "j1", 100, 50)).toBe(false);
+          expect(yield* guard.claim("https://other", "j1", 100, 50)).toBe(true);
+
+          const [first, second] = yield* Effect.all(
+            [
+              guard.claim("https://issuer", "j2", 100, 10),
+              guard.claim("https://issuer", "j2", 100, 10),
+            ],
+            { concurrency: "unbounded" },
+          );
+
+          expect([first, second].filter(Boolean)).toHaveLength(1);
+          // An expired id can no longer be replayed, so it may be reclaimed.
+          expect(yield* guard.claim("https://issuer", "j1", 200, 100)).toBe(true);
+          expect(yield* guard.claim("https://issuer", "j1", 200, 150)).toBe(false);
+          expect(yield* guard.purgeExpired(100)).toBe(2);
+          expect(yield* guard.claim("https://issuer", "j1", 300, 150)).toBe(false);
         }),
       );
     });
