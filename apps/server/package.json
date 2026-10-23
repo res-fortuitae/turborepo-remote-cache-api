@@ -1,0 +1,24 @@
+{
+  "name": "@repo/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "bun check",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@repo/shared": "workspace:*",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "^4.0.6"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  }
+}

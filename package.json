@@ -7,22 +7,30 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun run --cwd apps/api dev",
-    "deploy": "bun run --cwd apps/api deploy",
-    "destroy": "bun run --cwd apps/api destroy",
-    "typecheck": "turbo run typecheck",
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "typecheck": "bun check && turbo run typecheck",
     "test": "turbo run test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "bun run lint && bun run typecheck && bun run format:check"
+    "check": "bun run lint && bun run typecheck && bun run format:check",
+    "test:api": "bash apps/server/tests/curl.sh",
+    "test:e2e": "bun apps/server/tests/turbo-e2e.ts"
   },
   "devDependencies": {
+    "@effect/platform-bun": "^4.0.6",
+    "@effect/platform-node": "^4.0.6",
     "@repo/config": "workspace:*",
+    "@types/bun": "latest",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "^4.0.6",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
-    "turbo": "2.11.10"
+    "turbo": "2.11.10",
+    "typescript": "^7"
   },
   "packageManager": "bun@1.4.3"
 }

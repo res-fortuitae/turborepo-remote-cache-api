@@ -1,11 +1,12 @@
 {
-  "name": "@repo/api",
+  "name": "@repo/cli",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "alchemy dev",
-    "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
     "typecheck": "bun check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
@@ -13,16 +14,11 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@effect/platform-bun": "^4.0.6",
-    "@effect/platform-node": "^4.0.6",
-    "alchemy": "2.0.0-beta.83",
-    "effect": "^4.0.6"
+    "@repo/shared": "workspace:*"
   },
   "devDependencies": {
     "@repo/config": "workspace:*",
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
+    "@types/bun": "latest",
     "typescript": "^7"
   }
 }

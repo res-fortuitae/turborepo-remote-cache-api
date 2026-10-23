@@ -19,7 +19,7 @@ const test = "**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}";
 const reactProjects = ["apps/web", "apps/mobile", "packages/client-core"];
 
 const effectProjects = [
-  "apps/api",
+  "apps/server",
   "apps/worker",
   "packages/acatalog",
   "packages/notifications",
