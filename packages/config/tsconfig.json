@@ -7,8 +7,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node"],
+    "noUncheckedIndexedAccess": false
   },
   "include": ["*.ts", "*.mts", "vendor/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["vendor/**/*.test.ts", "vendor/t3code/test/**"]
+  "exclude": ["vendor/**/*.test.ts", "vendor/t3code/test/**"],
+  "extends": "./tsconfig.base.json"
 }

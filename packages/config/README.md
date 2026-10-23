@@ -17,7 +17,7 @@ export { default } from "@repo/config/oxfmt";
 ```
 
 All rule names, options, and warning severities match Listener. Effect checks also
-apply to `apps/api`. React, accessibility, TanStack, Jest, and Playwright scopes
+apply to `apps/server`. React, accessibility, TanStack, Jest, and Playwright scopes
 are retained for future consumers; add project roots in `frameworks.ts` as needed.
 The configuration integration tests exercise currently present projects.
 

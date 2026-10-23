@@ -8,7 +8,8 @@
     "./oxfmt": "./oxfmt.ts",
     "./plugins/t3code": "./vendor/t3code/index.ts",
     "./plugins/anti-slop": "./vendor/anti-slop/index.ts",
-    "./plugins/anti-slop-effect": "./vendor/anti-slop/effect/index.ts"
+    "./plugins/anti-slop-effect": "./vendor/anti-slop/effect/index.ts",
+    "./tsconfig.base.json": "./tsconfig.base.json"
   },
   "scripts": {
     "lint": "oxlint .",
@@ -16,7 +17,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "node --test vendor/anti-slop/rules/*.test.ts vendor/anti-slop/effect/rules/*.test.ts && vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun check"
   },
   "dependencies": {
     "@oxlint/plugins": "1.89.0",

@@ -1,6 +1,6 @@
 # Data residency
 
-Choose the jurisdiction in `apps/api/deploy.config.ts` **before the first production
+Choose the jurisdiction in `apps/server/deploy.config.ts` **before the first production
 deploy**. This is a stack setting, bundled into both resource declarations and the
 Worker; it is not a request parameter or runtime environment override.
 
@@ -43,7 +43,7 @@ residency migration.
 ## Integration contract for the planned platform
 
 This baseline has no D1, Coordinator, KV, Better Auth, Basin, audit history, backup
-export, or capabilities page. The shared policy in `apps/api/src/deployment.ts`
+export, or capabilities page. The shared policy in `apps/server/src/deployment.ts`
 prepares those integrations; flags express permission, not service availability.
 The following must be wired as those services are implemented (STV-428, STV-500,
 and STV-496) before claiming platform-wide residency:

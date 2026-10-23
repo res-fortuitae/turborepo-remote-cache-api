@@ -1,9 +1,9 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import { ArtifactBucket } from "./src/bucket.ts";
-import { residency } from "./src/deployment.ts";
-import Worker from "./src/worker.ts";
+import { ArtifactBucket } from "./apps/server/src/bucket.ts";
+import { residency } from "./apps/server/src/deployment.ts";
+import Worker from "./apps/server/src/worker.ts";
 
 export default Alchemy.Stack(
   "TurborepoRemoteCache",

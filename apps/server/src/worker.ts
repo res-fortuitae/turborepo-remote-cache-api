@@ -3,7 +3,7 @@ import * as Config from "effect/Config";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
+import { ArtifactQueryRequest, CacheEvents } from "@repo/shared";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ArtifactBucket } from "./bucket.ts";
@@ -31,20 +31,6 @@ const badRequest = (message: string) => new ApiError({ status: 400, code: "bad_r
 
 const HASH = /^[a-fA-F0-9]+$/;
 const ROUTE = /^\/v8\/artifacts(?:\/([^/]+))?\/?$/;
-
-const ArtifactQueryRequest = Schema.Struct({
-  hashes: Schema.Array(Schema.String),
-});
-
-const CacheEvent = Schema.Struct({
-  sessionId: Schema.String,
-  source: Schema.Literals(["LOCAL", "REMOTE"]),
-  event: Schema.Literals(["HIT", "MISS"]),
-  hash: Schema.String,
-  duration: Schema.optional(Schema.Number),
-});
-
-const CacheEvents = Schema.Array(CacheEvent);
 
 /** Artifact metadata persisted as R2 custom metadata. */
 interface ArtifactMetadata {

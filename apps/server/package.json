@@ -1,12 +1,9 @@
 {
-  "name": "@repo/api",
+  "name": "@repo/server",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "bun test tests",
-    "dev": "alchemy dev",
-    "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
     "typecheck": "bun check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
@@ -14,8 +11,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@effect/platform-bun": "^4.0.6",
-    "@effect/platform-node": "^4.0.6",
+    "@repo/shared": "workspace:*",
     "alchemy": "2.0.0-beta.83",
     "effect": "^4.0.6"
   },
