@@ -1,0 +1,175 @@
+import * as Schema from "effect/Schema";
+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import {
+  CacheScope,
+  CiProvider,
+  Id,
+  PaginationQuery,
+  PositiveInteger,
+  ProjectRole,
+  Timestamp,
+} from "./common.ts";
+import { ApiErrors } from "./http-errors.ts";
+import { ApiAuthorization } from "./authorization.ts";
+
+export const CreateProjectRequest = Schema.Struct({
+  slug: Schema.NonEmptyString,
+  name: Schema.NonEmptyString,
+  description: Schema.optional(Schema.String),
+  retentionDays: Schema.optional(PositiveInteger),
+  maxArtifactBytes: Schema.optional(PositiveInteger),
+});
+
+export const UpdateProjectRequest = Schema.Struct({
+  slug: Schema.optional(Schema.NonEmptyString),
+  name: Schema.optional(Schema.NonEmptyString),
+  description: Schema.optional(Schema.String),
+  retentionDays: Schema.optional(PositiveInteger),
+  maxArtifactBytes: Schema.optional(PositiveInteger),
+  archived: Schema.optional(Schema.Boolean),
+});
+
+export const Project = Schema.Struct({
+  id: Id,
+  orgId: Id,
+  slug: Schema.NonEmptyString,
+  name: Schema.NonEmptyString,
+  description: Schema.NullOr(Schema.String),
+  retentionDays: PositiveInteger,
+  maxArtifactBytes: PositiveInteger,
+  createdAt: Timestamp,
+  archivedAt: Schema.NullOr(Timestamp),
+});
+
+export const ProjectList = Schema.Struct({
+  items: Schema.Array(Project),
+  nextCursor: Schema.NullOr(Schema.String),
+});
+
+export const GrantRequest = Schema.Struct({
+  principalType: Schema.Literals(["user", "team"]),
+  principalId: Id,
+  role: ProjectRole,
+});
+
+export const ProjectGrant = Schema.Struct({
+  ...GrantRequest.fields,
+  projectId: Id,
+  grantedBy: Id,
+  createdAt: Timestamp,
+});
+
+export const ProjectGrants = Schema.Array(ProjectGrant);
+
+export const TrustPolicyBody = Schema.Struct({
+  issuer: Schema.NonEmptyString,
+  claims: Schema.Record(Schema.String, Schema.Array(Schema.String)),
+  label: Schema.optional(Schema.String),
+  scope: CacheScope,
+  ttlSeconds: PositiveInteger,
+  refPatterns: Schema.optional(Schema.Array(Schema.String)),
+  requireBoundTokens: Schema.optional(Schema.Boolean),
+});
+
+export const TrustPolicyRequest = Schema.Struct({
+  provider: CiProvider,
+  enabled: Schema.Boolean,
+  ...TrustPolicyBody.fields,
+});
+
+export const TrustPolicy = Schema.Struct({
+  ...TrustPolicyRequest.fields,
+  id: Id,
+  projectId: Id,
+  createdBy: Id,
+  createdAt: Timestamp,
+});
+
+export const TrustPolicyList = Schema.Array(TrustPolicy);
+export const OrgParams = Schema.Struct({ id: Id });
+export const ProjectParams = Schema.Struct({ id: Id });
+
+export const GrantParams = Schema.Struct({
+  id: Id,
+  principalType: GrantRequest.fields.principalType,
+  principalId: Id,
+});
+
+export const TrustPolicyParams = Schema.Struct({ id: Id, policyId: Id });
+
+export const AdminApi = HttpApiGroup.make("admin")
+  .add(
+    HttpApiEndpoint.get("listProjects", "/orgs/:id/projects", {
+      params: OrgParams,
+      query: PaginationQuery,
+      success: ProjectList,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.post("createProject", "/orgs/:id/projects", {
+      params: OrgParams,
+      payload: CreateProjectRequest,
+      success: Project.pipe(HttpApiSchema.status(201)),
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.get("getProject", "/projects/:id", {
+      params: ProjectParams,
+      success: Project,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.patch("updateProject", "/projects/:id", {
+      params: ProjectParams,
+      payload: UpdateProjectRequest,
+      success: Project,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.delete("deleteProject", "/projects/:id", {
+      params: ProjectParams,
+      success: HttpApiSchema.Accepted,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.get("listGrants", "/projects/:id/grants", {
+      params: ProjectParams,
+      success: ProjectGrants,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.post("addGrant", "/projects/:id/grants", {
+      params: ProjectParams,
+      payload: GrantRequest,
+      success: ProjectGrant.pipe(HttpApiSchema.status(201)),
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.delete("removeGrant", "/projects/:id/grants/:principalType/:principalId", {
+      params: GrantParams,
+      success: HttpApiSchema.NoContent,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.get("listTrustPolicies", "/projects/:id/trust-policies", {
+      params: ProjectParams,
+      success: TrustPolicyList,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.post("createTrustPolicy", "/projects/:id/trust-policies", {
+      params: ProjectParams,
+      payload: TrustPolicyRequest,
+      success: TrustPolicy.pipe(HttpApiSchema.status(201)),
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.put("updateTrustPolicy", "/projects/:id/trust-policies/:policyId", {
+      params: TrustPolicyParams,
+      payload: TrustPolicyRequest,
+      success: TrustPolicy,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.delete("deleteTrustPolicy", "/projects/:id/trust-policies/:policyId", {
+      params: TrustPolicyParams,
+      success: HttpApiSchema.NoContent,
+      error: ApiErrors,
+    }),
+  )
+  .middleware(ApiAuthorization);
+
+export type Project = typeof Project.Type;
+
+export type ProjectGrant = typeof ProjectGrant.Type;
+
+export type TrustPolicy = typeof TrustPolicy.Type;

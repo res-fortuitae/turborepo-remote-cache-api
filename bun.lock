@@ -34,9 +34,9 @@
     "apps/server": {
       "name": "@repo/server",
       "dependencies": {
+        "@repo/api-spec": "workspace:*",
         "@repo/coordinator": "workspace:*",
         "@repo/infra": "workspace:*",
-        "@repo/shared": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
       },
@@ -72,6 +72,9 @@
     "packages/api-spec": {
       "name": "@repo/api-spec",
       "version": "0.0.0",
+      "dependencies": {
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -250,6 +253,7 @@
       "name": "@repo/shared",
       "version": "0.0.0",
       "dependencies": {
+        "@repo/api-spec": "workspace:*",
         "effect": "^4.0.6",
       },
       "devDependencies": {

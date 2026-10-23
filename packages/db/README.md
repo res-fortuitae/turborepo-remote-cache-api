@@ -61,8 +61,8 @@ bun run db:check
 
 Generate and commit SQL before deployment. `db:check` validates migration history,
 rejects SQL outside the conservative additive allowlist (new tables/indexes and
-added columns), and generates into a temporary copy to catch schema drift. CI runs
-it. Review added columns for safe defaults and compatibility with existing rows.
+added columns), and generates into a temporary copy to catch schema drift. The root
+`bun run check` command runs it. Review added columns for safe defaults and compatibility with existing rows.
 Never edit an applied migration; add another migration. STV-501 owns the broader
 upgrade/rollback workflow and deployed schema guard.
 

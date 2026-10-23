@@ -58,7 +58,7 @@ packages may use external libraries explicitly declared in their manifests.
 | `@repo/artifacts`              | ArtifactStore, EdgeCache, quotas, generation; R2Bucket and ExecutionContext tags | api-spec, deploy-config, db, authz, credentials, coordinator                | STV-476, STV-492, STV-504, STV-505     |
 | `@repo/analytics`              | AnalyticsEmitter/Query, rollups; stream and BasinSqlClient tags                  | api-spec, db                                                                | STV-462–465                            |
 | `@repo/client-core`            | exchange client, DPoP signer; HttpClient requirement                             | api-spec                                                                    | STV-484                                |
-| `@repo/shared`                 | existing artifact Schemas and TurboToken compatibility types                     | none                                                                        | migrate contracts in STV-427           |
+| `@repo/shared`                 | artifact Schema compatibility re-exports and TurboToken types                    | api-spec                                                                    | migrate contracts in STV-427           |
 | server, dashboard, cli, action | routing, presentation, layer composition                                         | domain packages and legacy shared; never another app; infra only for server | respective application issues          |
 
 This graph refines the ticket's broad foundation → persistence → identity → domains →
@@ -139,6 +139,7 @@ ownership. A manifest cycle fails even if its import is type-only or development
 This change adds skeletons and policy rather than migrating current behavior. Existing
 Worker business logic in bucket/edge-cache/HTTP handling remains operational until
 its owning domain issues extract it. Existing deployment helpers stay in server until
-STV-494/STV-498 move their contracts to deploy-config; existing shared contracts move
-under STV-427. No new domain package may import those app implementations. Keep
-runtime behavior and infrastructure identity stable during each extraction.
+STV-494/STV-498 move their contracts to deploy-config. Shared artifact contracts now
+live in api-spec (STV-427); shared retains compatibility re-exports and may depend
+only on api-spec. No new domain package may import those app implementations.
+Keep runtime behavior and infrastructure identity stable during each extraction.
