@@ -26,8 +26,7 @@ class ApiError extends Data.TaggedError("ApiError")<{
   readonly message: string;
 }> {}
 
-const badRequest = (message: string) =>
-  new ApiError({ status: 400, code: "bad_request", message });
+const badRequest = (message: string) => new ApiError({ status: 400, code: "bad_request", message });
 
 const HASH = /^[a-fA-F0-9]+$/;
 const ROUTE = /^\/v8\/artifacts(?:\/([^/]+))?\/?$/;
@@ -163,9 +162,7 @@ export default Cloudflare.Worker(
         }
         // Serve one branch to the client and store the other at the edge in the background.
         const [client, copy] = object.readable.tee();
-        yield* execution.waitUntil(
-          EdgeCache.put(team, hash, new Response(copy, { headers })),
-        );
+        yield* execution.waitUntil(EdgeCache.put(team, hash, new Response(copy, { headers })));
         return HttpServerResponse.raw(client, options);
       });
 
@@ -204,9 +201,9 @@ export default Cloudflare.Worker(
 
     const query = (team: string) =>
       Effect.gen(function* () {
-        const { hashes } = yield* HttpServerRequest.schemaBodyJson(
-          ArtifactQueryRequest,
-        ).pipe(Effect.mapError(() => badRequest("Invalid request body")));
+        const { hashes } = yield* HttpServerRequest.schemaBodyJson(ArtifactQueryRequest).pipe(
+          Effect.mapError(() => badRequest("Invalid request body")),
+        );
         const entries = yield* Effect.forEach(
           hashes,
           (hash) =>

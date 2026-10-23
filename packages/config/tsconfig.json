@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts", "*.mts", "vendor/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["vendor/**/*.test.ts", "vendor/t3code/test/**"]
+}
