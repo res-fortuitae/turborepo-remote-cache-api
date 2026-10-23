@@ -25,7 +25,7 @@ Apps consume repositories; schema/query construction belongs in domain packages.
 converting both synchronous exceptions and rejected promises to `DatabaseError`.
 The query builder omits interactive transactions and direct client access.
 `Database.drizzle` is the Drizzle instance itself, only for library adapters that
-issue their own queries (Better Auth's `drizzleAdapter`, see ADR 0003). Reads
+issue their own queries (Better Auth's `drizzleAdapter`, see ADR 0004). Reads
 are scoped explicitly: `ProjectRepo.find(orgId, id)` and
 `TrustPolicyRepo.find(projectId, id)`. Authorization stays in the owning domain.
 
