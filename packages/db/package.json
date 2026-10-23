@@ -4,19 +4,32 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "typecheck": "bun check",
-    "test": "bun test --pass-with-no-tests",
+    "test": "bun test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "db:generate": "drizzle-kit generate",
+    "db:check": "drizzle-kit check && bun scripts/check-migrations.ts && bun scripts/check-schema.ts",
+    "db:auth:generate": "bun scripts/generate-auth.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "1.0.0-rc.5",
+    "effect": "^4.0.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261023.1",
     "@repo/config": "workspace:*",
     "@types/bun": "latest",
+    "auth": "1.7.12",
+    "better-auth": "^1.7.12",
+    "drizzle-kit": "1.0.0-rc.5",
+    "miniflare": "^4.20260730.0",
     "typescript": "^7"
   }
 }

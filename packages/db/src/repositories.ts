@@ -1,0 +1,117 @@
+import { and, eq } from "drizzle-orm";
+import { Context, Effect, Layer } from "effect";
+import { Database } from "./database.ts";
+import { project, projectGrant, trustPolicy } from "./schema/index.ts";
+
+export type Project = typeof project.$inferSelect;
+
+export type NewProject = typeof project.$inferInsert;
+
+export type Grant = typeof projectGrant.$inferSelect;
+
+export type NewGrant = typeof projectGrant.$inferInsert;
+
+export type TrustPolicy = typeof trustPolicy.$inferSelect;
+
+export type NewTrustPolicy = typeof trustPolicy.$inferInsert;
+
+const projectRepo = Effect.gen(function* () {
+  const database = yield* Database;
+
+  return {
+    find: (orgId: string, id: string) =>
+      database.query("ProjectRepo.find", (db) =>
+        db
+          .select()
+          .from(project)
+          .where(and(eq(project.orgId, orgId), eq(project.id, id)))
+          .get(),
+      ),
+    list: (orgId: string) =>
+      database.query("ProjectRepo.list", (db) =>
+        db.select().from(project).where(eq(project.orgId, orgId)).orderBy(project.id),
+      ),
+    create: (value: NewProject) =>
+      database.query("ProjectRepo.create", (db) =>
+        db.insert(project).values(value).returning().get(),
+      ),
+  };
+});
+
+export class ProjectRepo extends Context.Service<ProjectRepo, Effect.Success<typeof projectRepo>>()(
+  "@repo/db/ProjectRepo",
+) {}
+
+export const ProjectRepoLive = Layer.effect(ProjectRepo, projectRepo);
+
+const grantRepo = Effect.gen(function* () {
+  const database = yield* Database;
+
+  return {
+    list: (projectId: string) =>
+      database.query("GrantRepo.list", (db) =>
+        db
+          .select()
+          .from(projectGrant)
+          .where(eq(projectGrant.projectId, projectId))
+          .orderBy(projectGrant.principalType, projectGrant.principalId),
+      ),
+    create: (value: NewGrant) =>
+      database.query("GrantRepo.create", (db) =>
+        db.insert(projectGrant).values(value).returning().get(),
+      ),
+    remove: (projectId: string, principalType: Grant["principalType"], principalId: string) =>
+      database.query("GrantRepo.remove", (db) =>
+        db
+          .delete(projectGrant)
+          .where(
+            and(
+              eq(projectGrant.projectId, projectId),
+              eq(projectGrant.principalType, principalType),
+              eq(projectGrant.principalId, principalId),
+            ),
+          )
+          .returning(),
+      ),
+  };
+});
+
+export class GrantRepo extends Context.Service<GrantRepo, Effect.Success<typeof grantRepo>>()(
+  "@repo/db/GrantRepo",
+) {}
+
+export const GrantRepoLive = Layer.effect(GrantRepo, grantRepo);
+
+const trustPolicyRepo = Effect.gen(function* () {
+  const database = yield* Database;
+
+  return {
+    find: (projectId: string, id: string) =>
+      database.query("TrustPolicyRepo.find", (db) =>
+        db
+          .select()
+          .from(trustPolicy)
+          .where(and(eq(trustPolicy.projectId, projectId), eq(trustPolicy.id, id)))
+          .get(),
+      ),
+    list: (projectId: string) =>
+      database.query("TrustPolicyRepo.list", (db) =>
+        db
+          .select()
+          .from(trustPolicy)
+          .where(eq(trustPolicy.projectId, projectId))
+          .orderBy(trustPolicy.id),
+      ),
+    create: (value: NewTrustPolicy) =>
+      database.query("TrustPolicyRepo.create", (db) =>
+        db.insert(trustPolicy).values(value).returning().get(),
+      ),
+  };
+});
+
+export class TrustPolicyRepo extends Context.Service<
+  TrustPolicyRepo,
+  Effect.Success<typeof trustPolicyRepo>
+>()("@repo/db/TrustPolicyRepo") {}
+
+export const TrustPolicyRepoLive = Layer.effect(TrustPolicyRepo, trustPolicyRepo);

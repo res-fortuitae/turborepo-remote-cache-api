@@ -19,10 +19,12 @@
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "bun run check:boundaries && bun run lint && bun run typecheck && bun run format:check",
+    "check": "bun run check:boundaries && bun run db:check && bun run lint && bun run typecheck && bun run format:check",
     "plan": "bun apps/server/scripts/alchemy.ts plan",
     "setup": "bun apps/server/scripts/setup.ts",
-    "check:boundaries": "bun scripts/check-boundaries.ts"
+    "check:boundaries": "bun scripts/check-boundaries.ts",
+    "db:generate": "bun run --cwd packages/db db:generate",
+    "db:check": "bun run --cwd packages/db db:check"
   },
   "devDependencies": {
     "@effect/platform-bun": "^4.0.6",

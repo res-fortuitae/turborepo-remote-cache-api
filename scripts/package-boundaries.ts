@@ -173,7 +173,8 @@ export function checkBoundaries(root: string): string[] {
           if (target !== manifest.name && !declared)
             errors.push(`${location}: undeclared workspace dependency ${target}`);
 
-          if (target !== "@repo/config" && value !== target)
+          // Explicit public test entry point keeps Bun/Node adapters out of runtime bundles.
+          if (target !== "@repo/config" && value !== target && value !== "@repo/db/testing")
             errors.push(`${location}: import ${target} through its public entry point`);
         } else if (value.startsWith(".") || NodePath.isAbsolute(value)) {
           const resolved = NodePath.resolve(NodePath.dirname(file), value);
