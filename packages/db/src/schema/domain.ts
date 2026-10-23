@@ -134,3 +134,17 @@ export const rollup = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.bucketStart, t.metric] })],
 );
+
+/**
+ * Accepted OIDC token ids, for replay protection (STV-483). The primary key
+ * makes "insert if not already present" atomic; expired rows may be reclaimed.
+ */
+export const oidcJti = sqliteTable(
+  "oidc_jti",
+  {
+    issuer: text().notNull(),
+    jti: text().notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.issuer, t.jti] }), index("oidc_jti_expiry").on(t.expiresAt)],
+);

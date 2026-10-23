@@ -234,6 +234,9 @@
     "packages/oidc": {
       "name": "@repo/oidc",
       "version": "0.0.0",
+      "dependencies": {
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
