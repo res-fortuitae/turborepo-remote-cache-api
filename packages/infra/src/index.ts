@@ -85,7 +85,11 @@ export const Database = Cloudflare.D1.Database(
       const { jurisdiction } = yield* infraConfig;
 
       // Jurisdiction is fixed at creation; never add a location hint.
-      return { jurisdiction };
+      return {
+        jurisdiction,
+        // Root scripts own the working directory; keep persisted migration paths portable.
+        migrations: "./packages/db/migrations",
+      };
     }),
   ),
 );

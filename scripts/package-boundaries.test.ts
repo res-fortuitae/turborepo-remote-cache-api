@@ -137,3 +137,16 @@ test("checks optional and peer dependencies even without source imports", () => 
   expect(errors).toContain("package.json (optionalDependencies)");
   expect(errors).toContain("package.json (peerDependencies)");
 });
+
+test("allows the public db test layer while retaining dependency and private-subpath checks", () => {
+  const root = fixture();
+  workspace(root, "db", "");
+  workspace(root, "auth", "import '@repo/db/testing';", { "@repo/db": "workspace:*" });
+  expect(checkBoundaries(root)).toEqual([]);
+
+  workspace(root, "auth", "import '@repo/db/testing/private';", { "@repo/db": "workspace:*" });
+  expect(checkBoundaries(root).join("\n")).toContain("public entry point");
+
+  workspace(root, "auth", "import '@repo/db/testing';");
+  expect(checkBoundaries(root).join("\n")).toContain("undeclared workspace dependency");
+});

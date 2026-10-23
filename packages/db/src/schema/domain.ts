@@ -1,0 +1,136 @@
+import {
+  check,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+
+export const project = sqliteTable(
+  "project",
+  {
+    id: text().primaryKey(),
+    orgId: text("org_id").notNull(),
+    slug: text().notNull(),
+    name: text().notNull(),
+    description: text(),
+    retentionDays: integer("retention_days"),
+    maxArtifactBytes: integer("max_artifact_bytes"),
+    createdAt: integer("created_at").notNull(),
+    archivedAt: integer("archived_at"),
+  },
+  (t) => [uniqueIndex("project_org_slug").on(t.orgId, t.slug)],
+);
+
+export const projectGrant = sqliteTable(
+  "project_grant",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id),
+    principalType: text("principal_type", { enum: ["user", "team"] }).notNull(),
+    principalId: text("principal_id").notNull(),
+    role: text({ enum: ["project:admin", "cache:write", "cache:read"] }).notNull(),
+    grantedBy: text("granted_by").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.principalType, t.principalId] }),
+    check("grant_principal_type", sql`${t.principalType} in ('user', 'team')`),
+    check("grant_role", sql`${t.role} in ('project:admin', 'cache:write', 'cache:read')`),
+  ],
+);
+
+export interface TrustPolicyBody {
+  issuer: string;
+  claims: Record<string, string[]>;
+  label?: string;
+  scope: "read" | "read write";
+  ttlSeconds: number;
+  refPatterns?: string[];
+  requireBoundTokens?: boolean;
+}
+
+export const trustPolicy = sqliteTable(
+  "trust_policy",
+  {
+    id: text().primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id),
+    provider: text({
+      enum: [
+        "github",
+        "gitlab",
+        "circleci",
+        "buildkite",
+        "bitbucket",
+        "vercel",
+        "aws-eks",
+        "google",
+        "azure",
+        "custom",
+      ],
+    }).notNull(),
+    enabled: integer({ mode: "boolean" }).notNull().default(true),
+    createdBy: text("created_by").notNull(),
+    body: text({ mode: "json" }).$type<TrustPolicyBody>().notNull(),
+  },
+  (t) => [index("trust_policy_project").on(t.projectId)],
+);
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+/** Singleton settings are versioned by the owning deployment/config domain. */
+export const instanceSettings = sqliteTable(
+  "instance_settings",
+  {
+    id: integer().primaryKey().default(1),
+    schemaVersion: integer("schema_version").notNull(),
+    settings: text({ mode: "json" }).$type<JsonObject>().notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [check("instance_settings_singleton", sql`${t.id} = 1`)],
+);
+
+/** Event payload validation and hash-chain semantics belong to @repo/audit. */
+export const auditEvent = sqliteTable(
+  "audit_event",
+  {
+    id: text().primaryKey(),
+    ts: integer().notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    orgId: text("org_id"),
+    projectId: text("project_id"),
+    payload: text({ mode: "json" }).$type<JsonObject>().notNull(),
+    prevHash: text("prev_hash"),
+    hash: text(),
+    exportedAt: integer("exported_at"),
+  },
+  (t) => [index("audit_event_outbox").on(t.exportedAt, t.ts, t.id)],
+);
+
+export const rollup = sqliteTable(
+  "rollup",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    bucketStart: integer("bucket_start").notNull(),
+    metric: text().notNull(),
+    value: integer().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.bucketStart, t.metric] })],
+);
