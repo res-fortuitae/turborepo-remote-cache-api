@@ -77,6 +77,38 @@ export const ArtifactBucket = Cloudflare.R2.Bucket(
   ),
 );
 
+/** Checkpoints outlive the D1 window and the audit stream's own compaction. */
+export const AUDIT_CHECKPOINT_RETENTION_DAYS = 400;
+
+/**
+ * Daily audit chain checkpoints (STV-482). Separate from the audit Iceberg
+ * catalog, whose compaction rewrites files. The lock makes every object under
+ * `checkpoints/` write-once for the retention period, whoever signs the request.
+ */
+export const AuditCheckpointBucket = Cloudflare.R2.Bucket(
+  "AuditCheckpoints",
+  planOnly(
+    Effect.gen(function* () {
+      const { jurisdiction } = yield* infraConfig;
+
+      return {
+        jurisdiction,
+        locks: [
+          {
+            id: "checkpoints-write-once",
+            enabled: true,
+            prefix: "checkpoints/",
+            condition: {
+              type: "Age" as const,
+              maxAgeSeconds: DAY_SECONDS * AUDIT_CHECKPOINT_RETENTION_DAYS,
+            },
+          },
+        ],
+      };
+    }),
+  ),
+);
+
 /** System of record: tenants, identities, credentials, audit and analytics rollups. */
 export const Database = Cloudflare.D1.Database(
   "Database",
