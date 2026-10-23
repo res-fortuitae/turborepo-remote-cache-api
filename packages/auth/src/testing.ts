@@ -1,4 +1,4 @@
-import { AuditLogNoop } from "@repo/audit";
+import { AuditLogTest } from "@repo/audit/testing";
 import { DatabaseTest } from "@repo/db/testing";
 import { AuthConfig } from "@repo/deploy-config";
 import { MailerNoop } from "@repo/mailer";
@@ -13,11 +13,11 @@ export const AuthConfigTest = Layer.succeed(AuthConfig, {
 });
 
 /**
- * `AuthLive` over a fresh migrated in-memory SQLite database, no-op mail and
- * audit, and no secondary storage. `Database` is exposed for seeding.
+ * `AuthLive` over a fresh migrated in-memory SQLite database, no-op mail, the
+ * real audit log with an in-memory sink, and no secondary storage. `Database` is exposed for seeding.
  * Import only in Bun test entry points.
  */
 export const AuthTest = AuthLive.pipe(
-  Layer.provide(Layer.mergeAll(AuthConfigTest, MailerNoop, AuditLogNoop)),
+  Layer.provide(Layer.mergeAll(AuthConfigTest, MailerNoop, AuditLogTest)),
   Layer.provideMerge(DatabaseTest),
 );
