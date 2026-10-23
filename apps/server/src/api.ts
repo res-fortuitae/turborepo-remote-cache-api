@@ -3,7 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
-import { ArtifactQueryRequest, CacheEvents } from "@repo/shared";
+import { ArtifactQueryRequest, CacheEvents } from "@repo/api-spec";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { createArtifactCache } from "./edge-cache.ts";

@@ -11,9 +11,11 @@
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "test": "bun test src"
   },
   "dependencies": {
+    "@repo/api-spec": "workspace:*",
     "effect": "^4.0.6"
   },
   "devDependencies": {
