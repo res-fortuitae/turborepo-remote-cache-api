@@ -77,7 +77,8 @@ test("setup writes loadable config and never overwrites organization changes", a
   const root = new URL("../../../", import.meta.url);
   const path = await NodeFSP.mkdtemp(NodePath.join(NodeURL.fileURLToPath(root), ".setup-test-"));
   directories.push(path);
-  const url = NodeURL.pathToFileURL(NodePath.join(path, "deploy.config.ts"));
+  // Global URL: node:url's type differs from it once @types/node is in scope.
+  const url = new URL(NodeURL.pathToFileURL(NodePath.join(path, "deploy.config.ts")).href);
   // writeDeployConfig's import is relative to the repository root.
   const helper = NodePath.join(path, "apps");
   await NodeFSP.symlink(NodeURL.fileURLToPath(new URL("apps/", root)), helper);
@@ -99,6 +100,6 @@ test("missing config fails with setup instructions", async () => {
   const path = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "deploy-config-test-"));
   directories.push(path);
   await expect(
-    loadDeployConfig(NodeURL.pathToFileURL(NodePath.join(path, "missing.ts"))),
+    loadDeployConfig(new URL(NodeURL.pathToFileURL(NodePath.join(path, "missing.ts")).href)),
   ).rejects.toThrow("bun run setup");
 });
