@@ -106,7 +106,11 @@ export const instanceSettings = sqliteTable(
   (t) => [check("instance_settings_singleton", sql`${t.id} = 1`)],
 );
 
-/** Event payload validation and hash-chain semantics belong to @repo/audit. */
+/**
+ * Event payload validation and hash-chain semantics belong to @repo/audit.
+ * `(chain, sequence)` is unique, so two writers can't both extend a chain from
+ * the same head: the loser's batch fails and it retries (STV-482).
+ */
 export const auditEvent = sqliteTable(
   "audit_event",
   {
@@ -119,8 +123,13 @@ export const auditEvent = sqliteTable(
     prevHash: text("prev_hash"),
     hash: text(),
     exportedAt: integer("exported_at"),
+    chain: text(),
+    sequence: integer(),
   },
-  (t) => [index("audit_event_outbox").on(t.exportedAt, t.ts, t.id)],
+  (t) => [
+    index("audit_event_outbox").on(t.exportedAt, t.ts, t.id),
+    uniqueIndex("audit_event_chain").on(t.chain, t.sequence),
+  ],
 );
 
 export const rollup = sqliteTable(

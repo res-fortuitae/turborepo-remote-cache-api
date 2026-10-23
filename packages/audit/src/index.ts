@@ -9,9 +9,31 @@ export {
   AuditSinkMemory,
   AuditSinkTest,
   AuditSinkUnconfigured,
+  CHAIN_RETRIES,
   OUTBOX_BATCH_SIZE,
   canonicalJson,
+  chainOf,
   hashEvent,
 } from "./audit-log.ts";
 
 export type { AuditInput, AuditLogService, AuditRecord, AuditSinkService } from "./audit-log.ts";
+
+export {
+  AuditIntegrity,
+  AuditIntegrityLive,
+  CHECKPOINT_PREFIX,
+  Checkpoint,
+  CheckpointStore,
+  CheckpointStoreError,
+  CheckpointStoreTest,
+  checkpointKey,
+  makeCheckpointStore,
+} from "./integrity.ts";
+
+export type {
+  AuditIntegrityService,
+  CheckpointBucket,
+  CheckpointStoreService,
+  IntegrityMismatch,
+  IntegrityReport,
+} from "./integrity.ts";

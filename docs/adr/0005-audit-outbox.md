@@ -29,14 +29,44 @@ rows are never pruned.
 
 There is no update or delete API for events.
 
-## Hashes
+## Hash chain
 
-Each event's `hash` is SHA-256 over its canonical JSON (keys sorted) without `hash`.
-The stored payload is that same canonical JSON. `prevHash` is null until the hash
-chain ([STV-482](https://linear.app/stvyas-workspace/issue/STV-482)) sequences events.
+There is one chain per org (`org:<id>`) and one for instance events (`instance`). Each
+row stores its `chain` and `sequence`, and `(chain, sequence)` is unique.
+`record` reads the chain head and sets `prevHash` to the head's hash and `sequence` to
+the head's plus one. `hash = SHA-256(prevHash || canonicalJson(event without hash))`,
+where the canonical JSON sorts keys. The stored payload is that canonical JSON.
+
+Two writers that read the same head both try to insert the same sequence; the unique
+index fails the second batch, so the chain can't fork. `AuditLog.commit(input, change)`
+runs the batch and re-records up to five times when the head has moved. If the head
+didn't move, the change itself failed, and that error is returned. This is the "D1
+conditional insert" option in [ADR 0002](./0002-storage-consistency-rules.md). A
+per-chain Durable Object sequencer is only needed if contention grows.
+`recordStandalone` events have no row, so they aren't chained.
+
+`prune` never deletes a chain's head, so the next event still links to it.
+
+## Checkpoints and verifier
+
+`AuditIntegrity.writeCheckpoints` writes `{scope, lastId, lastHash, count, date}` for
+every chain head to `checkpoints/{date}/{scope}.json`. `count` is the head's
+sequence. The store is create-only, and the `AuditCheckpoints` R2 bucket (in
+`@repo/infra`) has a lock rule on `checkpoints/` for 400 days. That bucket is separate
+from the audit Iceberg catalog, whose compaction rewrites files.
+
+`verify` walks each chain in D1 in sequence order. It recomputes every hash and checks
+the payload against its row, the `prevHash` links and that sequences have no gaps. It
+then compares the chain with every checkpoint. Any checkpointed event that is still in
+D1 must have the checkpoint's id and hash, and a checkpoint beyond the current head
+means events were truncated. The first row left after pruning is trusted to link;
+older ranges are checked against Iceberg once it exists. `verifyAndRecord` commits an
+`audit.integrity.failed` event to the instance chain when anything mismatches.
 
 ## Not yet wired
 
 The Worker provides `AuditSinkUnconfigured`, so events accumulate in the outbox. The
-Pipelines sink and the drain/prune cron arrive with
-[STV-459](https://linear.app/stvyas-workspace/issue/STV-459).
+Pipelines sink, the crons (drain each minute; prune, checkpoint and verify daily), the
+checkpoint bucket binding and Iceberg verification arrive with
+[STV-459](https://linear.app/stvyas-workspace/issue/STV-459). The dashboard's "verified
+up to" status and the admin action that runs `verifyAndRecord` come with the audit UI.
