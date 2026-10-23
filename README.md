@@ -50,7 +50,7 @@ See [shared configuration](packages/config/README.md) for details.
 
 Fork this repository into your organization's GitHub account. Deploy the fork
 into your own Cloudflare account. Upstream owns `apps/`, `packages/`, the Alchemy
-entry point, tooling, and workflows: **don't edit; use config**. Put all
+entry point, and tooling: **don't edit; use config**. Put all
 organization settings in the root `deploy.config.ts`, and optional templates,
 branding, or additional policies in `custom/`. Upstream never commits either
 path, so release merges preserve them. `custom/` is an extension storage location;
@@ -78,7 +78,7 @@ Credentials belong in the root `.env` or a secret store, never in config.
 Both organization paths are ignored in a fresh upstream checkout. In your fork,
 commit non-secret config with `git add -f deploy.config.ts`; use `git add -f custom/`
 for versioned org assets. Future edits to those tracked files work normally.
-Fork CI needs the tracked config for staging plans. Do not commit secrets.
+Do not commit secrets.
 
 The deploy prints the Worker `url`. `bun run dev` runs it locally with hot reload.
 Deploy/destroy default to `stages.production`; plan defaults to `stages.staging`.
@@ -87,46 +87,12 @@ Alchemy's local stage default. Production domains only attach to the production
 stage; use `stagingDomain` for staging. Existing installations must preserve their
 current stage name; see [UPGRADING.md](UPGRADING.md).
 
-## Upstream releases and fork sync
+## Upstream releases
 
 Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`) with a matching
-version section in `UPGRADING.md`. The release workflow runs checks and tests and
-publishes those migration notes as a GitHub release. Release publishing is limited
-to the canonical upstream repository. Forks consume releases; they do not publish
-upstream releases by pushing tags.
-
-Upstream sync is disabled by default. In your fork:
-
-1. Enable GitHub Actions (GitHub disables scheduled workflows in new forks).
-2. Set repository variable `UPSTREAM_SYNC_ENABLED=true`. The workflow discovers
-   the upstream from the fork's parent; a copied repository must also set
-   `UPSTREAM_REPOSITORY=StvyaSharma/turborepo-remote-cache-api`.
-3. Add `UPSTREAM_SYNC_TOKEN`, a fine-grained token with Contents and Pull requests
-   write permissions on the fork, and read access to upstream if it is private.
-   A dedicated token is necessary because PRs created using `GITHUB_TOKEN` do not
-   trigger PR workflows. Enable Actions permission to create pull requests.
-4. Commit your non-secret `deploy.config.ts`. Create a protected GitHub environment
-   named `staging`, with required reviewers, and configure `CLOUDFLARE_API_TOKEN`,
-   `CLOUDFLARE_ACCOUNT_ID`, `ALCHEMY_PASSWORD` (if required by your state setup), and
-   `STAGING_TURBO_TOKEN`, `STAGING_CACHE_TOKEN_SIGNING_KEY`, and
-   `STAGING_BETTER_AUTH_SECRET`. Use staging credentials and approve only trusted upstream
-   code: Alchemy evaluates repository TypeScript while planning. Provision the
-   staging state store once through an explicitly authorized staging deployment;
-   a read-only plan cannot bootstrap an absent state store.
-
-The hourly job (also available through **Run workflow**) checks published releases
-and opens one PR per unmerged stable release tag, with release and migration
-notes. It skips drafts, prereleases, tags already merged, and releases whose sync
-PR was closed. A conflicting release opens a PR at the tag with instructions to
-resolve conflicts. Each PR runs typecheck, tests, formatting/lint, and an Alchemy
-plan against the configured staging stage; no deployment runs. Review the plan
-before merging, then deploy explicitly. Missing migration notes fail the sync
-rather than silently omitting upgrade instructions.
-
-The Fork ownership workflow warns when the fork diverges from upstream in
-upstream-owned paths. This is advisory, so intentional upstream contributions
-remain possible. Inspect warnings before accepting an upgrade. Scheduled sync
-requires GitHub Actions minutes and token access to both repositories.
+version section in `UPGRADING.md`. There is no automated release or fork sync;
+to upgrade a fork, merge the release tag manually, follow its `UPGRADING.md`
+notes, and run `bun run check`, `bun run test`, and `bun run plan` before deploying.
 
 ## Use it from Turborepo
 

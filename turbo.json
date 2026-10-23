@@ -20,8 +20,7 @@
         "$TURBO_ROOT$/oxlint.config.mts",
         "$TURBO_ROOT$/.gitignore",
         "$TURBO_ROOT$/packages/*/oxlint.config.mts",
-        "$TURBO_ROOT$/deploy.config.example.ts",
-        "$TURBO_ROOT$/.github/**"
+        "$TURBO_ROOT$/deploy.config.example.ts"
       ],
       "outputs": []
     }
