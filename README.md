@@ -31,6 +31,11 @@ See [shared configuration](packages/config/README.md) for details.
 
 ## Setup
 
+Before the first production deployment, choose `jurisdiction` (`"eu"`, `"fedramp"`,
+or omitted for automatic placement) in `apps/api/deploy.config.ts`.
+See [data residency](docs/data-residency.md) for guarantees, migration limitations,
+and the integration requirements for planned platform services.
+
 ```sh
 bun install
 cp apps/api/.env.example apps/api/.env   # set TURBO_TOKEN to a long random string (e.g. `openssl rand -hex 32`)
@@ -68,3 +73,6 @@ The R2 bucket has lifecycle rules (`apps/api/src/bucket.ts`): artifacts are dele
 ## Edge caching
 
 Downloads are stored in the datacenter's Workers Cache (`apps/api/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by team + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
+
+When a jurisdiction is set, artifact edge caching is disabled and downloads use
+`Cache-Control: no-store`.

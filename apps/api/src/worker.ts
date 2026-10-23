@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ArtifactBucket } from "./bucket.ts";
+import { residency } from "./deployment.ts";
 import * as EdgeCache from "./edge-cache.ts";
 
 /**
@@ -159,6 +160,9 @@ export default Cloudflare.Worker(
         };
         if (!object.readable) {
           return HttpServerResponse.stream(object.body, options);
+        }
+        if (!residency.allowArtifactEdgeCache) {
+          return HttpServerResponse.raw(object.readable, options);
         }
         // Serve one branch to the client and store the other at the edge in the background.
         const [client, copy] = object.readable.tee();
