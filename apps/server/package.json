@@ -12,8 +12,13 @@
   },
   "dependencies": {
     "@repo/api-spec": "workspace:*",
+    "@repo/audit": "workspace:*",
+    "@repo/auth": "workspace:*",
     "@repo/coordinator": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/deploy-config": "workspace:*",
     "@repo/infra": "workspace:*",
+    "@repo/mailer": "workspace:*",
     "alchemy": "2.0.0-beta.83",
     "effect": "^4.0.6"
   },

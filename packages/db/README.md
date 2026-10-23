@@ -23,7 +23,9 @@ Apps consume repositories; schema/query construction belongs in domain packages.
 
 `Database.query(operation, db => query)` suspends query construction and execution,
 converting both synchronous exceptions and rejected promises to `DatabaseError`.
-The query builder omits interactive transactions and direct client access. Reads
+The query builder omits interactive transactions and direct client access.
+`Database.drizzle` is the Drizzle instance itself, only for library adapters that
+issue their own queries (Better Auth's `drizzleAdapter`, see ADR 0004). Reads
 are scoped explicitly: `ProjectRepo.find(orgId, id)` and
 `TrustPolicyRepo.find(projectId, id)`. Authorization stays in the owning domain.
 
@@ -49,8 +51,9 @@ Auth core tables, projects, project grants, trust policies, instance settings,
 audit events/outbox and rollups. Times in domain tables are epoch milliseconds;
 Better Auth uses its generated Date mapping. Business validation, auth plugin
 configuration, audit event validation/hash chains and rollup aggregation belong
-to their owning follow-up issues. Auth plugin tables must be generated here when
-STV-432 adds its runtime configuration; there is one migration pipeline.
+to their owning follow-up issues. Auth plugin tables are generated here from
+`scripts/auth-schema.config.ts`, which mirrors `@repo/auth`'s schema-affecting
+options; there is one migration pipeline.
 
 From the root:
 

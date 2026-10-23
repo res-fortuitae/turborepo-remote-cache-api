@@ -33,7 +33,14 @@ export type DatabaseStatement = BatchItem<"sqlite">;
 
 export type DatabaseBatch = readonly [DatabaseStatement, ...DatabaseStatement[]];
 
+export type DatabaseDrizzle = DrizzleD1Database<typeof relations>;
+
 export interface DatabaseService {
+  /**
+   * The Drizzle handle for library adapters that manage their own queries
+   * (Better Auth's `drizzleAdapter`). Domain code uses `query` and `batch`.
+   */
+  readonly drizzle: DatabaseDrizzle;
   readonly query: <A>(
     operation: string,
     query: (db: DatabaseQueries) => PromiseLike<A>,
@@ -52,6 +59,7 @@ export const DatabaseLive: Layer.Layer<Database, never, D1Client> = Layer.effect
     const db = drizzle(client, { relations });
 
     return {
+      drizzle: db,
       query: (operation, query) =>
         Effect.tryPromise({
           try: async () => await query(db),
