@@ -282,6 +282,14 @@ export const AuditLogLive: Layer.Layer<AuditLog, never, Database | AuditSink> = 
   }),
 );
 
+/** An `AuditSink` over a stream producer, such as the Basin Pipelines `audit` stream binding. */
+export const makeAuditSink = (
+  send: (events: readonly AuditEvent[]) => Effect.Effect<void, unknown>,
+): Layer.Layer<AuditSink> =>
+  Layer.succeed(AuditSink, {
+    send: (events) => send(events).pipe(Effect.mapError((cause) => new AuditSinkError({ cause }))),
+  });
+
 /** Fails every send. For hosts with no stream yet: rows wait in the outbox. */
 export const AuditSinkUnconfigured: Layer.Layer<AuditSink> = Layer.succeed(AuditSink, {
   send: () => Effect.fail(new AuditSinkError({ cause: "No audit stream is configured" })),

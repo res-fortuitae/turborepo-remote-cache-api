@@ -4,7 +4,8 @@ import { DatabaseTest } from "@repo/db/testing";
 import { eq, sql } from "drizzle-orm";
 import { Effect, Layer } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-import { AUDIT_RETENTION_MILLIS, type AuditInput, AuditLog } from "./audit-log.ts";
+import { AUDIT_RETENTION_MILLIS, type AuditInput, AuditLog, AuditSinkMemory } from "./audit-log.ts";
+import { dailyAuditJob, drainOutboxJob } from "./jobs.ts";
 import {
   AuditIntegrity,
   AuditIntegrityLive,
@@ -305,4 +306,23 @@ test("R2 checkpoint store is create-only and lists every page", async () => {
       expect((yield* store.list).map((each) => each.scope)).toEqual(["instance", "org:a"]);
     }),
   );
+});
+
+describe("jobs", () => {
+  test("drain exports the whole outbox; daily checkpoints, verifies and prunes", async () => {
+    await run(
+      Effect.gen(function* () {
+        yield* commitAll(Array.from({ length: 150 }, (_, index) => `a.${index}`));
+
+        expect(yield* drainOutboxJob).toBe(150);
+        expect((yield* (yield* AuditSinkMemory).events).length).toBe(150);
+
+        yield* TestClock.adjust(AUDIT_RETENTION_MILLIS + 1);
+        const { report, pruned } = yield* dailyAuditJob;
+
+        expect(report.mismatches).toEqual([]);
+        expect(pruned).toBe(149);
+      }),
+    );
+  });
 });

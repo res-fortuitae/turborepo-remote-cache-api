@@ -2,7 +2,16 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import { AuditLogLive, AuditSinkUnconfigured } from "@repo/audit";
+import {
+  AuditIntegrityLive,
+  AuditLogLive,
+  AuditSinkUnconfigured,
+  CheckpointStore,
+  dailyAuditJob,
+  drainOutboxJob,
+  makeAuditSink,
+  makeCheckpointStore,
+} from "@repo/audit";
 import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
 import { D1Client, DatabaseLive } from "@repo/db";
@@ -10,6 +19,9 @@ import { AuthConfig } from "@repo/deploy-config";
 import { MailerNoop } from "@repo/mailer";
 import {
   ArtifactBucket,
+  AuditBasin,
+  AuditCheckpointBucket,
+  auditBasinEnabled,
   BasinSqlToken,
   BetterAuthSecret,
   CacheNamespace,
@@ -33,6 +45,7 @@ import * as EdgeCache from "./edge-cache.ts";
 const decodeAuthEnvironment = Schema.decodeUnknownEffect(
   Schema.Struct({
     AUTH_BASE_URL: Schema.optional(Schema.String),
+    AUDIT_STREAM_ENABLED: Schema.optional(Schema.Literals(["true", "false"])),
     GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
   }),
 );
@@ -47,8 +60,19 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const stage = yield* Stage;
     const domain = workerDomain(config, stage);
 
+    const catalogToken = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(
+      Effect.orDie,
+    );
+
     const env: Record<string, string> = {
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
+      // Must agree with @repo/infra's AuditBasin, which creates the stream.
+      AUDIT_STREAM_ENABLED: String(
+        auditBasinEnabled({
+          jurisdiction: config.jurisdiction,
+          catalogToken: Option.isSome(catalogToken),
+        }),
+      ),
     };
 
     // Without a domain, Better Auth derives its URL from each request.
@@ -73,6 +97,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const kv = yield* Cloudflare.KV.ReadWriteNamespace(CacheNamespace);
     yield* Coordinator;
     yield* RateLimiter;
+    const checkpointBucket = yield* Cloudflare.R2.ReadWriteBucket(AuditCheckpointBucket);
+    const auditStream = yield* AuditBasin;
+
+    const auditWriter = Option.isSome(auditStream)
+      ? Option.some(yield* Cloudflare.Basin.WriteStream(auditStream.value))
+      : Option.none();
 
     yield* Cloudflare.SecretsStore.ReadSecret(yield* SigningKey);
     const authSecret = yield* Cloudflare.SecretsStore.ReadSecret(yield* BetterAuthSecret);
@@ -117,17 +147,53 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     // D1 and KV bindings resolve per request (see @repo/db's README).
-    // Audit rows wait in the outbox until the Pipelines stream exists (STV-459).
+    const databaseLayer = DatabaseLive.pipe(Layer.provide(Layer.effect(D1Client, d1.raw)));
+
+    const auditStreamEnabled =
+      authEnvironment.AUDIT_STREAM_ENABLED === "true" && Option.isSome(auditWriter);
+
+    // Without Basin, audit rows stay in D1 (see docs/data-residency.md).
+    const auditLayer = AuditLogLive.pipe(
+      Layer.provide(
+        auditStreamEnabled
+          ? makeAuditSink(
+              (events) =>
+                // SAFETY: the binding client reads the env captured at init; its
+                // RuntimeContext requirement is declared but never read.
+                auditWriter.value.send([...events]) as Effect.Effect<void, unknown>,
+            )
+          : AuditSinkUnconfigured,
+      ),
+    );
+
+    const auditJobsLayer = AuditIntegrityLive.pipe(
+      Layer.provideMerge(auditLayer),
+      Layer.provide(
+        Layer.effect(CheckpointStore, Effect.map(checkpointBucket.raw, makeCheckpointStore)),
+      ),
+      Layer.provide(databaseLayer),
+    );
+
+    // Cron failures are swallowed by the event source, so log them here.
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      auditStreamEnabled
+        ? drainOutboxJob.pipe(Effect.provide(auditJobsLayer), Effect.tapCause(Effect.logError))
+        : Effect.void,
+    );
+    yield* Cloudflare.Workers.cron("17 3 * * *", () =>
+      dailyAuditJob.pipe(Effect.provide(auditJobsLayer), Effect.tapCause(Effect.logError)),
+    );
+
     const authLayer = AuthLive.pipe(
       Layer.provide(
         Layer.mergeAll(
-          AuditLogLive.pipe(Layer.provide(AuditSinkUnconfigured)),
+          auditLayer,
           SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
           authConfig,
           MailerNoop,
         ),
       ),
-      Layer.provide(DatabaseLive.pipe(Layer.provide(Layer.effect(D1Client, d1.raw)))),
+      Layer.provide(databaseLayer),
     );
 
     const artifacts = artifactApi({
@@ -157,6 +223,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         Cloudflare.SecretsStore.ReadSecretBinding,
         Cloudflare.Workers.RateLimitBinding,
         CoordinatorLive,
+        Cloudflare.Basin.WriteStreamBinding,
+        Cloudflare.Workers.CronEventSourceLive,
       ),
     ),
   ),

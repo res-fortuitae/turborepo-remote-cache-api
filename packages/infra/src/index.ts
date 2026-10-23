@@ -1,4 +1,6 @@
+import { AuditEvent } from "@repo/api-spec";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -107,6 +109,62 @@ export const AuditCheckpointBucket = Cloudflare.R2.Bucket(
       };
     }),
   ),
+);
+
+/** Audit events ingested by Basin Pipelines (STV-459). Records are validated against `AuditEvent`. */
+export const AuditStream = Cloudflare.Basin.Stream("AuditStream", { schema: AuditEvent });
+
+/**
+ * Whether this deployment exports audit events to Basin. Basin Catalog needs
+ * the default jurisdiction, and the sink needs a catalog API token.
+ */
+export const auditBasinEnabled = (settings: {
+  readonly jurisdiction: string | undefined;
+  readonly catalogToken: boolean;
+}) => settings.jurisdiction === undefined && settings.catalogToken;
+
+/** Iceberg catalog storage for audit only, so its access and retention stay separate from analytics. */
+const AuditCatalogBucket = Cloudflare.R2.Bucket("AuditCatalog", {});
+
+const planAuditBasin = Effect.gen(function* () {
+  const { jurisdiction } = yield* infraConfig;
+  const token = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(Effect.orDie);
+
+  if (Option.isNone(token) || !auditBasinEnabled({ jurisdiction, catalogToken: true }))
+    return Option.none();
+
+  const bucket = yield* AuditCatalogBucket;
+
+  const catalog = yield* Cloudflare.Basin.Catalog("AuditCatalog", {
+    bucket,
+    compaction: { state: "enabled", targetSizeMb: "128" },
+    snapshotExpiration: { state: "enabled", maxSnapshotAge: "7d", minSnapshotsToKeep: 10 },
+  });
+
+  const stream = yield* AuditStream;
+
+  // Cloudflare creates `audit.audit_log` with the sink. Kept forever; see ADR 0005.
+  const sink = yield* Cloudflare.Basin.Sink("AuditLogTable", {
+    type: "basin_catalog",
+    catalog,
+    table: { namespace: "audit", name: "audit_log" },
+    token: token.value,
+  });
+
+  // Validation only: the stream schema rejects malformed records.
+  yield* Cloudflare.Basin.Pipeline("AuditPipeline", {
+    sql: Output.interpolate`INSERT INTO ${sink.name} SELECT * FROM ${stream.name}`,
+  });
+
+  return Option.some(stream);
+});
+
+/**
+ * The audit stream, or none where Basin export is disabled. Inside the Worker
+ * it is always the declaration; the Worker checks `AUDIT_STREAM_ENABLED`.
+ */
+export const AuditBasin = Effect.suspend(() =>
+  globalThis.__ALCHEMY_RUNTIME__ ? Effect.map(AuditStream, Option.some) : planAuditBasin,
 );
 
 /** System of record: tenants, identities, credentials, audit and analytics rollups. */

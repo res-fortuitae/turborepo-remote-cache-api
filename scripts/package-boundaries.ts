@@ -11,7 +11,7 @@ export const dependencies: DependencyPolicy = {
   "@repo/shared": ["@repo/api-spec"],
   "@repo/api-spec": [],
   "@repo/deploy-config": [],
-  "@repo/infra": [],
+  "@repo/infra": ["@repo/api-spec"],
   "@repo/db": ["@repo/api-spec", "@repo/deploy-config"],
   "@repo/mailer": ["@repo/deploy-config"],
   "@repo/ratelimit": ["@repo/deploy-config"],
