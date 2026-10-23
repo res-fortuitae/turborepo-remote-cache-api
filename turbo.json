@@ -3,7 +3,12 @@
   "tasks": {
     "typecheck": {
       "dependsOn": ["^typecheck"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/config/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/config/**",
+        "$TURBO_ROOT$/deploy.config.example.ts",
+        "$TURBO_ROOT$/deploy.config.ts"
+      ],
       "outputs": []
     },
     "test": {
@@ -12,7 +17,9 @@
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/*/oxlint.config.mts",
         "$TURBO_ROOT$/oxlint.config.mts",
-        "$TURBO_ROOT$/.gitignore"
+        "$TURBO_ROOT$/.gitignore",
+        "$TURBO_ROOT$/deploy.config.example.ts",
+        "$TURBO_ROOT$/.github/**"
       ],
       "outputs": []
     }
