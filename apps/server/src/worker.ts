@@ -16,7 +16,7 @@ import {
   RateLimiter,
   SigningKey,
 } from "@repo/infra";
-import { ArtifactQueryRequest, CacheEvents } from "@repo/shared";
+import { ArtifactQueryRequest, CacheEvents } from "@repo/api-spec";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
