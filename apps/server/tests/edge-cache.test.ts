@@ -22,6 +22,7 @@ describe("artifact cache residency", () => {
       Object.defineProperty(globalThis, "caches", { configurable: true, value: { open } });
       const cache = createArtifactCache(resolveResidency({ jurisdiction }).allowArtifactEdgeCache);
 
+      expect(cache.cacheControl).toBe("no-store");
       expect(await Effect.runPromise(cache.match("team", "abc"))).toBeUndefined();
       await Effect.runPromise(cache.put("team", "abc", new Response("artifact")));
       await Effect.runPromise(cache.remove("team", "abc"));
@@ -39,6 +40,7 @@ describe("artifact cache residency", () => {
       value: { open: async () => ({ match, put, delete: remove }) },
     });
     const cache = createArtifactCache(resolveResidency({}).allowArtifactEdgeCache);
+    expect(cache.cacheControl).toBe("public, max-age=3600");
     expect(await Effect.runPromise(cache.match("team one", "abc"))).toBe(response);
     await Effect.runPromise(cache.put("team two", "abc", response));
     await Effect.runPromise(cache.remove("team one", "abc"));

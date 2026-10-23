@@ -7,6 +7,9 @@
     "alchemy.run.ts",
     "apps/*/src/**/*.ts",
     "apps/*/tests/**/*.ts",
-    "packages/*/src/**/*.ts"
+    "packages/*/src/**/*.ts",
+    "apps/*/scripts/**/*.ts",
+    "deploy.config.example.ts",
+    "deploy.config.ts"
   ]
 }

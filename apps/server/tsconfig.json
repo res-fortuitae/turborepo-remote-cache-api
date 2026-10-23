@@ -3,5 +3,11 @@
   "compilerOptions": {
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "deploy.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "../../deploy.config.example.ts",
+    "../../deploy.config.ts"
+  ]
 }

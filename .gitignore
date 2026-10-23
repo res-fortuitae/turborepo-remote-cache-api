@@ -38,3 +38,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Turborepo
 .turbo
+
+# Organization-owned; upstream never commits these paths.
+/deploy.config.ts
+/custom/

@@ -1,15 +1,19 @@
 # Data residency
 
-Choose the jurisdiction in `apps/server/deploy.config.ts` **before the first production
-deploy**. This is a stack setting, bundled into both resource declarations and the
-Worker; it is not a request parameter or runtime environment override.
+Run `bun run setup` to choose the jurisdiction in the root `deploy.config.ts`
+**before the first production deploy**. The organization config feeds resource
+properties and a deployment-bound Worker cache policy; it is not a request
+parameter or an operator environment override. Upstream never edits this file.
 
 ```ts
-import type { DeployConfig } from "./src/residency.ts";
+import { defineDeployConfig } from "./apps/server/src/deploy-config.ts";
 
-export default {
-  jurisdiction: "eu", // or "fedramp"; omit for automatic placement
-} satisfies DeployConfig;
+export default defineDeployConfig({
+  jurisdiction: "eu", // or "fedramp"; use "default" for automatic placement
+  limits: { artifactRetentionDays: 30 },
+  features: { edgeCache: true }, // residency restrictions override this flag
+  stages: { production: "production", staging: "staging" },
+});
 ```
 
 Run `bun run check` and `bun run test`, then use the root deployment script when
@@ -18,8 +22,8 @@ registered. The stack output reports `jurisdiction` and any Basin restriction.
 
 ## Guarantees in this checkout
 
-With no jurisdiction, Cloudflare chooses artifact storage placement automatically.
-The existing per-datacenter artifact cache remains enabled. With `eu` or `fedramp`,
+With the `default` jurisdiction, Cloudflare chooses artifact storage placement automatically.
+The per-datacenter artifact cache is enabled when `features.edgeCache` is true. With `eu` or `fedramp`,
 the artifact R2 bucket receives the corresponding jurisdictional restriction.
 Artifact downloads bypass all Workers Cache API reads and writes, stream directly
 from R2, and send `Cache-Control: no-store` so the application does not create

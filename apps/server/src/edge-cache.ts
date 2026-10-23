@@ -1,5 +1,4 @@
 import * as Effect from "effect/Effect";
-import { residency } from "./deployment.ts";
 
 /**
  * Per-datacenter copy of artifact downloads via the Workers Cache API.
@@ -11,7 +10,6 @@ import { residency } from "./deployment.ts";
  */
 
 const CACHE_NAME = "turbo-artifacts";
-export const CACHE_CONTROL = residency.allowArtifactEdgeCache ? "public, max-age=3600" : "no-store";
 
 interface ArtifactCache {
   match(key: string): Promise<Response | undefined>;
@@ -43,6 +41,7 @@ const attempt = <A>(enabled: boolean, f: (cache: ArtifactCache) => Promise<A>) =
   );
 
 export const createArtifactCache = (enabled: boolean) => ({
+  cacheControl: enabled ? "public, max-age=3600" : "no-store",
   match: (team: string, hash: string) =>
     attempt(enabled, (cache) => cache.match(cacheKey(team, hash))),
   put: (team: string, hash: string, response: Response) =>
@@ -50,5 +49,3 @@ export const createArtifactCache = (enabled: boolean) => ({
   remove: (team: string, hash: string) =>
     attempt(enabled, (cache) => cache.delete(cacheKey(team, hash))),
 });
-
-export const { match, put, remove } = createArtifactCache(residency.allowArtifactEdgeCache);

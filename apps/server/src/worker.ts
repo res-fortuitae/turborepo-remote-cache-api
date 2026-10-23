@@ -1,4 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -7,7 +8,9 @@ import { ArtifactQueryRequest, CacheEvents } from "@repo/shared";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ArtifactBucket } from "./bucket.ts";
-import { residency } from "./deployment.ts";
+import { workerDomain } from "./deploy-config.ts";
+import { loadDeployConfig } from "../scripts/config.ts";
+import { resolveDeployment } from "./deployment.ts";
 import * as EdgeCache from "./edge-cache.ts";
 
 /**
@@ -72,13 +75,30 @@ const artifactHeaders = (size: number, meta: ArtifactMetadata) => {
   return headers;
 };
 
-export default Cloudflare.Worker(
+export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
-  { main: import.meta.url },
+  Effect.gen(function* () {
+    // Deployment config is local to the operator and absent from the Worker.
+    if (globalThis.__ALCHEMY_RUNTIME__) return { main: import.meta.url };
+
+    const config = yield* Effect.promise(() => loadDeployConfig());
+    const stage = yield* Stage;
+
+    return {
+      main: import.meta.url,
+      domain: workerDomain(config, stage),
+      limits: config.limits.cpuMs === undefined ? undefined : { cpuMs: config.limits.cpuMs },
+      env: { EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled) },
+    };
+  }),
   Effect.gen(function* () {
     const bucket = yield* Cloudflare.R2.ReadWriteBucket(ArtifactBucket);
     // Bound to the Worker as a secret at deploy time.
     const token = yield* Config.Redacted("TURBO_TOKEN");
+    const environment = yield* Cloudflare.Workers.WorkerEnvironment;
+
+    const edgeCacheEnabled = environment.EDGE_CACHE_ENABLED === "true";
+    const cache = EdgeCache.createArtifactCache(edgeCacheEnabled);
     const execution = yield* Cloudflare.Workers.WorkerExecutionContext;
 
     const authenticate = Effect.gen(function* () {
@@ -116,7 +136,7 @@ export default Cloudflare.Worker(
 
     const download = (team: string, hash: string) =>
       Effect.gen(function* () {
-        const cached = yield* EdgeCache.match(team, hash);
+        const cached = edgeCacheEnabled ? yield* cache.match(team, hash) : undefined;
         if (cached?.body) {
           return HttpServerResponse.raw(cached.body, {
             status: 200,
@@ -136,7 +156,7 @@ export default Cloudflare.Worker(
         const headers = {
           ...artifactHeaders(object.size, meta),
           "content-type": "application/octet-stream",
-          "cache-control": EdgeCache.CACHE_CONTROL,
+          "cache-control": cache.cacheControl,
         };
         const options = {
           status: 200,
@@ -144,15 +164,12 @@ export default Cloudflare.Worker(
           contentLength: object.size,
           headers: { ...headers, "x-edge-cache": "MISS" },
         };
-        if (!object.readable) {
+        if (!object.readable || !edgeCacheEnabled) {
           return HttpServerResponse.stream(object.body, options);
-        }
-        if (!residency.allowArtifactEdgeCache) {
-          return HttpServerResponse.raw(object.readable, options);
         }
         // Serve one branch to the client and store the other at the edge in the background.
         const [client, copy] = object.readable.tee();
-        yield* execution.waitUntil(EdgeCache.put(team, hash, new Response(copy, { headers })));
+        yield* execution.waitUntil(cache.put(team, hash, new Response(copy, { headers })));
         return HttpServerResponse.raw(client, options);
       });
 
@@ -180,7 +197,7 @@ export default Cloudflare.Worker(
           customMetadata: { ...meta },
         });
         // Drop any stale copy cached in this datacenter.
-        yield* EdgeCache.remove(team, hash);
+        if (edgeCacheEnabled) yield* cache.remove(team, hash);
         const host = h["host"] ?? "localhost";
         const proto = h["x-forwarded-proto"] ?? (host.startsWith("localhost") ? "http" : "https");
         return yield* HttpServerResponse.json(
@@ -288,4 +305,4 @@ export default Cloudflare.Worker(
       ),
     };
   }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
-);
+) {}

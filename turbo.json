@@ -6,7 +6,9 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/packages/config/**",
-        "$TURBO_ROOT$/tsconfig.json"
+        "$TURBO_ROOT$/tsconfig.json",
+        "$TURBO_ROOT$/deploy.config.example.ts",
+        "$TURBO_ROOT$/deploy.config.ts"
       ],
       "outputs": []
     },
@@ -17,7 +19,9 @@
         "$TURBO_ROOT$/apps/*/oxlint.config.mts",
         "$TURBO_ROOT$/oxlint.config.mts",
         "$TURBO_ROOT$/.gitignore",
-        "$TURBO_ROOT$/packages/*/oxlint.config.mts"
+        "$TURBO_ROOT$/packages/*/oxlint.config.mts",
+        "$TURBO_ROOT$/deploy.config.example.ts",
+        "$TURBO_ROOT$/.github/**"
       ],
       "outputs": []
     }

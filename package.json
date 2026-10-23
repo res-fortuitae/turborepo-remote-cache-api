@@ -7,9 +7,9 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "alchemy dev",
-    "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
+    "dev": "bun apps/server/scripts/alchemy.ts dev",
+    "deploy": "bun apps/server/scripts/alchemy.ts deploy",
+    "destroy": "bun apps/server/scripts/alchemy.ts destroy",
     "typecheck": "bun check && turbo run typecheck",
     "test": "turbo run test",
     "lint": "oxlint .",
@@ -18,7 +18,9 @@
     "format:check": "oxfmt --check .",
     "check": "bun run lint && bun run typecheck && bun run format:check",
     "test:api": "bash apps/server/tests/curl.sh",
-    "test:e2e": "bun apps/server/tests/turbo-e2e.ts"
+    "test:e2e": "bun apps/server/tests/turbo-e2e.ts",
+    "plan": "bun apps/server/scripts/alchemy.ts plan",
+    "setup": "bun apps/server/scripts/setup.ts"
   },
   "devDependencies": {
     "@effect/platform-bun": "^4.0.6",
