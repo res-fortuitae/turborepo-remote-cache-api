@@ -63,10 +63,37 @@ means events were truncated. The first row left after pruning is trusted to link
 older ranges are checked against Iceberg once it exists. `verifyAndRecord` commits an
 `audit.integrity.failed` event to the instance chain when anything mismatches.
 
-## Not yet wired
+## Export to Basin (STV-459)
 
-The Worker provides `AuditSinkUnconfigured`, so events accumulate in the outbox. The
-Pipelines sink, the crons (drain each minute; prune, checkpoint and verify daily), the
-checkpoint bucket binding and Iceberg verification arrive with
-[STV-459](https://linear.app/stvyas-workspace/issue/STV-459). The dashboard's "verified
-up to" status and the admin action that runs `verifyAndRecord` come with the audit UI.
+`@repo/infra` declares the `AuditStream` (schema: api-spec `AuditEvent`), a dedicated
+`AuditCatalog` bucket and Basin Catalog (compaction at 128 MB, snapshot expiration after
+7 days), the `audit.audit_log` Iceberg sink and a passthrough pipeline. The pipeline only
+validates: records that don't match the stream schema are dropped. These resources exist
+only when `BASIN_CATALOG_TOKEN` is set at deploy time and no jurisdiction is configured.
+Basin Catalog doesn't support restricted jurisdictions (see `docs/data-residency.md`).
+The deploy step writes the same decision to the Worker's `AUDIT_STREAM_ENABLED`.
+
+The Worker binds the stream through `makeAuditSink` and runs two crons:
+
+- `* * * * *`: `drainOutboxJob` exports up to 10 batches of 100 rows. It does nothing
+  when the stream is disabled, so events stay in D1.
+- `17 3 * * *`: `dailyAuditJob` writes checkpoints to the `AuditCheckpoints` bucket, runs
+  `verifyAndRecord` (a mismatch is logged as an error and recorded), then prunes. Pruning
+  only removes rows that were exported, so without Basin nothing is pruned.
+
+**Retention.** The Iceberg table is kept forever by default. Basin SQL is read-only, so
+deleting old partitions needs an Iceberg writer (PyIceberg or Spark) run by an operator
+outside Workers. That job is optional and not part of this repo.
+
+**Partitioning.** The issue asked for partitioning by `day`, but the Pipelines catalog
+sink doesn't expose an Iceberg partition spec, so the table uses Cloudflare's default
+layout. Queries filter on `ts`.
+
+**Limits.** This uses one stream, one sink and one pipeline of the account's 20 each.
+
+## Not yet built
+
+- Per-minute D1 counters of standalone denials, for alerting.
+- Iceberg range verification for events older than the D1 window.
+- The dashboard's "verified up to" status, the admin action that runs
+  `verifyAndRecord`, and the CLI verifier.

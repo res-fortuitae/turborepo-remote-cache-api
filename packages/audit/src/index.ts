@@ -14,6 +14,7 @@ export {
   canonicalJson,
   chainOf,
   hashEvent,
+  makeAuditSink,
 } from "./audit-log.ts";
 
 export type { AuditInput, AuditLogService, AuditRecord, AuditSinkService } from "./audit-log.ts";
@@ -37,3 +38,5 @@ export type {
   IntegrityMismatch,
   IntegrityReport,
 } from "./integrity.ts";
+
+export { MAX_DRAIN_BATCHES, dailyAuditJob, drainOutboxJob } from "./jobs.ts";
