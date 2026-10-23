@@ -17,7 +17,14 @@ copies that version's section and the GitHub release notes into the upgrade PR.
   `limits.artifactRetentionDays` and `features.edgeCache` in your config.
 - Jurisdiction is selected when the R2 bucket is created. Do not change it on an
   existing bucket as an upgrade shortcut; migrating data is a separate operation.
-- Keep `.env*` and `.alchemy` state in `apps/api`. Keep the existing `TURBO_TOKEN`.
+- The composition root, `.env*`, and `.alchemy` state now live at the repository
+  root; Worker code lives in `apps/server`. Preserve the existing `TURBO_TOKEN` and
+  reconcile existing root state before moving files from `apps/api`.
+- If you used `apps/server/deploy.config.ts`, copy its jurisdiction to the root
+  `deploy.config.ts` before deploying. The old per-app config has been replaced by
+  the single organization config. Restricted jurisdictions continue to disable
+  artifact edge caching and return `Cache-Control: no-store`, even if
+  `features.edgeCache` is enabled.
   Public GitHub App identifiers can be recorded in config; the authentication and
   secret bootstrap implementation is tracked separately in STV-499.
 - If CI needs your config, commit it to the fork using

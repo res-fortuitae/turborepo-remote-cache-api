@@ -1,0 +1,15 @@
+{
+  "extends": "./packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": [
+    "alchemy.run.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/tests/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "apps/*/scripts/**/*.ts",
+    "deploy.config.example.ts",
+    "deploy.config.ts"
+  ]
+}

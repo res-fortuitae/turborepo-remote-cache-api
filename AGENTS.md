@@ -2,7 +2,7 @@
 
 - Read `README.md` before changing the workspace.
 - Use Bun for dependencies and package scripts. Apps live in `apps/*`; shared packages live in `packages/*`.
-- Keep API source, environment files, and Alchemy state in `apps/api`. Run `dev`, `deploy`, and `destroy` from the root scripts. Deploy or destroy infrastructure only when explicitly requested.
+- Keep Worker source in `apps/server`, shared contracts in `packages/shared`, and the single Alchemy composition root, environment files, and local Alchemy state at the repository root. Run `dev`, `deploy`, and `destroy` from the root scripts. Deploy or destroy infrastructure only when explicitly requested.
 - Shared Oxlint and Oxfmt rules live in `packages/config`. Preserve vendored source, licenses, and provenance; see `packages/config/vendor/README.md`.
 - Run `bun run check` and `bun run test` after changing workspace configuration or shared rules.
 

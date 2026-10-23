@@ -6,14 +6,23 @@ A self-hosted [Turborepo Remote Cache](https://turborepo.dev/docs/openapi) runni
 
 This Bun + Turborepo monorepo contains:
 
-- `apps/api`: Cloudflare Worker, R2 resources, and Alchemy entry point.
-- `packages/config`: shared Oxlint/Oxfmt presets and all custom rules copied from `listener`.
+- `apps/server`: existing Cloudflare Worker and R2 resource declarations.
+- `apps/dashboard`: dashboard scaffold (application shell follows in STV-466).
+- `packages/shared`: Effect schemas and redacted bearer token types.
+- `packages/action`: GitHub Action scaffold.
+- `packages/cli`: CLI scaffold.
+- `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.
 
-Keep API environment files and local `.alchemy` state in `apps/api`. When migrating
-an existing checkout, move its root `.env*` files (except examples) and `.alchemy`
-directory there before running Alchemy. The stack and resource names are unchanged.
+The single root `alchemy.run.ts` composes infrastructure. Run `dev`, `deploy`, and
+`destroy` from the repository root. Environment files and local `.alchemy` state
+also live at the root. When upgrading from the previous layout, move ignored
+`apps/api/.env*` files and `apps/api/.alchemy` here before running Alchemy. Do not
+replace existing root files or state; reconcile them first. Stack and resource
+names are unchanged.
 
-Root commands forward `dev`, `deploy`, and `destroy` to the API workspace.
+All packages extend `packages/config/tsconfig.base.json`. `bun check` checks the
+root composition and application/library sources; `bun run check` additionally
+checks every package and runs lint and formatting checks.
 
 ```sh
 bun run lint          # all workspace JavaScript/TypeScript
@@ -44,7 +53,7 @@ files there are not automatically loaded or executed by the current API.
 ```sh
 bun install
 bun run setup          # asks for domain, jurisdiction, edge cache, and stage names
-cp apps/api/.env.example apps/api/.env   # set TURBO_TOKEN to a long random string (e.g. `openssl rand -hex 32`)
+cp .env.example .env   # set TURBO_TOKEN to a long random string (e.g. `openssl rand -hex 32`)
 bun run deploy         # first run prompts for Cloudflare login and bootstraps the state store
 ```
 
@@ -58,7 +67,7 @@ See `deploy.config.example.ts` for the typed settings: production and staging
 domains, R2 jurisdiction, public GitHub App identifiers, retention and Worker CPU
 limits, edge cache, and stage names. GitHub App identifiers are reserved for the
 bootstrap/auth integration; they do not enable authentication in the current API.
-Credentials belong in `apps/api/.env` or a secret store, never in config.
+Credentials belong in the root `.env` or a secret store, never in config.
 
 Both organization paths are ignored in a fresh upstream checkout. In your fork,
 commit non-secret config with `git add -f deploy.config.ts`; use `git add -f custom/`
@@ -136,7 +145,7 @@ Artifacts are stored in R2 under `<teamId|slug|default>/<hash>`, and the `x-arti
 
 ## Retention
 
-The R2 bucket has lifecycle rules (`apps/api/src/bucket.ts`): artifacts are deleted
+The R2 bucket has lifecycle rules (`apps/server/src/bucket.ts`): artifacts are deleted
 `limits.artifactRetentionDays` (30 by default) days after upload, and incomplete
 multipart uploads are aborted after a day. Cloudflare applies these natively, so
 no cron Worker is needed. Choose `jurisdiction` before creating the bucket;
@@ -144,5 +153,24 @@ changing residency of existing data needs a separate migration.
 
 ## Edge caching
 
-Downloads are stored in the datacenter's Workers Cache (`apps/api/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by team + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
+Downloads are stored in the datacenter's Workers Cache (`apps/server/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by team + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
 Set `features.edgeCache=false` to bypass the cache for downloads and uploads.
+
+When a jurisdiction is set, artifact edge caching is disabled regardless of the
+feature flag, and downloads use `Cache-Control: no-store`. See
+[data residency](docs/data-residency.md) for guarantees and migration limitations.
+
+## Migration verification
+
+Start the local Worker with `bun run dev` and copy its printed URL. In another
+terminal, run the HTTP contract suite and a real Turbo upload/download round trip:
+
+```sh
+TURBO_API=http://localhost:1337 TURBO_TOKEN=<local-token> bun run test:api
+TURBO_API=http://localhost:1337 TURBO_TOKEN=<local-token> bun run test:e2e
+```
+
+Use the actual port printed by Alchemy. These checks use isolated team names and
+leave test artifacts to expire through bucket retention. The Turbo test creates
+a temporary workspace, verifies an upload, deletes local outputs and cache, then
+requires a remote cache hit and restored output. Neither check deploys resources.

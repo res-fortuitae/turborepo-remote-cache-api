@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import example from "../../../deploy.config.example.ts";
 import { defineDeployConfig, workerDomain } from "../src/deploy-config.ts";
+import { resolveDeployment } from "../src/deployment.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
 import { writeDeployConfig } from "../scripts/setup.ts";
 
@@ -55,6 +56,20 @@ test("staging and development never attach the production domain", () => {
   expect(workerDomain(config, "production")).toBe("cache.example.com");
   expect(workerDomain(config, "staging")).toBe("staging.example.com");
   expect(workerDomain(config, "live_developer")).toBeUndefined();
+});
+
+test("organization cache settings cannot override jurisdiction restrictions", () => {
+  const eu = resolveDeployment(defineDeployConfig({ ...example, jurisdiction: "eu" }));
+  const fedramp = resolveDeployment(defineDeployConfig({ ...example, jurisdiction: "fedramp" }));
+
+  expect(eu.residency.storage.jurisdiction).toBe("eu");
+  expect(eu.edgeCacheEnabled).toBe(false);
+  expect(fedramp.residency.storage.jurisdiction).toBe("fedramp");
+  expect(fedramp.edgeCacheEnabled).toBe(false);
+  expect(resolveDeployment(example).edgeCacheEnabled).toBe(true);
+  expect(resolveDeployment({ ...example, features: { edgeCache: false } }).edgeCacheEnabled).toBe(
+    false,
+  );
 });
 
 test("setup writes loadable config and never overwrites organization changes", async () => {

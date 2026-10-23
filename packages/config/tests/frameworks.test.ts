@@ -83,7 +83,7 @@ export const Route = createFileRoute("/")({ loader: () => null, beforeLoad: () =
     expected: ["tanstack-router(create-route-property-order)"],
   },
   {
-    project: "apps/api",
+    project: "apps/server",
     folder: "src",
     name: "effect.ts",
     source: effect,
@@ -115,7 +115,7 @@ export const Route = createFileRoute("/")({ loader: () => null, beforeLoad: () =
     absent: ["vitest("],
   },
   {
-    project: "apps/api",
+    project: "apps/server",
     folder: "src",
     name: "unit.test.ts",
     source:

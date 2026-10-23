@@ -1,5 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import { resolveDeployment } from "./deployment.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
 
 /** R2 bucket holding Turborepo cache artifacts, keyed by `<team>/<hash>`. */
@@ -12,7 +13,7 @@ export const ArtifactBucket = Cloudflare.R2.Bucket(
     return Effect.map(
       Effect.promise(() => loadDeployConfig()),
       (config) => ({
-        jurisdiction: config.jurisdiction,
+        ...resolveDeployment(config).residency.storage,
         lifecycleRules: [
           {
             id: "expire-old-artifacts",

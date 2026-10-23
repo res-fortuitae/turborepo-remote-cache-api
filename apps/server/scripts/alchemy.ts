@@ -14,7 +14,7 @@ const stageArgs =
   explicitStage || Bun.env.ALCHEMY_STAGE || command === "dev" ? [] : ["--stage", defaultStage];
 
 const child = Bun.spawn(["alchemy", command, ...stageArgs, ...args], {
-  cwd: new URL("../", import.meta.url).pathname,
+  cwd: new URL("../../../", import.meta.url).pathname,
   stdin: "inherit",
   stdout: "inherit",
   stderr: "inherit",

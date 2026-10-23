@@ -4,7 +4,7 @@ import { defineDeployConfig, type DeployConfig } from "../src/deploy-config.ts";
 
 export const writeDeployConfig = async (url: URL, config: DeployConfig) => {
   const validated = defineDeployConfig(config);
-  const source = `import { defineDeployConfig } from "./apps/api/src/deploy-config.ts";\n\nexport default defineDeployConfig(${JSON.stringify(validated, null, 2)});\n`;
+  const source = `import { defineDeployConfig } from "./apps/server/src/deploy-config.ts";\n\nexport default defineDeployConfig(${JSON.stringify(validated, null, 2)});\n`;
   // Exclusive creation protects organization config on reruns and concurrent setup.
   await NodeFSP.writeFile(url, source, { flag: "wx" });
 };
@@ -50,14 +50,14 @@ export const setup = async () => {
         stages: { production, staging },
       }),
     );
-    console.log("Created deploy.config.ts. Keep secrets in apps/api/.env or a secret store.");
+    console.log("Created deploy.config.ts. Keep secrets in the root .env or a secret store.");
   }
 
-  const pkg = await Bun.file(new URL("../package.json", import.meta.url)).json();
+  const pkg = await Bun.file(new URL("../../../package.json", import.meta.url)).json();
 
   if (pkg.scripts.bootstrap) {
     const child = Bun.spawn(["bun", "run", "bootstrap"], {
-      cwd: new URL("../", import.meta.url).pathname,
+      cwd: new URL("../../../", import.meta.url).pathname,
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",

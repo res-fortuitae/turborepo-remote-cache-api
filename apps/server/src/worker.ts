@@ -4,12 +4,13 @@ import * as Config from "effect/Config";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
+import { ArtifactQueryRequest, CacheEvents } from "@repo/shared";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ArtifactBucket } from "./bucket.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
+import { resolveDeployment } from "./deployment.ts";
 import * as EdgeCache from "./edge-cache.ts";
 
 /**
@@ -33,20 +34,6 @@ const badRequest = (message: string) => new ApiError({ status: 400, code: "bad_r
 
 const HASH = /^[a-fA-F0-9]+$/;
 const ROUTE = /^\/v8\/artifacts(?:\/([^/]+))?\/?$/;
-
-const ArtifactQueryRequest = Schema.Struct({
-  hashes: Schema.Array(Schema.String),
-});
-
-const CacheEvent = Schema.Struct({
-  sessionId: Schema.String,
-  source: Schema.Literals(["LOCAL", "REMOTE"]),
-  event: Schema.Literals(["HIT", "MISS"]),
-  hash: Schema.String,
-  duration: Schema.optional(Schema.Number),
-});
-
-const CacheEvents = Schema.Array(CacheEvent);
 
 /** Artifact metadata persisted as R2 custom metadata. */
 interface ArtifactMetadata {
@@ -101,7 +88,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       main: import.meta.url,
       domain: workerDomain(config, stage),
       limits: config.limits.cpuMs === undefined ? undefined : { cpuMs: config.limits.cpuMs },
-      env: { EDGE_CACHE_ENABLED: String(config.features.edgeCache) },
+      env: { EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled) },
     };
   }),
   Effect.gen(function* () {
@@ -111,6 +98,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const environment = yield* Cloudflare.Workers.WorkerEnvironment;
 
     const edgeCacheEnabled = environment.EDGE_CACHE_ENABLED === "true";
+    const cache = EdgeCache.createArtifactCache(edgeCacheEnabled);
     const execution = yield* Cloudflare.Workers.WorkerExecutionContext;
 
     const authenticate = Effect.gen(function* () {
@@ -148,7 +136,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const download = (team: string, hash: string) =>
       Effect.gen(function* () {
-        const cached = edgeCacheEnabled ? yield* EdgeCache.match(team, hash) : undefined;
+        const cached = edgeCacheEnabled ? yield* cache.match(team, hash) : undefined;
         if (cached?.body) {
           return HttpServerResponse.raw(cached.body, {
             status: 200,
@@ -168,7 +156,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         const headers = {
           ...artifactHeaders(object.size, meta),
           "content-type": "application/octet-stream",
-          "cache-control": EdgeCache.CACHE_CONTROL,
+          "cache-control": cache.cacheControl,
         };
         const options = {
           status: 200,
@@ -181,7 +169,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         }
         // Serve one branch to the client and store the other at the edge in the background.
         const [client, copy] = object.readable.tee();
-        yield* execution.waitUntil(EdgeCache.put(team, hash, new Response(copy, { headers })));
+        yield* execution.waitUntil(cache.put(team, hash, new Response(copy, { headers })));
         return HttpServerResponse.raw(client, options);
       });
 
@@ -209,7 +197,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           customMetadata: { ...meta },
         });
         // Drop any stale copy cached in this datacenter.
-        if (edgeCacheEnabled) yield* EdgeCache.remove(team, hash);
+        if (edgeCacheEnabled) yield* cache.remove(team, hash);
         const host = h["host"] ?? "localhost";
         const proto = h["x-forwarded-proto"] ?? (host.startsWith("localhost") ? "http" : "https");
         return yield* HttpServerResponse.json(

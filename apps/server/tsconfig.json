@@ -1,0 +1,13 @@
+{
+  "extends": "@repo/config/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "../../deploy.config.example.ts",
+    "../../deploy.config.ts"
+  ]
+}

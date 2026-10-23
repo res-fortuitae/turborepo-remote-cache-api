@@ -34,4 +34,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           UPSTREAM_REPOSITORY: ${{ vars.UPSTREAM_REPOSITORY }}
-        run: bun apps/api/scripts/upstream-sync.ts
+        run: bun apps/server/scripts/upstream-sync.ts
