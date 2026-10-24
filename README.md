@@ -135,6 +135,12 @@ the API Worker binds them:
 The GitHub OAuth and Basin secrets are created only when their variables are set.
 Cloudflare allows one Secrets Store per account; Alchemy adopts it and never deletes it.
 
+Persistent resources use Alchemy retention outside explicitly named preview/PR
+stages. This includes the API Worker because it owns the Coordinator namespace.
+Artifacts and KV remain disposable. The jurisdiction-aware `Backups` bucket is
+reserved storage; no backup job is installed. See [deletion protection and
+recovery](docs/deletion-protection.md) before destroying or re-adopting a stack.
+
 ## Retention
 
 The R2 bucket has lifecycle rules (`packages/infra/src/index.ts`): artifacts are deleted

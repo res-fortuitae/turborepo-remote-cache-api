@@ -6,6 +6,23 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Stateful resource retention (STV-502)
+
+- The next authorized deployment persists deletion protection even when Alchemy
+  reports no resource diff. Existing state is not protected until that deploy.
+- D1, audit resources, secrets, the new `Backups` bucket and the API Worker
+  (which owns Coordinator data) survive destroy, orphaning and replacement.
+  Artifacts and KV remain disposable. A retained Worker stays active.
+- Only stages named `preview-<suffix>` or `pr-<number>[-<suffix>]` are disposable;
+  configured production/staging names always retain data. The deployed test
+  harness's default `test_$USER` now retains persistent resources. Use an explicit
+  preview stage for authorized disposable tests.
+- The audit bucket keeps its `AuditCatalog` ID. Its Basin Catalog now uses
+  `AuditDataCatalog`, fixing a duplicate logical ID that prevented the catalog
+  from being registered. Review this new resource in the plan if Basin is enabled.
+- Read [deletion protection](docs/deletion-protection.md) for adoption and manual
+  permanent deletion. Keep the same stage, logical IDs and jurisdiction.
+
 ### Fork configuration (STV-498)
 
 - Run `bun install --frozen-lockfile` and `bun run setup` to create
