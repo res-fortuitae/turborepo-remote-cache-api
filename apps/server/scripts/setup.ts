@@ -4,7 +4,7 @@ import { defineDeployConfig, type DeployConfig } from "../src/deploy-config.ts";
 
 export const writeDeployConfig = async (url: URL, config: DeployConfig) => {
   const validated = defineDeployConfig(config);
-  const source = `import { defineDeployConfig } from "./apps/server/src/deploy-config.ts";\n\nexport default defineDeployConfig(${JSON.stringify(validated, null, 2)});\n`;
+  const source = `import { defineDeployConfig } from "@repo/deploy-config";\n\nexport default defineDeployConfig(${JSON.stringify(validated, null, 2)});\n`;
   // Exclusive creation protects organization config on reruns and concurrent setup.
   await NodeFSP.writeFile(url, source, { flag: "wx" });
 };

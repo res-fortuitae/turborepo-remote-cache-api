@@ -33,6 +33,24 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 - Review the staging plan with `bun run plan` before an explicitly authorized
   deployment. Configuring upstream sync does not deploy anything.
 
+### Canonical origin and OIDC audiences (STV-494)
+
+- Run `bun install --frozen-lockfile` for the new workspace dependencies.
+  Deployment settings now live in `@repo/deploy-config`; the old app import
+  remains compatible with existing organization configuration.
+- `oidcAudiences` is optional and defaults to the stage's canonical origin.
+  Before a domain change, explicitly pin old audience identifiers so existing
+  CI configurations and policies can continue matching them. See
+  [origin migration](docs/origin-and-audiences.md).
+- Cache JWTs now use the canonical origin for both `iss` and `aud`. Tokens using
+  the former `turbo-cache` audience must be reissued. CI audiences are separate.
+- Better Auth uses Alchemy's public Worker URL as `baseURL` and trusted origin,
+  including workers.dev and local development. Alternate hostnames do not become
+  trusted origins. Update OAuth callback URLs when changing the canonical domain.
+- `/oidc` and `/.well-known/*` bypass dashboard assets. API/auth and dashboard
+  responses receive security headers; deployed HTTPS responses advertise one
+  year of HSTS without includeSubDomains or preload. CSP remains STV-474.
+
 ### Releasing this change
 
 Before tagging, move these notes into a section named for the chosen semver tag,

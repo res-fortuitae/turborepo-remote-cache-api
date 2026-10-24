@@ -8,8 +8,9 @@ export const GitHubOAuthCredentials = Schema.Struct({
 
 /**
  * Better Auth settings, decoded by the app from Secrets Store and deploy
- * config. `baseURL` is optional: without it Better Auth derives the origin
- * from each request, which suits `workers.dev` stages without a domain.
+ * config. The Worker supplies the canonical origin for `baseURL` and
+ * `trustedOrigins`, including workers.dev and local stages. The optional
+ * field also permits standalone consumers to use Better Auth's default.
  */
 export const AuthSettings = Schema.Struct({
   secret: Schema.Redacted(Schema.String),
