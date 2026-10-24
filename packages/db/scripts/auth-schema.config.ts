@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { magicLink } from "better-auth/plugins/magic-link";
 
 /**
  * Generation only; runtime auth composition belongs to @repo/auth (STV-432).
@@ -12,4 +13,10 @@ export const auth = betterAuth({
   baseURL: "https://schema.invalid",
   secret: "schema-generation-only-not-a-runtime-secret",
   rateLimit: { storage: "database" },
+  account: {
+    additionalFields: {
+      githubLogin: { type: "string", required: false, input: false },
+    },
+  },
+  plugins: [magicLink({ storeToken: "hashed", sendMagicLink: async () => {} })],
 });

@@ -224,9 +224,11 @@ describe("Better Auth schema", () => {
             secret: Redacted.make(SECRET),
             baseURL: "http://localhost",
             trustedOrigins: [],
+            magicLink: true,
           },
           db: database.drizzle,
           secondaryStorage: undefined,
+          sendMagicLink: async () => {},
         }).options;
       }),
       AuthTest,

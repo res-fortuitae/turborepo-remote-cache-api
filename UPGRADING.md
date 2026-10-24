@@ -68,6 +68,22 @@ copies that version's section and the GitHub release notes into the upgrade PR.
   responses receive security headers; deployed HTTPS responses advertise one
   year of HSTS without includeSubDomains or preload. CSP remains STV-474.
 
+### GitHub OAuth sign-in (STV-433)
+
+- The additive auth migration adds nullable `account.github_login`. Alchemy
+  applies it during the next authorized deployment. Existing rows acquire login
+  metadata on their next GitHub sign-in; stable identity remains `account_id`.
+- Configure `githubApp` and `GITHUB_OAUTH_CLIENT_SECRET` together. Partial
+  configuration now fails planning instead of silently disabling sign-in.
+  Register the stage's canonical `/api/auth/callback/github` URL and grant the
+  GitHub App read-only email-address permission.
+- Password authentication stays disabled. CSRF/origin checks are explicit and
+  HTTPS session cookies use Secure, HttpOnly and SameSite=Lax.
+- Optional magic-link integration requires an explicitly configured delivering
+  Mailer layer. It remains disabled in the stock Worker pending STV-495.
+- Run `bun install --frozen-lockfile` to install the new test-only emulate.dev
+  dependency. See [GitHub sign-in](docs/github-sign-in.md) for setup and local checks.
+
 ### Releasing this change
 
 Before tagging, move these notes into a section named for the chosen semver tag,

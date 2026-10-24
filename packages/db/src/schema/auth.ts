@@ -64,6 +64,7 @@ export const account = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
+    githubLogin: text("github_login"),
   },
   (table) => [index("account_userId_idx").on(table.userId)],
 );

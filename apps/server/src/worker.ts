@@ -39,13 +39,14 @@ import {
 } from "@repo/infra";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { artifactApi } from "./api.ts";
 import { authRoute, isAuthPath } from "./auth.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
-import { resolveDeployment } from "./deployment.ts";
+import { resolveDeployment, validateGitHubOAuth } from "./deployment.ts";
 import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
@@ -76,6 +77,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const catalogToken = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(
       Effect.orDie,
+    );
+
+    const githubOAuthSecret = yield* Config.option(
+      Config.Redacted("GITHUB_OAUTH_CLIENT_SECRET"),
+    ).pipe(Effect.orDie);
+
+    validateGitHubOAuth(
+      config,
+      Option.isSome(githubOAuthSecret) && Redacted.value(githubOAuthSecret.value).length > 0,
     );
 
     const env: DeploymentEnvironment = {

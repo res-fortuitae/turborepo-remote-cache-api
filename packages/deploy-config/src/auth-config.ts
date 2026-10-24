@@ -17,6 +17,8 @@ export const AuthSettings = Schema.Struct({
   baseURL: Schema.optional(Schema.String),
   trustedOrigins: Schema.Array(Schema.String),
   github: Schema.optional(GitHubOAuthCredentials),
+  /** Opt in only alongside a delivering Mailer layer. The stock Worker leaves this off. */
+  magicLink: Schema.optional(Schema.Boolean),
 });
 
 export type AuthSettings = typeof AuthSettings.Type;

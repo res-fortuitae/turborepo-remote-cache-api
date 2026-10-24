@@ -27,6 +27,7 @@
   "devDependencies": {
     "@repo/config": "workspace:*",
     "@types/bun": "latest",
+    "emulate": "^0.12.3",
     "typescript": "^7"
   }
 }
