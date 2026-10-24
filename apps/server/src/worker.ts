@@ -14,7 +14,8 @@ import {
 } from "@repo/audit";
 import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
-import { D1Client, DatabaseLive } from "@repo/db";
+import { D1Client, DatabaseLive, ReplayGuardLive } from "@repo/db";
+import { pruneOidcReplayIds } from "@repo/oidc";
 import {
   AuthConfig,
   CanonicalOrigin,
@@ -221,6 +222,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
     yield* Cloudflare.Workers.cron("17 3 * * *", () =>
       dailyAuditJob.pipe(Effect.provide(auditJobsLayer), Effect.tapCause(Effect.logError)),
+    );
+    yield* Cloudflare.Workers.cron("13 * * * *", () =>
+      pruneOidcReplayIds.pipe(
+        Effect.provide(ReplayGuardLive.pipe(Layer.provide(databaseLayer))),
+        Effect.tapCause(Effect.logError),
+      ),
     );
 
     const authLayer = AuthLive.pipe(

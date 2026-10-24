@@ -94,6 +94,9 @@ CI audience identifiers across domain changes; it defaults to each stage's origi
 See [origin, audiences and upload limits](docs/origin-and-audiences.md) for migration
 steps, security headers and Cloudflare plan limits.
 
+The CI ID-token verifier and its replay/cache guarantees are documented in
+[`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.
+
 ## Upstream releases
 
 Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`) with a matching

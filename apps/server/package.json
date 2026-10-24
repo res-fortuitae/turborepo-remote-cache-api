@@ -19,6 +19,7 @@
     "@repo/deploy-config": "workspace:*",
     "@repo/infra": "workspace:*",
     "@repo/mailer": "workspace:*",
+    "@repo/oidc": "workspace:*",
     "alchemy": "2.0.0-beta.83",
     "effect": "^4.0.6"
   },
