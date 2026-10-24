@@ -1,4 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+import { AlchemyContext } from "alchemy";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -57,8 +58,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
     if (globalThis.__ALCHEMY_RUNTIME__) return { main: import.meta.url };
 
     const config = yield* Effect.promise(() => loadDeployConfig());
+    const { dev } = yield* AlchemyContext;
     const stage = yield* Stage;
-    const domain = workerDomain(config, stage);
+    const domain = dev ? undefined : workerDomain(config, stage);
 
     const catalogToken = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(
       Effect.orDie,
@@ -69,6 +71,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       // Must agree with @repo/infra's AuditBasin, which creates the stream.
       AUDIT_STREAM_ENABLED: String(
         auditBasinEnabled({
+          dev,
           jurisdiction: config.jurisdiction,
           catalogToken: Option.isSome(catalogToken),
         }),

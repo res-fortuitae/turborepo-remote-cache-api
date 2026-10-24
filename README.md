@@ -82,6 +82,19 @@ for versioned org assets. Future edits to those tracked files work normally.
 Do not commit secrets.
 
 The deploy prints the Worker `url`. `bun run dev` runs it locally with hot reload.
+Development uses Alchemy's local providers and on-disk state in the root
+`.alchemy/` directory. It needs `deploy.config.ts` and the required root `.env`
+secrets, but no Cloudflare account or state-store bootstrap. Worker, R2 (including
+audit checkpoints), D1 with migrations, KV, Durable Objects, Secrets Store, rate
+limits, cron triggers, and dashboard assets run in Alchemy's local workerd runtime.
+
+Basin Streams, Pipelines, and Catalog have no local resource providers in the
+pinned Alchemy version. Development never provisions them, even when
+`BASIN_CATALOG_TOKEN` is set: audit events remain in local D1 and export is disabled.
+Development also ignores custom domains, including when an explicit stage matches
+a configured production or staging name. Deployments continue to use Cloudflare
+state and the configured domains and Basin export.
+
 Deploy/destroy default to `stages.production`; plan defaults to `stages.staging`.
 An explicit `--stage` or `ALCHEMY_STAGE` takes precedence. Development keeps
 Alchemy's local stage default. Production domains only attach to the production

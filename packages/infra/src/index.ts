@@ -1,4 +1,5 @@
 import { AuditEvent } from "@repo/api-spec";
+import { AlchemyContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
 import * as Config from "effect/Config";
@@ -119,18 +120,23 @@ export const AuditStream = Cloudflare.Basin.Stream("AuditStream", { schema: Audi
  * the default jurisdiction, and the sink needs a catalog API token.
  */
 export const auditBasinEnabled = (settings: {
+  readonly dev: boolean;
   readonly jurisdiction: string | undefined;
   readonly catalogToken: boolean;
-}) => settings.jurisdiction === undefined && settings.catalogToken;
+}) => !settings.dev && settings.jurisdiction === undefined && settings.catalogToken;
 
 /** Iceberg catalog storage for audit only, so its access and retention stay separate from analytics. */
 const AuditCatalogBucket = Cloudflare.R2.Bucket("AuditCatalog", {});
 
 const planAuditBasin = Effect.gen(function* () {
+  const { dev } = yield* AlchemyContext;
+  // Basin's resource providers are cloud-only. Never provision them during dev.
+  if (dev) return Option.none();
+
   const { jurisdiction } = yield* infraConfig;
   const token = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(Effect.orDie);
 
-  if (Option.isNone(token) || !auditBasinEnabled({ jurisdiction, catalogToken: true }))
+  if (Option.isNone(token) || !auditBasinEnabled({ dev, jurisdiction, catalogToken: true }))
     return Option.none();
 
   const bucket = yield* AuditCatalogBucket;

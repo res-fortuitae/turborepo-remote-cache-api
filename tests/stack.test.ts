@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Cloudflare from "alchemy/Cloudflare";
+import { localState } from "alchemy";
 import * as Test from "alchemy/Test/Bun";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";
@@ -23,8 +24,8 @@ const token = Bun.env.TURBO_TOKEN ?? "";
 
 const { deploy, destroy, beforeAll, afterAll } = Test.make({
   providers: Cloudflare.providers(),
-  state: Cloudflare.state(),
-  dev: true,
+  state: local ? localState() : Cloudflare.state(),
+  dev: local,
 });
 
 describe.skipIf(!enabled)(`stack (${local ? "local" : "deployed"})`, () => {
@@ -35,9 +36,17 @@ describe.skipIf(!enabled)(`stack (${local ? "local" : "deployed"})`, () => {
 
     beforeAll(
       Effect.gen(function* () {
-        const { url } = yield* outputs;
+        const { url, bucketName, databaseId, cacheNamespaceId, basinDisabledReason } =
+          yield* outputs;
 
         if (!url) return yield* Effect.die(new Error("Stack did not output a Worker url"));
+        if (local) {
+          expect(new URL(url).hostname).toBe("localhost");
+          expect(bucketName.startsWith("dev:")).toBe(true);
+          expect(databaseId.startsWith("dev:")).toBe(true);
+          expect(cacheNamespaceId.startsWith("dev:")).toBe(true);
+          expect(basinDisabledReason).toContain("no local resource provider");
+        }
         api = url;
         // Ride out workers.dev propagation on a fresh deploy.
         yield* Test.getWhenReady(`${url}/v8/artifacts/status`);
@@ -48,6 +57,19 @@ describe.skipIf(!enabled)(`stack (${local ? "local" : "deployed"})`, () => {
   }
 
   const target = () => httpTarget(api, token);
+
+  test("serves dashboard assets through the Alchemy Worker", async () => {
+    const response = await target().fetch("/");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(await response.text()).toContain("Turborepo Remote Cache");
+  });
+
+  test("builds authentication with the Secrets Store binding", async () => {
+    const response = await target().fetch("/api/auth/ok");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+  });
 
   describeContract(target, uniqueTeam("stack"));
   describePermissionMatrix(target, uniqueTeam("stack-matrix"));

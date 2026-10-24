@@ -1,6 +1,7 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { Stage } from "alchemy/Stage";
 import { ArtifactBucket, CacheNamespace, Database, InfraConfig } from "@repo/infra";
 import { resolveDeployment } from "./apps/server/src/deployment.ts";
@@ -11,10 +12,15 @@ export default Alchemy.Stack(
   "TurborepoRemoteCache",
   {
     providers: Cloudflare.providers(),
-    state: Cloudflare.state(),
+    state: Layer.unwrap(
+      Alchemy.AlchemyContext.pipe(
+        Effect.map(({ dev }) => (dev ? Alchemy.localState() : Cloudflare.state())),
+      ),
+    ),
   },
   Effect.gen(function* () {
     const config = yield* Effect.promise(() => loadDeployConfig());
+    const { dev } = yield* Alchemy.AlchemyContext;
     const { residency } = resolveDeployment(config);
 
     const stage = yield* Stage;
@@ -27,7 +33,9 @@ export default Alchemy.Stack(
 
       return {
         jurisdiction: residency.jurisdiction ?? "automatic",
-        basinDisabledReason: residency.basinDisabledReason,
+        basinDisabledReason: dev
+          ? "Basin has no local resource provider; audit events remain in local D1."
+          : residency.basinDisabledReason,
         bucketName: bucket.bucketName,
         databaseId: database.databaseId,
         cacheNamespaceId: cache.namespaceId,
