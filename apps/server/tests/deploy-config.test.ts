@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import example from "../../../deploy.config.example.ts";
 import { defineDeployConfig, workerDomain } from "../src/deploy-config.ts";
-import { resolveDeployment } from "../src/deployment.ts";
+import { resolveDeployment, validateGitHubOAuth } from "../src/deployment.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
 import { writeDeployConfig } from "../scripts/setup.ts";
 
@@ -21,6 +21,14 @@ test("the shipped config preserves retention and cache defaults", () => {
   expect(example.limits.artifactRetentionDays).toBe(30);
   expect(example.features.edgeCache).toBe(true);
   expect(example.jurisdiction).toBe("default");
+});
+
+test("GitHub OAuth requires paired public configuration and a nonempty secret", () => {
+  const configured = { githubApp: { appId: 123, clientId: "Iv1.example", slug: "cache" } };
+  expect(() => validateGitHubOAuth({}, false)).not.toThrow();
+  expect(() => validateGitHubOAuth(configured, true)).not.toThrow();
+  expect(() => validateGitHubOAuth(configured, false)).toThrow("GITHUB_OAUTH_CLIENT_SECRET");
+  expect(() => validateGitHubOAuth({}, true)).toThrow("githubApp");
 });
 
 test("deployment validation rejects invalid infrastructure settings", () => {
