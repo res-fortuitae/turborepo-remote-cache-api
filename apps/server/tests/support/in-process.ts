@@ -1,5 +1,6 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Requests cross from Bun's fetch into the Effect handler at this test boundary. */
 import * as Cloudflare from "alchemy/Cloudflare";
+import { CanonicalOrigin } from "@repo/deploy-config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
@@ -75,6 +76,7 @@ export const inProcessHandler = (token: string, bucket: MemoryBucket = memoryBuc
         HttpServerRequest.HttpServerRequest,
         HttpServerRequest.fromWeb(request),
       ),
+      Effect.provideService(CanonicalOrigin, new URL(request.url).origin),
       Effect.map((response) => HttpServerResponse.toWeb(response)),
       Effect.runPromise,
     );

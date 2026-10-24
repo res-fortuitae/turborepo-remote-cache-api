@@ -88,6 +88,11 @@ Alchemy's local stage default. Production domains only attach to the production
 stage; use `stagingDomain` for staging. Existing installations must preserve their
 current stage name; see [UPGRADING.md](UPGRADING.md).
 
+API, dashboard and auth share that origin. Optional `oidcAudiences` pins accepted
+CI audience identifiers across domain changes; it defaults to each stage's origin.
+See [origin, audiences and upload limits](docs/origin-and-audiences.md) for migration
+steps, security headers and Cloudflare plan limits.
+
 ## Upstream releases
 
 Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`) with a matching

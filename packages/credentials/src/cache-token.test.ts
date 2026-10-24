@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CoordinatorClient } from "@repo/coordinator";
+import { CanonicalOrigin } from "@repo/deploy-config";
 import { Effect, Layer, Result } from "effect";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -7,6 +8,7 @@ import { importJWK, SignJWT } from "jose";
 import {
   CACHE_TOKEN_TEST_ISSUER,
   CacheTokenConfig,
+  CacheTokenConfigLive,
   CacheTokenInvalid,
   type CacheTokenRequest,
   CacheTokenRequestInvalid,
@@ -15,6 +17,7 @@ import {
   CacheTokenSignerLive,
   CacheTokensTest,
   CacheTokenVerifier,
+  CacheTokenVerifierLive,
   KeyStore,
   KeyStoreTestControl,
 } from "./index.ts";
@@ -51,6 +54,32 @@ const failure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const reason = <E>(error: E) => (error instanceof CacheTokenInvalid ? error.reason : error);
 
 describe("sign and verify", () => {
+  test("live config derives issuer and audience from the canonical origin", async () => {
+    await run(
+      Effect.gen(function* () {
+        const issued = yield* issue();
+
+        const payload = JSON.parse(
+          Buffer.from(issued.token.split(".")[1]!, "base64url").toString(),
+        );
+
+        expect(payload.iss).toBe("https://new.example.com");
+        expect(payload.aud).toBe("https://new.example.com");
+        expect(yield* verify(issued.token)).toEqual(issued.principal);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.fresh(CacheTokenSignerLive),
+            Layer.fresh(CacheTokenVerifierLive),
+          ).pipe(
+            Layer.provide(CacheTokenConfigLive),
+            Layer.provide(Layer.succeed(CanonicalOrigin, "https://new.example.com")),
+          ),
+        ),
+      ),
+    );
+  });
+
   test("a fresh token verifies to its principal", async () => {
     await run(
       Effect.gen(function* () {
@@ -78,7 +107,7 @@ describe("sign and verify", () => {
         expect(header).toEqual({ alg: "EdDSA", typ: "JWT", kid: issued.kid });
         expect(payload).toMatchObject({
           iss: CACHE_TOKEN_TEST_ISSUER,
-          aud: "turbo-cache",
+          aud: CACHE_TOKEN_TEST_ISSUER,
           org: "acme",
           prj: "web",
           scope: "read",
@@ -155,14 +184,14 @@ describe("rejections", () => {
               .sign(privateKey),
           );
 
-        const good = yield* sign(CACHE_TOKEN_TEST_ISSUER, "turbo-cache");
+        const good = yield* sign(CACHE_TOKEN_TEST_ISSUER, CACHE_TOKEN_TEST_ISSUER);
         expect((yield* verify(good)).subject).toBe("user:1");
         expect(
-          reason(yield* failure(verify(yield* sign("https://evil.test", "turbo-cache")))),
+          reason(yield* failure(verify(yield* sign("https://evil.test", CACHE_TOKEN_TEST_ISSUER)))),
         ).toBe("claims");
-        expect(reason(yield* failure(verify(yield* sign(CACHE_TOKEN_TEST_ISSUER, "other"))))).toBe(
-          "claims",
-        );
+        expect(
+          reason(yield* failure(verify(yield* sign(CACHE_TOKEN_TEST_ISSUER, "turbo-cache")))),
+        ).toBe("claims");
       }),
     );
   });

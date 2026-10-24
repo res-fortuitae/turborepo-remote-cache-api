@@ -1,4 +1,5 @@
 import { CoordinatorClient, CoordinatorClientTest, type CoordinatorError } from "@repo/coordinator";
+import { CanonicalOrigin } from "@repo/deploy-config";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -25,7 +26,6 @@ import {
 } from "./key-store.ts";
 import { CacheScope, Principal } from "./principal.ts";
 
-export const CACHE_TOKEN_AUDIENCE = "turbo-cache";
 export const CACHE_TOKEN_ALGORITHM = "EdDSA";
 /** The issue-time default; instance policy and trust policies only lower it. */
 
@@ -35,12 +35,21 @@ export const DEFAULT_CACHE_TOKEN_TTL_SECONDS = 60 * 60;
 export class CacheTokenConfig extends Context.Service<
   CacheTokenConfig,
   {
-    /** Our public URL; the `iss` claim. */
+    /** Our canonical origin; both the `iss` and `aud` claims (STV-494). */
     readonly issuer: string;
     /** Instance policy ceiling on token lifetime. */
     readonly maxTtlSeconds: number;
   }
 >()("@repo/credentials/CacheTokenConfig") {}
+
+/** The instance policy may provide a stricter ceiling instead of this default. */
+export const CacheTokenConfigLive = Layer.effect(
+  CacheTokenConfig,
+  Effect.map(CanonicalOrigin, (issuer) => ({
+    issuer,
+    maxTtlSeconds: DEFAULT_CACHE_TOKEN_TTL_SECONDS,
+  })),
+);
 
 /** Revocation epochs the token was issued under, one per Coordinator scope. */
 export const CacheTokenEpoch = Schema.Struct({ org: Schema.Int, prj: Schema.Int });
@@ -227,7 +236,7 @@ export const CacheTokenSignerLive: Layer.Layer<
           })
             .setProtectedHeader({ alg: CACHE_TOKEN_ALGORITHM, typ: "JWT", kid: key.kid })
             .setIssuer(config.issuer)
-            .setAudience(CACHE_TOKEN_AUDIENCE)
+            .setAudience(config.issuer)
             .setSubject(request.subject)
             .setJti(jti)
             .setIssuedAt(iat)
@@ -319,7 +328,7 @@ export const CacheTokenVerifierLive: Layer.Layer<
           try: () =>
             jwtVerify(token, key, {
               issuer: config.issuer,
-              audience: CACHE_TOKEN_AUDIENCE,
+              audience: config.issuer,
               algorithms: [CACHE_TOKEN_ALGORITHM],
               typ: "JWT",
               currentDate: new Date(now),

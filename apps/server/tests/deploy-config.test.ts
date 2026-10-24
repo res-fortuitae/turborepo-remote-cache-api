@@ -24,6 +24,8 @@ test("the shipped config preserves retention and cache defaults", () => {
 });
 
 test("deployment validation rejects invalid infrastructure settings", () => {
+  expect(() => defineDeployConfig({ ...example, oidcAudiences: [] })).toThrow();
+  expect(() => defineDeployConfig({ ...example, oidcAudiences: [""] })).toThrow();
   expect(() =>
     defineDeployConfig({ ...example, domain: "https://cache.example.com/path" }),
   ).toThrow();
@@ -73,15 +75,12 @@ test("organization cache settings cannot override jurisdiction restrictions", ()
 });
 
 test("setup writes loadable config and never overwrites organization changes", async () => {
-  // Keep the fixture beside the actual config so its relative type helper resolves.
+  // Keep the fixture beneath the workspace so its package import resolves.
   const root = new URL("../../../", import.meta.url);
   const path = await NodeFSP.mkdtemp(NodePath.join(NodeURL.fileURLToPath(root), ".setup-test-"));
   directories.push(path);
   // Global URL: node:url's type differs from it once @types/node is in scope.
   const url = new URL(NodeURL.pathToFileURL(NodePath.join(path, "deploy.config.ts")).href);
-  // writeDeployConfig's import is relative to the repository root.
-  const helper = NodePath.join(path, "apps");
-  await NodeFSP.symlink(NodeURL.fileURLToPath(new URL("apps/", root)), helper);
 
   const config = defineDeployConfig({
     ...example,

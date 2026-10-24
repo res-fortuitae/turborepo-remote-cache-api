@@ -1,9 +1,9 @@
 export {
   CACHE_TOKEN_ALGORITHM,
-  CACHE_TOKEN_AUDIENCE,
   CACHE_TOKEN_TEST_ISSUER,
   CacheTokenClaims,
   CacheTokenConfig,
+  CacheTokenConfigLive,
   CacheTokenEpoch,
   CacheTokenInvalid,
   CacheTokenRequest,
