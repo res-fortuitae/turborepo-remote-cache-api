@@ -282,7 +282,7 @@ export const RateLimiter = Cloudflare.RateLimit("RATE_LIMITER", {
 
 /** Dashboard build output, served by the API Worker ahead of its fetch handler. */
 export const DashboardAssets = {
-  directory: new URL("../../../apps/dashboard/public", import.meta.url).pathname,
+  directory: new URL("../../../apps/dashboard/dist", import.meta.url).pathname,
   notFoundHandling: "single-page-application",
   // Cache API paths never resolve to dashboard files.
   runWorkerFirst: ["/v8", "/v8/*", "/api", "/api/*", "/oidc", "/oidc/*", "/.well-known/*"],

@@ -7,7 +7,8 @@ A self-hosted [Turborepo Remote Cache](https://turborepo.dev/docs/openapi) runni
 This Bun + Turborepo monorepo contains:
 
 - `apps/server`: existing Cloudflare Worker and R2 resource declarations.
-- `apps/dashboard`: dashboard scaffold (application shell follows in STV-466).
+- `apps/dashboard`: React dashboard built with Bun HTML imports (authentication follows in STV-466).
+- `packages/ui`: shared shadcn Mira components, theme tokens, and utilities ([guide](packages/ui/README.md)).
 - `packages/db`: Drizzle schemas, migrations, and composable database/repository layers ([guide](packages/db/README.md)).
 - `packages/api-spec`: shared Effect HttpApi groups, transport schemas and tagged API errors
   ([contract and consumption guide](packages/api-spec/README.md)).
@@ -39,6 +40,8 @@ bun run format:check
 bun run typecheck     # cached workspace type checks
 bun run test          # copied rule suites and config integration checks
 bun run check         # lint, type checks, and formatting
+bun run dashboard:dev   # dashboard UI preview with hot reload
+bun run dashboard:build # production dashboard assets
 bun run setup         # create organization config; bootstrap handoff when available
 bun run plan          # Alchemy plan for the configured staging stage
 ```
@@ -139,7 +142,7 @@ the API Worker binds them:
 | Durable Object         | `Coordinator`                                                          | Revocation epochs and other strongly consistent primitives          |
 | Secrets Store secrets  | `SigningKey`, `BetterAuthSecret`, `GitHubOAuthSecret`, `BasinSqlToken` | Stored as `<stage>_<ENV_NAME>` in the account store                 |
 | Rate Limiting          | `RATE_LIMITER`                                                         | Request ceilings (`@repo/ratelimit`)                                |
-| Static assets          | `ASSETS`                                                               | Dashboard build in `apps/dashboard/public`                          |
+| Static assets          | `ASSETS`                                                               | Dashboard build in `apps/dashboard/dist`                            |
 
 The GitHub OAuth and Basin secrets are created only when their variables are set.
 Cloudflare allows one Secrets Store per account; Alchemy adopts it and never deletes it.

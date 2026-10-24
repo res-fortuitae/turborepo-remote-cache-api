@@ -27,6 +27,11 @@ exception owned by `@repo/coordinator`. Its client service remains runtime agnos
 not runtime domain services. `packages/config` remains shared TypeScript/lint/format
 tooling, never deployment or domain configuration. Vendored rules remain untouched.
 
+`@repo/ui` is the presentation exception: it owns shared shadcn Mira components,
+semantic theme tokens, and UI utilities, with no workspace runtime dependencies.
+Apps consume its public `components/*`, `lib/utils`, and `styles.css` exports.
+UI source and styles stay independent of backend services and app internals.
+
 The root `alchemy.run.ts` remains the single infrastructure composition root. Environment
 files and Alchemy state remain at the root; dev, deploy, and destroy use root scripts.
 Resource declarations live in `@repo/infra` (STV-428) without another stack or moved
