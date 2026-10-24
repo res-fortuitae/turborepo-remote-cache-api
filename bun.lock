@@ -43,6 +43,7 @@
         "@repo/deploy-config": "workspace:*",
         "@repo/infra": "workspace:*",
         "@repo/mailer": "workspace:*",
+        "@repo/oidc": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
       },
@@ -270,7 +271,10 @@
       "name": "@repo/oidc",
       "version": "0.0.0",
       "dependencies": {
+        "@repo/db": "workspace:*",
+        "@repo/deploy-config": "workspace:*",
         "effect": "^4.0.6",
+        "jose": "^6.2.13",
       },
       "devDependencies": {
         "@repo/config": "workspace:*",
