@@ -9,7 +9,14 @@ export {
 
 export type { JwksCacheService, KvStore } from "./jwks-cache.ts";
 
-export { GITHUB_ACTIONS_ISSUER, GitHubIssuerRegistry, IssuerRegistry } from "./issuer-registry.ts";
+export {
+  GITHUB_ACTIONS_ISSUER,
+  VERCEL_ISSUER,
+  VercelClaims,
+  BuiltinIssuerRegistry,
+  GitHubIssuerRegistry,
+  IssuerRegistry,
+} from "./issuer-registry.ts";
 
 export type { OidcIssuer } from "./issuer-registry.ts";
 

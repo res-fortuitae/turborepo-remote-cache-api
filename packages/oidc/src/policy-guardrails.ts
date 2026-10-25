@@ -60,7 +60,7 @@ const evaluate = (
     error("provider_issuer_mismatch", "GitHub policies must use a GitHub Actions issuer", "iss");
   if (
     policy.provider === "vercel" &&
-    !/^https:\/\/oidc\.vercel\.com(?:\/[A-Za-z0-9_-]+)?$/.test(policy.issuer)
+    !/^https:\/\/oidc\.vercel\.com(?:\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$/.test(policy.issuer)
   )
     error("provider_issuer_mismatch", "Vercel policies must use a Vercel issuer", "iss");
   if (/[?*]/.test(policy.issuer))
