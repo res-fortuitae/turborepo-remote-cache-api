@@ -32,7 +32,8 @@
   },
   "devDependencies": {
     "@repo/config": "workspace:*",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "jose": "6.2.13"
   },
   "peerDependencies": {
     "typescript": "^7"
