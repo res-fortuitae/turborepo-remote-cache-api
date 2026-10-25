@@ -88,10 +88,10 @@ const Header = Schema.Struct({
 const Claims = Schema.Struct({
   iss: Schema.NonEmptyString,
   sub: Schema.NonEmptyString,
-  jti: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
+  jti: Schema.optional(Schema.NonEmptyString.check(Schema.isMaxLength(256))),
   aud: Schema.Union([Schema.NonEmptyString, Schema.Array(Schema.NonEmptyString)]),
   iat: Schema.Int,
-  nbf: Schema.Int,
+  nbf: Schema.optional(Schema.Int),
   exp: Schema.Int,
 });
 
@@ -165,9 +165,9 @@ export const OidcVerifierLive = Layer.effect(
     const load = Effect.fn("OidcVerifier.load")(function* (issuer: OidcIssuer) {
       attempts.set(issuer.issuer, yield* Clock.currentTimeMillis);
 
-      const discovery = yield* getJson(`${issuer.issuer}/.well-known/openid-configuration`).pipe(
-        Effect.flatMap(decodeDiscovery),
-      );
+      const discovery = yield* getJson(
+        `${issuer.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+      ).pipe(Effect.flatMap(decodeDiscovery));
 
       const uri = yield* Effect.try(() => new URL(discovery.jwks_uri));
 
@@ -222,9 +222,11 @@ export const OidcVerifierLive = Layer.effect(
             return yield* invalid("unavailable");
           }
 
-          const keys = yield* refresh
-            ? cache.refresh(issuer.issuer, remoteKeys(issuer))
-            : cache.get(issuer.issuer, remoteKeys(issuer));
+          const keys =
+            issuer.pinnedKeys ??
+            (yield* refresh
+              ? cache.refresh(issuer.issuer, remoteKeys(issuer))
+              : cache.get(issuer.issuer, remoteKeys(issuer)));
 
           // Apply the same public-key restrictions to values read from KV.
           if (
@@ -285,7 +287,13 @@ export const OidcVerifierLive = Layer.effect(
               issuer: issuer.issuer,
               audience: [...audiences],
               algorithms: [...issuer.algorithms],
-              requiredClaims: ["sub", "jti", "iat", "nbf", "exp"],
+              requiredClaims: [
+                "sub",
+                "iat",
+                "exp",
+                ...(issuer.optionalTokenId ? [] : ["jti"]),
+                ...(issuer.optionalNotBefore ? [] : ["nbf"]),
+              ],
               maxTokenAge: config.maxTokenAgeSeconds,
               clockTolerance: config.clockSkewSeconds,
               currentDate: new Date(now),
@@ -306,7 +314,7 @@ export const OidcVerifierLive = Layer.effect(
 
         if (
           claims.exp <= claims.iat ||
-          claims.nbf >= claims.exp ||
+          (claims.nbf !== undefined && claims.nbf >= claims.exp) ||
           claims.exp - claims.iat > (issuer.maxTokenLifetimeSeconds ?? config.maxTokenAgeSeconds) ||
           (issuer.validateClaims !== undefined && !issuer.validateClaims(payload))
         )
@@ -317,7 +325,26 @@ export const OidcVerifierLive = Layer.effect(
         // Keep the row throughout the skew window, after which jose rejects this token.
         const acceptedUntil = (claims.exp + config.clockSkewSeconds) * 1000;
 
-        if (!(yield* replay.claim(claims.iss, claims.jti, acceptedUntil, now)))
+        // Hash signed content, not signature bytes (avoids alternate-signature replay).
+        const tokenId =
+          claims.jti ??
+          (yield* Effect.tryPromise({
+            try: async () =>
+              "sha256:" +
+              Array.from(
+                new Uint8Array(
+                  await crypto.subtle.digest(
+                    "SHA-256",
+                    new TextEncoder().encode(token.slice(0, token.lastIndexOf("."))),
+                  ),
+                ),
+              )
+                .map((byte) => byte.toString(16).padStart(2, "0"))
+                .join(""),
+            catch: () => invalid("unavailable"),
+          }));
+
+        if (!(yield* replay.claim(claims.iss, tokenId, acceptedUntil, now)))
           return yield* invalid("replay");
 
         return {
@@ -325,7 +352,7 @@ export const OidcVerifierLive = Layer.effect(
           audience: audience.value,
           issuer: claims.iss,
           subject: claims.sub,
-          tokenId: claims.jti,
+          tokenId,
           expiresAt: claims.exp * 1000,
         };
       }),

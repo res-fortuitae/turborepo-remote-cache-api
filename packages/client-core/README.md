@@ -76,8 +76,13 @@ AWS projected tokens, Azure projected workload tokens and Google environments.
   `https://oidc.vercel.com/~token` endpoint for the configured audience and a fresh
   `jti`. Both credentials are masked; exchanged assertions are never cached or
   retried. No Vercel SDK or CLI login is needed in builds. Build tokens are documented by [Vercel](https://vercel.com/docs/oidc).
-- GitLab reads `CACHE_ID_TOKEN`; CircleCI reads `CIRCLE_OIDC_TOKEN_V2`; Bitbucket
-  reads `BITBUCKET_STEP_OIDC_TOKEN`. Configure their token audiences upstream.
+- GitLab reads `CACHE_ID_TOKEN`; Bitbucket reads `BITBUCKET_STEP_OIDC_TOKEN`.
+  Configure their token audiences upstream.
+- CircleCI calls the injected command adapter with
+  `circleci run oidc get --claims '{"aud":"<audience>"}' --v2` as separate argv
+  values on every acquisition. Its default environment token targets the org ID,
+  so it is used for detection only. Install the CircleCI environment CLI in the
+  runner; a failed command fails authentication without downgrading credentials.
 - Buildkite calls the injected command adapter with
   `buildkite-agent oidc request-token --audience <audience>` as separate argv values.
 - AWS EKS reads `AWS_WEB_IDENTITY_TOKEN_FILE`; Azure reads
@@ -89,8 +94,8 @@ AWS projected tokens, Azure projected workload tokens and Google environments.
   See [Google identity tokens](https://docs.cloud.google.com/compute/docs/instances/verifying-instance-identity).
   Arbitrary metadata host overrides are not followed.
 
-Provider readers do not establish server support. Issuer registry/guardrail profiles
-for additional issuers follow in STV-451; this library never accepts a default-audience token or
+Provider readers do not establish server trust. Register/allow the exact issuer
+and save immutable-ID policies as documented in `@repo/oidc`; this library never accepts a default-audience token or
 changes server trust settings. Except for Vercel's explicit audience exchange, projected/file/env tokens must already have the
 accepted audience. Files are bounded to 16 KiB, HTTP replies to 64 KiB, and identity
 HTTP calls time out after 10 seconds. Fetch requests explicitly disable redirects.

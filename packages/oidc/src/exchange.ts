@@ -11,25 +11,31 @@ import { PolicyGuardrails } from "./policy-guardrails.ts";
 
 /** A small skew margin, never an extension past instance or policy ceilings. */
 export const OIDC_EXCHANGE_MARGIN_SECONDS = 30;
+
 export class ExchangeConfig extends Context.Service<ExchangeConfig, IdentityCeilings>()(
   "@repo/oidc/ExchangeConfig",
 ) {}
+
 export const ExchangeConfigLive = Layer.succeed(ExchangeConfig, {});
 
 export class ExchangeError extends Schema.TaggedError<ExchangeError>()("ExchangeError", {
   status: Schema.Literals([403, 429, 503]),
   reason: Schema.String,
 }) {}
+
 export interface ExchangeContext {
   readonly ip: string;
   readonly userAgent: string;
   readonly requestId: string;
   readonly dpop?: string;
 }
+
 const denied = (reason: string) => new ExchangeError({ status: 403, reason });
 const unavailable = () => new ExchangeError({ status: 503, reason: "unavailable" });
+
 const snapshot = (verified: VerifiedOidcToken | undefined): Schema.JsonObject => {
   if (!verified) return {};
+
   const entries = Object.entries(verified.claims).filter(
     ([key, value]) =>
       [
@@ -52,8 +58,24 @@ const snapshot = (verified: VerifiedOidcToken | undefined): Schema.JsonObject =>
         "project_id",
         "namespace_id",
         "pipeline_source",
+        "oidc.circleci.com/project-id",
+        "oidc.circleci.com/org-id",
+        "oidc.circleci.com/vcs-origin",
+        "oidc.circleci.com/vcs-ref",
+        "oidc.circleci.com/ssh-rerun",
+        "organization_id",
+        "pipeline_id",
+        "build_branch",
+        "build_source",
+        "workspaceUuid",
+        "repositoryUuid",
+        "branchName",
+        "deploymentEnvironment",
+        "tid",
+        "oid",
       ].includes(key) && Schema.is(Schema.Json)(value),
   );
+
   return Schema.decodeUnknownSync(Schema.JsonObject)(Object.fromEntries(entries));
 };
 
@@ -80,6 +102,7 @@ const makeExchange = Effect.gen(function* () {
       let verified: VerifiedOidcToken | undefined;
       let tenant: { team: string; project: string } | undefined;
       let diagnostics: Schema.JsonObject = {};
+
       const record = (outcome: "allow" | "deny" | "error", reason?: string) =>
         audit
           .commit(
@@ -93,11 +116,19 @@ const makeExchange = Effect.gen(function* () {
                 display: verified?.issuer ?? "Unverified OIDC",
               },
               action: "oidc.exchange",
-              target: { type: "project", id: tenant?.project ?? "unknown" },
+              target: {
+                type: "project",
+                id: tenant?.project ?? "unknown",
+              },
               outcome,
               reason,
-              ...{ ip: context.ip, userAgent: context.userAgent, requestId: context.requestId },
-              metadata: { claims: snapshot(verified), ...diagnostics },
+              ip: context.ip,
+              userAgent: context.userAgent,
+              requestId: context.requestId,
+              metadata: {
+                claims: snapshot(verified),
+                ...diagnostics,
+              },
             },
             () => [],
           )
@@ -106,9 +137,11 @@ const makeExchange = Effect.gen(function* () {
       const run = Effect.gen(function* () {
         if (!(yield* limiter.allow(`oidc:ip:${context.ip || "unknown"}`)))
           return yield* new ExchangeError({ status: 429, reason: "rate_limit_ip" });
+
         const request = yield* Schema.decodeUnknownEffect(ExchangeRequest)(input).pipe(
           Effect.mapError(() => denied("malformed")),
         );
+
         if (!(yield* limiter.allow(`oidc:org:${request.team}`)))
           return yield* new ExchangeError({ status: 429, reason: "rate_limit_org" });
         verified = yield* verifier
@@ -120,11 +153,13 @@ const makeExchange = Effect.gen(function* () {
           );
         const project = yield* projects.find(request.team, request.project);
         const resource = yield* settings.resource(request.team, request.project);
+
         if (!project || !resource.exists || resource.deleted || resource.orgArchived)
           return yield* denied("resource_unavailable");
         tenant = { team: request.team, project: project.id };
         const policy = yield* settings.policy(request.team, ceilings);
         const enabled = (yield* policies.list(project.id)).filter((entry) => entry.enabled);
+
         const reports = enabled.map((entry) => ({
           id: entry.id,
           ...guardrails.evaluate(
@@ -139,6 +174,7 @@ const makeExchange = Effect.gen(function* () {
             },
           ),
         }));
+
         const decision = matcher.match(
           project,
           enabled.filter((entry) =>
@@ -151,6 +187,7 @@ const makeExchange = Effect.gen(function* () {
           ),
           verified.claims,
         );
+
         diagnostics = {
           guardrails: reports.map((report) => ({
             policyId: report.id,
@@ -163,11 +200,15 @@ const makeExchange = Effect.gen(function* () {
                 failedClaims: [...(decision.closest?.failedClaims ?? [])],
               }),
         };
+
         if (!decision.matched) return yield* denied("policy_mismatch");
+
         // Until STV-486 verifies proofs, never mint an unbound token in their presence.
         if (context.dpop !== undefined || policy.requireBoundTokens || decision.requireBoundTokens)
           return yield* denied("binding_unavailable");
+
         if (policy.requireArtifactSigning) return yield* denied("artifact_signing_unavailable");
+
         const ttl = Math.floor(
           Math.min(
             decision.ttlSeconds,
@@ -176,7 +217,9 @@ const makeExchange = Effect.gen(function* () {
               OIDC_EXCHANGE_MARGIN_SECONDS,
           ),
         );
+
         if (ttl < 1) return yield* denied("expired");
+
         const issued = yield* signer.issue({
           subject: `oidc:${verified.issuer}:${verified.subject}`,
           org: request.team,
@@ -184,12 +227,14 @@ const makeExchange = Effect.gen(function* () {
           scope: decision.scope,
           maxTtlSeconds: ttl,
         });
+
         diagnostics = {
           ...diagnostics,
           scope: decision.scope,
           expiresAt: issued.principal.expiresAt * 1000,
           cacheTokenId: issued.principal.tokenId,
         };
+
         return {
           token: Redacted.make(issued.token),
           expiresAt: new Date(issued.principal.expiresAt * 1000).toISOString(),
@@ -199,6 +244,7 @@ const makeExchange = Effect.gen(function* () {
           scope: decision.scope,
         } satisfies ExchangeResponse;
       }).pipe(Effect.mapError((error) => (error instanceof ExchangeError ? error : unavailable())));
+
       return yield* run.pipe(
         Effect.tapError((error) => record(error.status === 503 ? "error" : "deny", error.reason)),
         Effect.tap(() => record("allow")),
@@ -206,8 +252,10 @@ const makeExchange = Effect.gen(function* () {
     }),
   };
 });
+
 export class OidcExchange extends Context.Service<
   OidcExchange,
   Effect.Success<typeof makeExchange>
 >()("@repo/oidc/OidcExchange") {}
+
 export const OidcExchangeLive = Layer.effect(OidcExchange, makeExchange);

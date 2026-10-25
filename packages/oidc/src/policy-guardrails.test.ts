@@ -20,6 +20,7 @@ const settings: PolicyGuardrailSettings = {
     "https://gitlab.com",
   ],
 };
+
 const policy: typeof TrustPolicyRequest.Type = {
   provider: "github",
   enabled: true,
@@ -34,6 +35,7 @@ const policy: typeof TrustPolicyRequest.Type = {
   scope: "read write",
   ttlSeconds: 600,
 };
+
 const row: TrustPolicy = {
   id: "policy",
   projectId: "project",
@@ -49,19 +51,23 @@ const row: TrustPolicy = {
     ),
   },
 };
+
 const project = { id: "project", archivedAt: null };
+
 const run = (task: (guardrails: typeof PolicyGuardrails.Service) => void) =>
   Effect.runPromise(
     Effect.gen(function* () {
       task(yield* PolicyGuardrails);
     }).pipe(Effect.provide(PolicyGuardrailsTest)),
   );
+
 const codes = (findings: readonly { readonly code: string }[]) =>
   findings.map((finding) => finding.code);
 
 test("requires immutable IDs, exact identity rules, allowed issuer and every configured audience", () =>
   run((guard) => {
     expect(guard.evaluate(policy, settings).errors).toEqual([]);
+
     const invalidClaims: (typeof TrustPolicyRequest.Type)["claims"][] = [
       { aud: ["cache"], repository: ["org/repo"] },
       { ...policy.claims, repository_id: ["name"] },
@@ -70,13 +76,14 @@ test("requires immutable IDs, exact identity rules, allowed issuer and every con
       { ...policy.claims, aud: ["cache", "attacker"] },
       { ...policy.claims, aud: [] },
     ];
+
     for (const claims of invalidClaims)
       expect(guard.evaluate({ ...policy, claims }, settings).errors.length).toBeGreaterThan(0);
     expect(
       codes(guard.evaluate({ ...policy, issuer: "https://attacker.example" }, settings).errors),
     ).toContain("issuer_disallowed");
     expect(codes(guard.evaluate({ ...policy, provider: "custom" }, settings).errors)).toContain(
-      "unsupported_provider",
+      "immutable_identity_required",
     );
   }));
 
@@ -90,6 +97,7 @@ test("refuses PR, target PR, unspecified event and preview writes unless explici
       expect(codes(override.warnings)).toContain("untrusted_writes_enabled");
       expect(guard.evaluate({ ...input, scope: "read" }, settings).errors).toEqual([]);
     }
+
     expect(
       codes(
         guard.evaluate(
@@ -101,6 +109,7 @@ test("refuses PR, target PR, unspecified event and preview writes unless explici
         ).errors,
       ),
     ).toContain("untrusted_writes_forbidden");
+
     const vercel = {
       ...policy,
       provider: "vercel" as const,
@@ -112,6 +121,7 @@ test("refuses PR, target PR, unspecified event and preview writes unless explici
         environment: ["preview"],
       },
     };
+
     expect(codes(guard.evaluate(vercel, settings).errors)).toContain("untrusted_writes_forbidden");
     expect(guard.evaluate({ ...vercel, scope: "read" }, settings).errors).toEqual([]);
     expect(
@@ -120,6 +130,7 @@ test("refuses PR, target PR, unspecified event and preview writes unless explici
         settings,
       ).errors,
     ).toEqual([]);
+
     const gitlab = {
       ...policy,
       provider: "gitlab" as const,
@@ -131,6 +142,7 @@ test("refuses PR, target PR, unspecified event and preview writes unless explici
         pipeline_source: ["merge_request_event"],
       },
     };
+
     expect(codes(guard.evaluate(gitlab, settings).errors)).toContain("untrusted_writes_forbidden");
   }));
 
@@ -142,17 +154,20 @@ test("warns on broad refs, unrestricted jobs and near maximum TTL; strict allowl
       "broad_write_refs",
       "unrestricted_write_job",
     ]);
+
     const strict = {
       ...settings,
       workflowRefs: ["org/repo/.github/workflows/cache.yml@refs/heads/main"],
       environments: ["protected"],
       requireBoundTokens: true,
     };
+
     expect(codes(guard.evaluate(input, strict).errors)).toEqual([
       "bound_tokens_required",
       "write_restriction_required",
       "write_restriction_required",
     ]);
+
     const constrained = {
       ...input,
       requireBoundTokens: true,
@@ -162,6 +177,7 @@ test("warns on broad refs, unrestricted jobs and near maximum TTL; strict allowl
         environment: ["protected"],
       },
     };
+
     expect(guard.evaluate(constrained, strict).errors).toEqual([]);
     expect(
       codes(
@@ -189,6 +205,7 @@ test("tester excludes invalid and disabled policies, reports each policy and sim
       event_name: "push",
       ref: "refs/heads/main",
     };
+
     const bad = { ...row, id: "legacy", body: { ...row.body, claims: { aud: ["cache"] } } };
     const disabled = { ...row, id: "disabled", enabled: false };
     const result = guard.test(project, [row, bad, disabled], claims, settings);
@@ -217,6 +234,7 @@ test("matcher caps old broad write policies for fork and preview claims without 
     Effect.gen(function* () {
       const matcher = yield* TrustPolicyMatcher;
       const broad = { ...row, body: { ...row.body, claims: { aud: ["cache"] } } };
+
       for (const extra of [
         { event_name: "pull_request_target" },
         { event_name: "pull_request" },
@@ -239,3 +257,109 @@ test("matcher caps old broad write policies for fork and preview claims without 
       }
     }).pipe(Effect.provide(TrustPolicyMatcherTest)),
   ));
+
+test("additional issuers bind immutable IDs and provider identity before allowing policies", () =>
+  run((guard) => {
+    const uuid = "11111111-1111-4111-8111-111111111111";
+
+    const entries = [
+      {
+        provider: "gitlab",
+        issuer: "https://gitlab.com",
+        claims: { project_id: ["1"], namespace_id: ["2"] },
+      },
+      {
+        provider: "circleci",
+        issuer: `https://oidc.circleci.com/org/${uuid}`,
+        claims: { "oidc.circleci.com/project-id": [uuid] },
+      },
+      {
+        provider: "buildkite",
+        issuer: "https://agent.buildkite.com",
+        claims: { organization_id: [uuid], pipeline_id: [uuid] },
+      },
+      {
+        provider: "bitbucket",
+        issuer: "https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config/identity/oidc",
+        claims: { workspaceUuid: [`{${uuid}}`], repositoryUuid: [`{${uuid}}`] },
+      },
+      {
+        provider: "aws-eks",
+        issuer: "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF",
+        claims: { sub: ["system:serviceaccount:ci:builder"] },
+      },
+      { provider: "google", issuer: "https://accounts.google.com", claims: { sub: ["123456789"] } },
+      {
+        provider: "azure",
+        issuer: `https://login.microsoftonline.com/${uuid}/v2.0`,
+        claims: { tid: [uuid], oid: [uuid] },
+      },
+      {
+        provider: "azure",
+        issuer: `https://eastus.oic.prod-aks.azure.com/${uuid}/${uuid}/`,
+        claims: { sub: ["system:serviceaccount:ci:builder"] },
+      },
+      {
+        provider: "custom",
+        issuer: "https://identity.acme.com",
+        claims: { sub: ["immutable-workload-id"] },
+      },
+    ] as const;
+
+    for (const entry of entries) {
+      const input = {
+        ...policy,
+        ...entry,
+        scope: "read" as const,
+        claims: { aud: ["cache"], ...entry.claims },
+      };
+      const config = { ...settings, allowedIssuers: [entry.issuer] };
+      expect(guard.evaluate(input, config).errors).toEqual([]);
+      expect(
+        codes(guard.evaluate({ ...input, claims: { aud: ["cache"] } }, config).errors),
+      ).toContain("immutable_identity_required");
+      expect(codes(guard.evaluate(input, { ...config, allowedIssuers: [] }).errors)).toContain(
+        "issuer_disallowed",
+      );
+
+      if (entry.provider !== "custom")
+        expect(
+          codes(
+            guard.evaluate(
+              { ...input, issuer: "https://attacker.com" },
+              { ...config, allowedIssuers: ["https://attacker.com"] },
+            ).errors,
+          ),
+        ).toContain("provider_issuer_mismatch");
+    }
+
+    expect(
+      codes(
+        guard.evaluate(
+          {
+            ...policy,
+            provider: "custom",
+            issuer: "https://127.0.0.1",
+            claims: { aud: ["cache"], sub: ["x"] },
+          },
+          settings,
+        ).errors,
+      ),
+    ).toContain("unsafe_issuer");
+    expect(
+      codes(
+        guard.evaluate(
+          {
+            ...policy,
+            provider: "custom",
+            claims: { aud: ["cache"], sub: ["repo:mutable/repo:ref:refs/heads/main"] },
+          },
+          settings,
+        ).errors,
+      ),
+    ).toContain("provider_issuer_mismatch");
+    const build = { ...policy, ...entries[2], claims: { aud: ["cache"], ...entries[2].claims } };
+    expect(
+      codes(guard.evaluate(build, { ...settings, allowedIssuers: [build.issuer] }).errors),
+    ).toContain("untrusted_writes_forbidden");
+  }));

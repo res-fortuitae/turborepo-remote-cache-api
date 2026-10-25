@@ -747,3 +747,24 @@ test("Vercel exchanges freshly on each refresh, masks source and never exposes p
     );
   }
 });
+
+test("CircleCI requests a fresh custom audience with argv rather than reusing its default env token", () => {
+  const f = fixture({ env: { CIRCLECI: "true", CIRCLE_OIDC_TOKEN_V2: "wrong-audience" } });
+
+  return run(
+    Effect.gen(function* () {
+      const provider = yield* CiProvider;
+      expect(Redacted.value(yield* provider.token)).toBe(ciSecret);
+      yield* provider.token;
+      expect(f.commands).toEqual(
+        Array.from({ length: 2 }, () => ({
+          executable: "circleci",
+          args: ["run", "oidc", "get", "--claims", JSON.stringify({ aud: api }), "--v2"],
+        })),
+      );
+      expect(f.masks).toEqual([ciSecret, ciSecret]);
+      expect(f.requests).toEqual([]);
+    }),
+    f,
+  );
+});

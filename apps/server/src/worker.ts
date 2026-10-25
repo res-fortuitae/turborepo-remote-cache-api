@@ -90,7 +90,8 @@ import {
   OidcExchangeLive,
   OidcVerifierLive,
   OidcVerifierConfig,
-  BuiltinIssuerRegistry,
+  ConfiguredIssuerRegistry,
+  CustomIssuerConfig,
   JwksCacheLive,
   KvNamespace,
   TrustPolicyMatcherLive,
@@ -105,6 +106,7 @@ import {
   CanonicalOrigin,
   OidcAudience,
   OidcAudiences,
+  CustomOidcIssuers,
   resolveOriginSettings,
 } from "@repo/deploy-config";
 import { ArtifactOpEmitter, ArtifactOpEmitterD1Uploads, AnalyticsEmitter } from "@repo/analytics";
@@ -161,6 +163,7 @@ const AuthEnvironment = Schema.Struct({
   R2_LIFECYCLE_BUCKET: Schema.optional(Schema.String),
   R2_LIFECYCLE_JURISDICTION: Schema.optional(Schema.String),
   PROJECT_RETENTION_DAYS: Schema.optional(Schema.NumberFromString),
+  OIDC_CUSTOM_ISSUERS: Schema.optional(Schema.fromJsonString(CustomOidcIssuers)),
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
   CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
   GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
@@ -183,6 +186,7 @@ interface DeploymentEnvironment {
   EDGE_CACHE_ENABLED: string;
   CAPABILITIES: string;
   OIDC_AUDIENCES?: string;
+  OIDC_CUSTOM_ISSUERS?: string;
   GITHUB_CLIENT_ID?: string;
   IDENTITY_CEILINGS?: string;
   EMAIL_FROM?: string;
@@ -251,6 +255,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
     if (config.groups !== undefined) env.GROUP_LIMITS = JSON.stringify(config.groups);
 
     if (config.email !== undefined) env.EMAIL_FROM = config.email.from;
+
+    if (config.oidcCustomIssuers !== undefined)
+      env.OIDC_CUSTOM_ISSUERS = JSON.stringify(config.oidcCustomIssuers);
 
     if (config.oidcAudiences !== undefined)
       env.OIDC_AUDIENCES = JSON.stringify(config.oidcAudiences);
@@ -902,7 +909,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(
         Layer.mergeAll(
           FetchHttpClient.layer,
-          BuiltinIssuerRegistry,
+          ConfiguredIssuerRegistry.pipe(
+            Layer.provide(
+              Layer.succeed(CustomIssuerConfig, authEnvironment.OIDC_CUSTOM_ISSUERS ?? []),
+            ),
+          ),
           ReplayGuardLive,
           JwksCacheLive.pipe(Layer.provide(Layer.effect(KvNamespace, kv.raw))),
           Layer.effect(

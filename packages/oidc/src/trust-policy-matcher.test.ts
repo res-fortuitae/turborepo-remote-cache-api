@@ -146,3 +146,41 @@ test("refPatterns is an additional ref/branch-only constraint; denials identify 
       closest: { policyId: "p", failedClaims: ["repository"] },
     });
   }));
+
+test("boolean claim conditions stay exact and provider ref fields participate in ref patterns", () =>
+  run((matcher) => {
+    for (const field of ["build_branch", "branchName", "oidc.circleci.com/vcs-ref"]) {
+      const input = {
+        ...policy,
+        body: {
+          ...policy.body,
+          claims: { aud: ["cache"], "oidc.circleci.com/ssh-rerun": ["false"] },
+          refPatterns: ["main"],
+        },
+      };
+      expect(
+        matcher.match(project, [input], {
+          iss: claims.iss,
+          aud: "cache",
+          "oidc.circleci.com/ssh-rerun": false,
+          [field]: "main",
+        }).matched,
+      ).toBe(true);
+      expect(
+        matcher.match(project, [input], {
+          iss: claims.iss,
+          aud: "cache",
+          "oidc.circleci.com/ssh-rerun": true,
+          [field]: "main",
+        }).matched,
+      ).toBe(false);
+      expect(
+        matcher.match(project, [input], {
+          iss: claims.iss,
+          aud: "cache",
+          "oidc.circleci.com/ssh-rerun": false,
+          [field]: "other",
+        }).matched,
+      ).toBe(false);
+    }
+  }));
