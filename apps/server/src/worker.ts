@@ -31,7 +31,11 @@ import {
   schema,
   DatabaseLive,
   ReplayGuardLive,
+  ProjectRepoLive,
 } from "@repo/db";
+import { AuthorizationLive } from "@repo/authz";
+import { ProjectLimits, ProjectsLive } from "@repo/projects";
+import { isProjectsPath, projectsRoute } from "./projects-route.ts";
 import { pruneOidcReplayIds } from "@repo/oidc";
 import {
   AuthConfig,
@@ -74,6 +78,7 @@ import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
+  PROJECT_RETENTION_DAYS: Schema.optional(Schema.NumberFromString),
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
   CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
   GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
@@ -85,6 +90,7 @@ const AuthEnvironment = Schema.Struct({
 });
 
 interface DeploymentEnvironment {
+  PROJECT_RETENTION_DAYS: string;
   EDGE_CACHE_ENABLED: string;
   CAPABILITIES: string;
   OIDC_AUDIENCES?: string;
@@ -124,6 +130,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      PROJECT_RETENTION_DAYS: String(config.limits.artifactRetentionDays),
       IDENTITY_CEILINGS: JSON.stringify(config.identityCeilings ?? {}),
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
       CAPABILITIES: JSON.stringify(capabilities),
@@ -371,6 +378,24 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const auth = authRoute(authLayer);
 
+    const projectsLayer = ProjectsLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ProjectRepoLive,
+          AuthorizationLive,
+          auditLayer,
+          authConfig,
+          Layer.succeed(ProjectLimits, {
+            retentionDays: authEnvironment.PROJECT_RETENTION_DAYS ?? 30,
+            maxArtifactBytes: capabilities.directUploads.enabled ? 200_000_000 : 100_000_000,
+          }),
+        ),
+      ),
+      Layer.provide(databaseLayer),
+    );
+
+    const projects = projectsRoute(Layer.mergeAll(authLayer, projectsLayer));
+
     const report = capabilitiesRoute(capabilities, token).pipe(
       Effect.provide(authLayer),
       Effect.catch(() =>
@@ -387,6 +412,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         const { pathname } = new URL(request.url, "http://localhost");
 
         if (pathname === "/api/instance/capabilities") return yield* report;
+
+        if (isProjectsPath(pathname)) return yield* projects;
 
         return yield* isAuthPath(pathname) ? auth : artifacts;
       }).pipe(withSecurityHeaders, Effect.provide(originLayer)),

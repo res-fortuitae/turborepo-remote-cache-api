@@ -10,6 +10,7 @@ This Bun + Turborepo monorepo contains:
 - `apps/dashboard`: React dashboard built with Bun HTML imports (authentication follows in STV-466).
 - `packages/ui`: shared shadcn Mira components, theme tokens, and utilities ([guide](packages/ui/README.md)).
 - `packages/db`: Drizzle schemas, migrations, and composable database/repository layers ([guide](packages/db/README.md)).
+- `packages/projects`: authorized project management and transactional audit ([guide](docs/projects.md)).
 - `packages/api-spec`: shared Effect HttpApi groups, transport schemas and tagged API errors
   ([contract and consumption guide](packages/api-spec/README.md)).
 - `packages/shared`: compatibility schema exports and redacted bearer token types.
@@ -114,6 +115,11 @@ steps, security headers and Cloudflare plan limits.
 
 The CI ID-token verifier and its replay/cache guarantees are documented in
 [`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.
+
+The first M2 project-management slice supports create, paginated list, read,
+update, archive and restore with live session/org authorization. See
+[project management](docs/projects.md) for routes, policy ceilings and the
+remaining storage/credential lifecycle work in STV-438.
 
 ## Upstream releases
 

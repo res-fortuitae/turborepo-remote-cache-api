@@ -1,0 +1,31 @@
+{
+  "name": "@repo/projects",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "bun check",
+    "test": "bun test",
+    "lint": "oxlint .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@repo/api-spec": "workspace:*",
+    "@repo/audit": "workspace:*",
+    "@repo/auth": "workspace:*",
+    "@repo/authz": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/deploy-config": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.5",
+    "effect": "^4.0.6"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "@types/bun": "latest",
+    "typescript": "^7"
+  }
+}

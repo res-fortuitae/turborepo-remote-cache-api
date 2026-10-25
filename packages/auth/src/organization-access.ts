@@ -7,7 +7,7 @@ import { z } from "zod";
 export const organizationAccess = createAccessControl({
   ...defaultStatements,
   organization: [...defaultStatements.organization, "transfer"],
-  project: ["create", "update", "delete", "grant"],
+  project: ["create", "read", "update", "delete", "grant"],
   trustPolicy: ["create", "update", "delete"],
   apiKey: ["create", "revoke"],
   audit: ["read", "export"],

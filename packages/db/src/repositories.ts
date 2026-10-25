@@ -1,4 +1,4 @@
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, gt, lte, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { Database } from "./database.ts";
 import { oidcJti, project, projectGrant, trustPolicy } from "./schema/index.ts";
@@ -19,6 +19,25 @@ const projectRepo = Effect.gen(function* () {
   const database = yield* Database;
 
   return {
+    /** Internal routing lookup only. The caller must authorize the returned org. */
+    locate: (id: string) =>
+      database.query("ProjectRepo.locate", (db) =>
+        db.select().from(project).where(eq(project.id, id)).get(),
+      ),
+    page: (orgId: string, limit: number, cursor?: string) =>
+      database.query("ProjectRepo.page", (db) =>
+        db
+          .select()
+          .from(project)
+          .where(
+            and(
+              eq(project.orgId, orgId),
+              cursor === undefined ? undefined : gt(project.id, cursor),
+            ),
+          )
+          .orderBy(project.id)
+          .limit(limit),
+      ),
     find: (orgId: string, id: string) =>
       database.query("ProjectRepo.find", (db) =>
         db
