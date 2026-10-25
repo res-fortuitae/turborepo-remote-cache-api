@@ -21,7 +21,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    organization({ teams: { enabled: true } }),
+    organization({ dynamicAccessControl: { enabled: true }, teams: { enabled: true } }),
     admin(),
     magicLink({ storeToken: "hashed", sendMagicLink: async () => {} }),
   ],

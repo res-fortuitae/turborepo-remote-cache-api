@@ -73,3 +73,27 @@ Native `/organization/create-team`, `update-team`, `remove-team`,
 `add-team-member`, `remove-team-member`, and list endpoints back the group UI.
 Group membership is constrained to organization membership. A group's ID is the
 `team` grant principal for M2 project RBAC, never another Turbo team slug.
+
+## Organization administration roles
+
+`organizationAccess` extends Better Auth defaults with project CRUD/grants,
+trust-policy CRUD, API-key create/revoke, audit read/export, analytics read,
+and billing/settings update. Owners have every statement; admins have every
+statement except organization delete/ownership transfer. Members have no org
+administration statements; their project reads require M2 grants. Auditors can
+read audit and analytics, without export or mutations.
+
+Dynamic roles are enabled (maximum 50/org). Use Better Auth create/update/delete
+role APIs. Native role administration and invitation delegation cannot grant
+permissions the caller lacks. Invitations accept a built-in or custom role,
+except owner; `POST /organization/transfer-ownership` requires the owner role
+and an active org member as `newOwnerId`. Instance admins have their separate,
+audited elevation path. Org owners can delete an org only after its projects
+are removed.
+
+`POST /organization/policy` takes `{ organizationId, policy? }`: omit `policy` to
+read effective policy, include it to update. It requires settings:update. Values
+are clamped to the instance policy, API-key restrictions and security requirements
+can only tighten, and signup allowlists cannot broaden. Disjoint signup lists
+are rejected rather than interpreted as unrestricted. Cache access is never
+conferred by these role statements; that is the M2 authorization service's job.

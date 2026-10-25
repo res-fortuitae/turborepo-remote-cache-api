@@ -5,7 +5,14 @@ import {
   type DatabaseQueries,
   type DatabaseStatement,
 } from "@repo/db";
-import type { AuthSettings } from "@repo/deploy-config";
+import { InstancePolicy, tightenPolicy, type AuthSettings } from "@repo/deploy-config";
+import * as Schema from "effect/Schema";
+import {
+  organizationAccess,
+  organizationRoles,
+  hasOrganizationPermission,
+  canDelegateOrganizationRole,
+} from "./organization-access.ts";
 import {
   APIError,
   createAuthEndpoint,
@@ -78,7 +85,8 @@ export const organizationPlugins = (
       .select()
       .from(schema.member)
       .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)));
-    if (!member || !["owner", "admin"].includes(member.role)) throw new APIError("FORBIDDEN");
+    if (!member || !(await hasOrganizationPermission(db, orgId, userId, "invitation", "create")))
+      throw new APIError("FORBIDDEN");
     return member;
   };
   const eligibleEmail = async (email: string) => {
@@ -139,6 +147,9 @@ export const organizationPlugins = (
           (policy.orgCreation === "anyone" || live.role === "owner" || live.role === "admin")
         );
       },
+      ac: organizationAccess,
+      roles: organizationRoles,
+      dynamicAccessControl: { enabled: true, maximumRolesPerOrganization: 50 },
       teams: {
         enabled: true,
         defaultTeam: { enabled: false },
@@ -222,10 +233,22 @@ export const organizationPlugins = (
             event(user, member.organizationId, "org.updated", org?.id ?? member.organizationId),
           );
         },
-        beforeDeleteOrganization: async () => {
-          throw new APIError("FORBIDDEN", {
-            message: "Use elevated instance org lifecycle operations",
-          });
+        beforeDeleteOrganization: async ({ organization: org, user }) => {
+          const [project] = await db
+            .select()
+            .from(schema.project)
+            .where(eq(schema.project.orgId, org.id))
+            .limit(1);
+          if (project)
+            throw new APIError("CONFLICT", { message: "Remove org projects before deletion" });
+          await record(event(user, org.id, "org.delete.requested", org.id));
+        },
+        afterDeleteOrganization: async ({ organization: org, user }) => {
+          await record(event(user, org.id, "org.deleted", org.id), (db) => [
+            db.delete(schema.orgLifecycle).where(eq(schema.orgLifecycle.orgId, org.id)),
+            db.delete(schema.orgElevation).where(eq(schema.orgElevation.orgId, org.id)),
+            db.delete(schema.organizationPolicy).where(eq(schema.organizationPolicy.orgId, org.id)),
+          ]);
         },
         beforeRemoveMember: async ({ member, organization: org }) => {
           if (member.role.split(",").includes("owner"))
@@ -234,19 +257,153 @@ export const organizationPlugins = (
             });
           await activeOrg(org.id);
         },
-        beforeUpdateMemberRole: async ({ member, organization: org }) => {
+        beforeUpdateMemberRole: async ({ member, organization: org, newRole }) => {
           if (member.role.split(",").includes("owner"))
             throw new APIError("FORBIDDEN", { message: "Use elevated ownership transfer" });
           await activeOrg(org.id);
+          if (newRole.split(",").includes("owner"))
+            throw new APIError("FORBIDDEN", { message: "Use organization ownership transfer" });
         },
-        afterUpdateMemberRole: async ({ member, organization: org, user }) => {
-          await record(event(user, org.id, "org.member.role", member.id));
+        afterUpdateMemberRole: async ({ member, organization: org }) => {
+          await record({
+            ...event(
+              { id: "better-auth", name: "Better Auth" },
+              org.id,
+              "org.member.role",
+              member.id,
+            ),
+            actor: { type: "system", id: "better-auth", display: "Better Auth" },
+          });
         },
       },
     }),
     {
       id: "organization-policy",
       endpoints: {
+        transferOrganizationOwnership: createAuthEndpoint(
+          "/organization/transfer-ownership",
+          {
+            method: "POST",
+            use: [fresh],
+            body: z.object({ organizationId: z.string(), newOwnerId: z.string() }),
+          },
+          async (ctx) => {
+            const orgId = ctx.body.organizationId;
+            await activeOrg(orgId);
+            if (
+              !(await hasOrganizationPermission(
+                db,
+                orgId,
+                ctx.context.session.user.id,
+                "organization",
+                "transfer",
+              ))
+            )
+              throw new APIError("FORBIDDEN");
+            const [lead] = await db
+              .select()
+              .from(schema.member)
+              .innerJoin(schema.user, eq(schema.member.userId, schema.user.id))
+              .where(
+                and(
+                  eq(schema.member.organizationId, orgId),
+                  eq(schema.member.userId, ctx.body.newOwnerId),
+                ),
+              );
+            if (!lead || lead.user.banned)
+              throw new APIError("BAD_REQUEST", {
+                message: "New owner must be an active org member",
+              });
+            await record(
+              event(
+                ctx.context.session.user,
+                orgId,
+                "org.ownership.transferred",
+                ctx.body.newOwnerId,
+              ),
+              (db) => [
+                db
+                  .update(schema.member)
+                  .set({ role: "admin" })
+                  .where(
+                    and(eq(schema.member.organizationId, orgId), eq(schema.member.role, "owner")),
+                  ),
+                db
+                  .update(schema.member)
+                  .set({ role: "owner" })
+                  .where(
+                    and(
+                      eq(schema.member.organizationId, orgId),
+                      eq(schema.member.userId, ctx.body.newOwnerId),
+                    ),
+                  ),
+              ],
+            );
+            return ctx.json({ success: true });
+          },
+        ),
+        organizationPolicy: createAuthEndpoint(
+          "/organization/policy",
+          {
+            method: "POST",
+            use: [fresh],
+            body: z.object({ organizationId: z.string(), policy: z.unknown().optional() }),
+          },
+          async (ctx) => {
+            const orgId = ctx.body.organizationId;
+            await activeOrg(orgId);
+            if (
+              !(await hasOrganizationPermission(
+                db,
+                orgId,
+                ctx.context.session.user.id,
+                "settings",
+                "update",
+              ))
+            )
+              throw new APIError("FORBIDDEN");
+            const instance = await readInstancePolicy(db, config);
+            if (ctx.body.policy === undefined) {
+              const [row] = await db
+                .select()
+                .from(schema.organizationPolicy)
+                .where(eq(schema.organizationPolicy.orgId, orgId));
+              return ctx.json({
+                policy: row
+                  ? tightenPolicy(instance, Schema.decodeUnknownSync(InstancePolicy)(row.settings))
+                  : instance,
+              });
+            }
+            let policy;
+            try {
+              policy = tightenPolicy(
+                instance,
+                Schema.decodeUnknownSync(InstancePolicy)(ctx.body.policy),
+              );
+            } catch {
+              throw new APIError("BAD_REQUEST");
+            }
+            const settings = {
+              ...policy,
+              allowedEmailDomains: [...policy.allowedEmailDomains],
+              allowedGithubOrgs: [...policy.allowedGithubOrgs],
+              allowedOidcIssuers: [...policy.allowedOidcIssuers],
+            };
+            await record(
+              event(ctx.context.session.user, orgId, "org.policy.update", orgId),
+              (db) => [
+                db
+                  .insert(schema.organizationPolicy)
+                  .values({ orgId, settings, updatedAt: Date.now() })
+                  .onConflictDoUpdate({
+                    target: schema.organizationPolicy.orgId,
+                    set: { settings, updatedAt: Date.now() },
+                  }),
+              ],
+            );
+            return ctx.json({ policy });
+          },
+        ),
         inviteOrganizationMember: createAuthEndpoint(
           "/organization/invite",
           {
@@ -259,12 +416,26 @@ export const organizationPlugins = (
                 .string()
                 .regex(/^[a-zA-Z0-9-]{1,39}$/)
                 .optional(),
-              role: z.enum(["admin", "member"]).default("member"),
+              role: z
+                .string()
+                .regex(/^[a-zA-Z0-9_-]+$/)
+                .default("member"),
             }),
           },
           async (ctx) => {
             const user = ctx.context.session.user;
             await adminMember(ctx.body.organizationId, user.id);
+            if (
+              !(await canDelegateOrganizationRole(
+                db,
+                ctx.body.organizationId,
+                user.id,
+                ctx.body.role,
+              ))
+            )
+              throw new APIError("FORBIDDEN", {
+                message: "Cannot delegate this organization role",
+              });
             let email = ctx.body.email?.toLowerCase();
             if (ctx.body.githubUsername) {
               const [recipient] = await db
@@ -474,7 +645,11 @@ export const organizationPlugins = (
               if (!live || live.user.banned || live.session.impersonatedBy)
                 throw new APIError("FORBIDDEN");
               const body = z
-                .object({ organizationId: z.string().optional(), teamId: z.string().optional() })
+                .object({
+                  organizationId: z.string().optional(),
+                  teamId: z.string().optional(),
+                  role: z.union([z.string(), z.array(z.string())]).optional(),
+                })
                 .passthrough()
                 .parse(ctx.body ?? ctx.query ?? {});
               const [targetTeam] = body.teamId
@@ -486,6 +661,14 @@ export const organizationPlugins = (
                 live.session.activeOrganizationId;
               if (orgId) {
                 await activeOrg(orgId);
+                if (ctx.path === "/organization/update-member-role" && body.role) {
+                  const roles = (Array.isArray(body.role) ? body.role : [body.role]).flatMap(
+                    (role) => role.split(","),
+                  );
+                  for (const role of roles)
+                    if (!(await canDelegateOrganizationRole(db, orgId, live.user.id, role.trim())))
+                      throw new APIError("FORBIDDEN");
+                }
                 if (ctx.request?.method === "POST")
                   await record(
                     event(
