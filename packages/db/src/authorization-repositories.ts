@@ -135,7 +135,18 @@ const settingsRepo = Effect.gen(function* () {
                   .where(and(eq(schema.project.id, projectId), eq(schema.project.orgId, orgId))),
               );
 
+        const [deletion] =
+          projectId === undefined
+            ? []
+            : yield* database.query("InstanceSettingsRepo.deletion", (db) =>
+                db
+                  .select()
+                  .from(schema.projectDeletion)
+                  .where(eq(schema.projectDeletion.projectId, projectId)),
+              );
+
         return {
+          deleted: deletion !== undefined,
           exists: org !== undefined && (projectId === undefined || project !== undefined),
           orgArchived: state?.archivedAt != null,
           archived: project?.archivedAt != null,

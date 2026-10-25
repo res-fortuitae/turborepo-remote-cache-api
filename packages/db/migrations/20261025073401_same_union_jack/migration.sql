@@ -1,0 +1,1 @@
+ALTER TABLE `project_deletion` ADD `cursor` text;

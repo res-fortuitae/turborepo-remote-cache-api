@@ -1,6 +1,7 @@
 import {
   BadRequest,
   CreateProjectRequest,
+  DeleteProjectRequest,
   Forbidden,
   GrantRequest,
   UpdateProjectRequest,
@@ -19,6 +20,7 @@ const grantsPath = /^\/projects\/([^/]+)\/grants(?:\/(user|team)\/([^/]+))?\/?$/
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 const decodeCreate = Schema.decodeUnknownEffect(CreateProjectRequest);
 const decodeUpdate = Schema.decodeUnknownEffect(UpdateProjectRequest);
+const decodeDelete = Schema.decodeUnknownEffect(DeleteProjectRequest);
 const decodeGrant = Schema.decodeUnknownEffect(GrantRequest);
 
 /** Web Request's text/json accessors do not honor Effect's MaxBodySize reference. */
@@ -156,16 +158,14 @@ export const projectsApi = Effect.gen(function* () {
     }
 
     if (request.method === "DELETE") {
-      yield* projects.get(actor, id);
-
-      return yield* errorResponse(
-        503,
-        "service_unavailable",
-        "Project deletion awaits storage cleanup and credential revocation support",
+      const body = yield* decodeDelete(yield* readJson(request)).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Confirm deletion with the project ID" })),
       );
+      yield* projects.delete(actor, id, body.confirmation);
+      return HttpServerResponse.empty({ status: 202 });
     }
 
-    return HttpServerResponse.empty({ status: 405, headers: { allow: "GET, PATCH" } });
+    return HttpServerResponse.empty({ status: 405, headers: { allow: "GET, PATCH, DELETE" } });
   }
 
   return yield* errorResponse(404, "not_found", "Not found");

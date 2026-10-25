@@ -202,3 +202,23 @@ export const passkeyProof = sqliteTable("passkey_proof", {
   userId: text("user_id").notNull(),
   verifiedAt: integer("verified_at").notNull(),
 });
+
+/** Tombstones permanently invalidate credentials, even after cleanup completes. */
+export const projectDeletion = sqliteTable(
+  "project_deletion",
+  {
+    projectId: text("project_id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    requestedAt: integer("requested_at").notNull(),
+    cursor: text(),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [index("project_deletion_pending").on(t.completedAt, t.requestedAt)],
+);
+
+/** Persisted cursors make per-prefix retention bounded across cron invocations. */
+export const projectRetention = sqliteTable("project_retention", {
+  projectId: text("project_id").primaryKey(),
+  cursor: text(),
+  scannedAt: integer("scanned_at").notNull().default(0),
+});

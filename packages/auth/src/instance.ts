@@ -5,6 +5,7 @@ import {
   type DatabaseQueries,
   type DatabaseStatement,
 } from "@repo/db";
+import { deleteOrganizationProjects } from "@repo/db";
 import {
   InstancePolicy,
   defaultInstancePolicy,
@@ -346,14 +347,6 @@ export const instancePlugin = (
               ],
             );
           } else if (action === "delete") {
-            const [project] = await db
-              .select()
-              .from(schema.project)
-              .where(eq(schema.project.orgId, orgId))
-              .limit(1);
-
-            if (project)
-              throw new APIError("CONFLICT", { message: "Remove org projects before deletion" });
             await commit(
               {
                 ...event(actor, "instance.org.delete", orgId, ctx.body.reason),
@@ -361,6 +354,7 @@ export const instancePlugin = (
                 orgId,
               },
               (db) => [
+                ...deleteOrganizationProjects(db, orgId, Date.now()),
                 db.delete(schema.organization).where(eq(schema.organization.id, orgId)),
                 db.delete(schema.orgElevation).where(eq(schema.orgElevation.orgId, orgId)),
                 db.delete(schema.orgLifecycle).where(eq(schema.orgLifecycle.orgId, orgId)),

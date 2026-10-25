@@ -5,6 +5,7 @@ import {
   type DatabaseQueries,
   type DatabaseStatement,
 } from "@repo/db";
+import { deleteOrganizationProjects } from "@repo/db";
 import { InstancePolicy, tightenPolicy, type AuthSettings } from "@repo/deploy-config";
 import * as Schema from "effect/Schema";
 import {
@@ -279,15 +280,9 @@ export const organizationPlugins = (
           );
         },
         beforeDeleteOrganization: async ({ organization: org, user }) => {
-          const [project] = await db
-            .select()
-            .from(schema.project)
-            .where(eq(schema.project.orgId, org.id))
-            .limit(1);
-
-          if (project)
-            throw new APIError("CONFLICT", { message: "Remove org projects before deletion" });
-          await record(event(user, org.id, "org.delete.requested", org.id));
+          await record(event(user, org.id, "org.delete.requested", org.id), (db) =>
+            deleteOrganizationProjects(db, org.id, Date.now()),
+          );
         },
         afterDeleteOrganization: async ({ organization: org, user }) => {
           await record(event(user, org.id, "org.deleted", org.id), (db) => [

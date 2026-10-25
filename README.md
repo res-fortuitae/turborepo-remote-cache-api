@@ -116,10 +116,9 @@ steps, security headers and Cloudflare plan limits.
 The CI ID-token verifier and its replay/cache guarantees are documented in
 [`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.
 
-The first M2 project-management slice supports create, paginated list, read,
-update, archive and restore with live session/org authorization. See
-[project management](docs/projects.md) for routes, policy ceilings and the
-remaining storage/credential lifecycle work in STV-438.
+M2 project management supports CRUD, direct/team grants, live authorization,
+archive and durable deletion. Verified cache JWTs use isolated project prefixes.
+See [project management](docs/projects.md) for routes, policy ceilings and retention.
 
 ## Upstream releases
 
@@ -148,7 +147,8 @@ turbo run build
 | POST   | `/v8/artifacts`        | Query metadata for many hashes          |
 | POST   | `/v8/artifacts/events` | Record cache events (validated, logged) |
 
-Artifacts are stored in R2 under `<teamId|slug|default>/<hash>`, and the `x-artifact-*` headers are kept as R2 custom metadata.
+Legacy shared-token artifacts use `<teamId|slug|default>/<hash>`; verified JWTs use
+`{orgId}/{projectId}/{hash}`. The `x-artifact-*` headers are kept as R2 custom metadata.
 
 ## Cloudflare resources
 
@@ -178,8 +178,8 @@ recovery](docs/deletion-protection.md) before destroying or re-adopting a stack.
 
 The R2 bucket has lifecycle rules (`packages/infra/src/index.ts`): artifacts are deleted
 `limits.artifactRetentionDays` (30 by default) days after upload, and incomplete
-multipart uploads are aborted after a day. Cloudflare applies these natively, so
-no cron Worker is needed. Choose `jurisdiction` before creating the bucket;
+multipart uploads are aborted after a day. Cloudflare applies the bucket maximum natively. Project maintenance also runs a
+bounded retention sweep, with optional native prefix rules; see [project retention](docs/projects.md#retention). Choose `jurisdiction` before creating the bucket;
 changing residency of existing data needs a separate migration.
 
 ## Edge caching

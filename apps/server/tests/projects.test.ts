@@ -128,8 +128,19 @@ test("project routes match the shared contract and serialize project lifecycle r
 
       expect(archived.status).toBe(200);
       expect(decodeProject(yield* Effect.promise(() => archived.json())).archivedAt).not.toBeNull();
-      expect((yield* serve(`/projects/${created.id}`, { method: "DELETE" })).status).toBe(503);
-      expect((yield* serve(`/projects/${created.id}`)).status).toBe(200);
+      expect(
+        (yield* serve(`/projects/${created.id}`, {
+          method: "DELETE",
+          body: { confirmation: "wrong" },
+        })).status,
+      ).toBe(400);
+      expect(
+        (yield* serve(`/projects/${created.id}`, {
+          method: "DELETE",
+          body: { confirmation: created.id },
+        })).status,
+      ).toBe(202);
+      expect((yield* serve(`/projects/${created.id}`)).status).toBe(403);
     }),
   ));
 

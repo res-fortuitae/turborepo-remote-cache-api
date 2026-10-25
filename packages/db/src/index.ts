@@ -36,3 +36,4 @@ export {
   InstanceSettingsRepo,
   InstanceSettingsRepoLive,
 } from "./authorization-repositories.ts";
+export { deleteOrganizationProjects } from "./project-deletion.ts";
