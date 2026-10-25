@@ -102,7 +102,7 @@ export const projectsApi = Effect.gen(function* () {
       if (request.method !== "POST")
         return HttpServerResponse.empty({ status: 405, headers: { allow: "POST" } });
       const body = yield* Schema.decodeUnknownEffect(TestTrustPoliciesRequest)(
-        yield* readJson(request),
+        yield* readManagementJson(request),
       ).pipe(Effect.mapError(() => new BadRequest({ message: "Invalid sample claims" })));
       return yield* HttpServerResponse.json(
         yield* projects.testTrustPolicies(actor, projectId, body),
