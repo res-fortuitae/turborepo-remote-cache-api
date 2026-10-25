@@ -60,3 +60,5 @@ Mail-disabled instances retain notifications in the console.
 The additive migration creates the plugin's `apikey` table and `cache_api_key`.
 Apply it through the normal root deployment workflow; this PR does not deploy.
 GitHub secret-scanning prefix registration remains M9 work.
+
+Credential traffic now uses the Workers Rate Limiting binding; see [request guards](request-guards.md) for budgets, organization caps, and Retry-After responses.

@@ -18,6 +18,7 @@ export const dependencies: DependencyPolicy = {
   "@repo/coordinator": ["@repo/api-spec", "@repo/deploy-config"],
   "@repo/audit": ["@repo/api-spec", "@repo/db"],
   "@repo/auth": [
+    "@repo/ratelimit",
     "@repo/api-spec",
     "@repo/deploy-config",
     "@repo/db",

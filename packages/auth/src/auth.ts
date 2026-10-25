@@ -1,3 +1,4 @@
+import { RateLimiter, betterAuthRateLimitStorage } from "@repo/ratelimit";
 import {
   ApiKeyLookup,
   ApiKeyEpochs,
@@ -91,7 +92,7 @@ const toBetterAuthStorage = (storage: SecondaryStorageService): BetterAuthSecond
 export const AuthLive: Layer.Layer<
   Auth | ApiKeyLookup,
   never,
-  Database | AuthConfig | Mailer | AuditLog
+  Database | AuthConfig | Mailer | AuditLog | RateLimiter
 > = Layer.effectContext(
   Effect.gen(function* () {
     const config = yield* AuthConfig;
@@ -104,7 +105,10 @@ export const AuthLive: Layer.Layer<
     const mailer = yield* Mailer;
     const audit = yield* AuditLog;
 
+    const limiter = yield* RateLimiter;
+
     const auth = makeBetterAuth({
+      rateLimitStorage: betterAuthRateLimitStorage(limiter),
       config,
       audit,
       db: database.drizzle,
@@ -177,18 +181,39 @@ export const AuthLive: Layer.Layer<
       epochs: Option.getOrUndefined(epochs),
       background: Option.getOrUndefined(background),
     });
+
     const handler = (request: Request) =>
       Effect.gen(function* () {
         const path = new URL(request.url).pathname;
+        // Aggregate IP guard also covers our custom routes, outside Better Auth's router.
+        yield* limiter.check(request.headers.get("cf-connecting-ip") ?? "unknown", {
+          name: "auth-ip",
+          limit: 60,
+          period: 60,
+        });
+
         // Stock routes accept mutable plugin controls; expose only the constrained API.
         if (path.startsWith("/api/auth/api-key/")) return new Response(null, { status: 404 });
+
         if (!path.startsWith("/api/auth/cache-keys/"))
-          return yield* callBetterAuth("Auth.handler", () => auth.handler(request));
+          return yield* callBetterAuth("Auth.handler", () => auth.handler(request)).pipe(
+            Effect.map((response) => {
+              if (response.status !== 429) return response;
+              // Pinned Better Auth emits X-Retry-After; expose the standard header too.
+              const headers = new Headers(response.headers);
+              headers.set("Retry-After", headers.get("x-retry-after") ?? "60");
+              headers.set("Cache-Control", "no-store");
+              return new Response(response.body, { status: response.status, headers });
+            }),
+          );
         const origin = request.headers.get("origin");
+
         if (!origin || ![config.baseURL, ...config.trustedOrigins].includes(origin))
           return new Response(null, { status: 403 });
+
         return yield* Effect.gen(function* () {
           const session = yield* requireFreshSession(request.headers);
+
           return yield* callBetterAuth("Auth.cacheKeys", () =>
             keys.handle(request, session.user.id),
           );
@@ -210,7 +235,23 @@ export const AuthLive: Layer.Layer<
             ),
           ),
         );
-      });
+      }).pipe(
+        Effect.catchTags({
+          RateLimited: (error) =>
+            Effect.succeed(
+              Response.json(
+                { code: "rate_limited" },
+                {
+                  status: 429,
+                  headers: { "Retry-After": String(error.retryAfter), "Cache-Control": "no-store" },
+                },
+              ),
+            ),
+          RateLimitUnavailable: () =>
+            Effect.succeed(Response.json({ code: "unavailable" }, { status: 503 })),
+        }),
+      );
+
     return Context.make(Auth, {
       handler,
       getSession,
