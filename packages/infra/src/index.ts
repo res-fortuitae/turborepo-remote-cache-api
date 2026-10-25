@@ -14,6 +14,7 @@ export interface InfraSettings {
   /** Applied to every bucket and to D1 at creation. Undefined means automatic. */
   readonly jurisdiction: "eu" | "fedramp" | undefined;
   readonly artifactRetentionDays: number;
+  readonly auditHistoryEnabled?: boolean;
 }
 
 /**
@@ -148,10 +149,13 @@ const AuditCatalogBucket = Cloudflare.R2.Bucket("AuditCatalog", {});
 
 const planAuditBasin = Effect.gen(function* () {
   const { dev } = yield* AlchemyContext;
+
   // Basin's resource providers are cloud-only. Never provision them during dev.
   if (dev) return Option.none();
 
-  const { jurisdiction } = yield* infraConfig;
+  const { jurisdiction, auditHistoryEnabled } = yield* infraConfig;
+
+  if (auditHistoryEnabled !== true) return Option.none();
   const token = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(Effect.orDie);
 
   if (Option.isNone(token) || !auditBasinEnabled({ dev, jurisdiction, catalogToken: true }))
@@ -293,3 +297,11 @@ export const DashboardAssets = {
   // Cache API paths never resolve to dashboard files.
   runWorkerFirst: ["/v8", "/v8/*", "/api", "/api/*", "/oidc", "/oidc/*", "/.well-known/*"],
 } satisfies Cloudflare.AssetsProps;
+
+export {
+  detectCapabilities,
+  resolveCapabilities,
+  workersPlanFromSubscriptions,
+} from "./capabilities.ts";
+
+export type { CapabilityInputs } from "./capabilities.ts";

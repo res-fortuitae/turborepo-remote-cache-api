@@ -10,6 +10,7 @@ import {
   type AuditInput,
   AuditLog,
   AuditLogLive,
+  AuditLogD1Only,
   AuditSinkMemory,
   AuditSinkUnconfigured,
   canonicalJson,
@@ -190,5 +191,28 @@ test("canonicalJson ignores key order", () => {
 
   expect(canonicalJson({ metadata: { b: 1, a: [2] }, action: event.action })).toBe(
     canonicalJson({ action: event.action, metadata: { a: [2], b: 1 } }),
+  );
+});
+
+test("D1-only fallback persists standalone denials in the hash chain and never prunes unexported rows", async () => {
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Exercises the fallback layer over the scoped SQLite adapter at the Bun boundary.
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      const database = yield* Database;
+      const denied = { ...input("cache.denied"), outcome: "deny" as const };
+      const first = yield* audit.recordStandalone(denied);
+      const second = yield* audit.recordStandalone(denied);
+      const rows = yield* database.query("test.denials", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      expect(rows.length).toBe(2);
+      expect(rows[0]?.exportedAt).toBeNull();
+      expect(rows[1]?.payload.prevHash).toBe(first.hash);
+      expect(rows[1]?.hash).toBe(second.hash);
+      expect(rows[1]?.sequence).toBe(2);
+      expect(yield* audit.prune(-1)).toBe(0);
+      expect(yield* countRows).toBe(2);
+    }).pipe(Effect.provide(AuditLogD1Only.pipe(Layer.provideMerge(DatabaseTest))), Effect.scoped),
   );
 });

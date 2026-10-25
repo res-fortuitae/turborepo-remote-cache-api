@@ -40,3 +40,7 @@ export type {
 } from "./integrity.ts";
 
 export { MAX_DRAIN_BATCHES, dailyAuditJob, drainOutboxJob } from "./jobs.ts";
+
+export { AuditRetention } from "./audit-log.ts";
+
+export { AuditLogD1Only } from "./audit-log.ts";

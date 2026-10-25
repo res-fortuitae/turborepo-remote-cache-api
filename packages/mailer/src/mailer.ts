@@ -26,3 +26,13 @@ export class Mailer extends Context.Service<Mailer, MailerService>()("@repo/mail
 export const MailerNoop: Layer.Layer<Mailer> = Layer.succeed(Mailer, {
   send: () => Effect.void,
 });
+
+/** Production fallback fails explicitly so login never claims an undelivered email was sent. */
+export const MailerDisabled: Layer.Layer<Mailer> = Layer.succeed(Mailer, {
+  send: () =>
+    Effect.fail(
+      new MailerError({
+        cause: "Email sending is unavailable on this instance. Use GitHub sign-in.",
+      }),
+    ),
+});

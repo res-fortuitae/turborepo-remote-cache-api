@@ -14,6 +14,12 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
   },
+  "dependencies": {
+    "@repo/api-spec": "workspace:*",
+    "@repo/db": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.5",
+    "effect": "^4.0.6"
+  },
   "devDependencies": {
     "@repo/config": "workspace:*",
     "@types/bun": "latest",

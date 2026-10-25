@@ -211,3 +211,60 @@ Alchemy's `Test` harness: locally by default (workerd with local R2/D1/KV, the
 `ALCHEMY_TEST_STAGE` (default `test_$USER`). Set `NO_DESTROY=1` to keep it.
 Deploy a real stage only when you intend to. All suites use unique team names
 and leave artifacts to expire through bucket retention.
+
+## Instance capabilities
+
+Open **Capabilities** in the console (`/#capabilities`), or query
+`GET /api/instance/capabilities` with a signed-in session or the instance's bearer
+token. Responses use `Cache-Control: no-store` and a versioned shared contract.
+The server capability part of doctor is available now:
+
+```sh
+TURBO_API=https://cache.example.com TURBO_TOKEN='<token>' bun packages/cli/src/bin.ts doctor --server
+# Add --json for the same report used by the console.
+```
+
+Deployment detects Workers billing and the serving custom domain's zone plan
+separately, using Alchemy's selected account and credentials. It makes read-only
+account subscriptions and zone-list API calls, including pagination. Billing or
+Zone Read permissions may be missing from scoped tokens: detection then reports
+`unknown`, explains the problem, and disables features requiring that entitlement.
+An account with no recognized Workers subscription is also `unknown`, never
+assumed paid. If billing cannot be read, an operator can explicitly assert
+`workersPlan: "free" | "paid"` in `deploy.config.ts`. That assertion must match
+the actual account; it does not upgrade the subscription. A zone's Business plan
+never establishes Workers Paid. Re-run deployment after changing plans or flags.
+Local development skips all probes and uses the fallback layers.
+
+Optional `features.emailSending`, `features.analytics`, `features.auditHistory`,
+and `features.directUploads` flags default to requested. Set a flag to `false`
+to select its fallback even when the plan is eligible. Existing config remains
+valid. `edgeCache` keeps its existing behavior. Custom Worker CPU limits are
+only sent for a detected/asserted Workers Paid account.
+
+- **Analytics:** lite mode batches remote hit/miss/request/time-saved counters in
+  D1's existing hourly rollup table. Local hits are excluded. The current Turbo
+  API uses its team namespace as both org and legacy project scope until project
+  credential routing is implemented. Counter writes run under `waitUntil`, and
+  failures are logged without failing cache traffic. Counters are at least once;
+  retransmitted event batches can count twice. `analytics: false` selects a no-op
+  emitter. Basin analytics/history/drill-downs remain pending STV-462–465, even
+  on Paid accounts.
+- **Audit:** Iceberg export requires Workers Paid, the default jurisdiction,
+  `BASIN_CATALOG_TOKEN`, and an enabled flag. Otherwise no audit Basin resources
+  are provisioned. The configured hot window grows from 90 to 365 days;
+  unexported rows are never pruned, so D1-only audit data remains indefinitely.
+  Budget D1 storage accordingly. Switching away from Basin retains existing
+  stateful resources under the normal deletion-protection policy.
+- **Email:** the production disabled mailer reports an error rather than claiming
+  delivery. Use GitHub sign-in. Email Sending/domain verification and dashboard
+  invite-link delivery remain pending STV-495; a paid plan alone does not enable
+  the integration.
+- **Uploads:** Free, Pro, workers.dev, and unknown plans use a conservative
+  100,000,000-byte request ceiling. A Business/Enterprise serving zone permits
+  up to 200,000,000 bytes in this version; Cloudflare can impose a lower zone
+  upload setting before the Worker runs. `directUploads: false` restores the
+  conservative ceiling. Multipart proxy support remains pending STV-492.
+
+Plan prerequisites follow Cloudflare's [Email Service pricing](https://developers.cloudflare.com/email-service/platform/pricing/)
+and [Workers request limits](https://developers.cloudflare.com/workers/platform/limits/).

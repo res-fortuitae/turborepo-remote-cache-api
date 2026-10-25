@@ -1,3 +1,4 @@
+import { AlchemyContext } from "alchemy";
 import { expect, test } from "bun:test";
 import { Providers } from "alchemy/Cloudflare";
 import { Stack, type StackSpec } from "alchemy/Stack";
@@ -21,7 +22,7 @@ import {
 const stages = { production: "prod", staging: "staging" };
 
 /** Compile real declarations only; fail if anything tries to use a cloud provider. */
-const declarations = (stage: string, configuredStages = stages) => {
+const declarations = (stage: string, configuredStages = stages, auditHistoryEnabled = true) => {
   const stack: Omit<StackSpec, "output"> = {
     name: "TurborepoRemoteCache",
     stage,
@@ -45,6 +46,7 @@ const declarations = (stage: string, configuredStages = stages) => {
       yield* BasinSqlToken;
     }).pipe(
       retainStatefulResources(stage, configuredStages),
+      Effect.provideService(AlchemyContext, { dev: false, adopt: false, dotAlchemy: ".alchemy" }),
       Effect.provideService(Providers, {
         kind: "ProviderCollection",
         providers: {},
@@ -57,6 +59,7 @@ const declarations = (stage: string, configuredStages = stages) => {
         stage,
         jurisdiction: undefined,
         artifactRetentionDays: 30,
+        auditHistoryEnabled,
       }),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
@@ -123,4 +126,19 @@ test("configured production and staging remain protected even with preview names
   const configured = { production: "pr-15", staging: "preview-staging" };
   expect(declarations(configured.production, configured)).toEqual(expectedResources("retain"));
   expect(declarations(configured.staging, configured)).toEqual(expectedResources("retain"));
+});
+
+test("D1-only plans never declare audit Basin resources even when tokens are configured", () => {
+  const resources = declarations("prod", stages, false);
+
+  for (const name of [
+    "AuditCatalog",
+    "AuditDataCatalog",
+    "AuditStream",
+    "AuditLogTable",
+    "AuditPipeline",
+  ])
+    expect(resources[name]).toBeUndefined();
+  expect(resources.Database?.policy).toBe("retain");
+  expect(resources.AuditCheckpoints?.policy).toBe("retain");
 });

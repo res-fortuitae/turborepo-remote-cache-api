@@ -10,6 +10,9 @@ export default defineDeployConfig({
   // Public identifiers only. Credentials belong in the root .env or a secret store.
   // githubApp: { appId: 123, clientId: "Iv1.example", slug: "my-cache" },
   limits: { artifactRetentionDays: 30 },
+  // Optional workersPlan: "free" | "paid" asserts billing when the deploy token cannot read it.
+  // Optional feature flags emailSending, analytics, auditHistory, directUploads default to requested.
+  // False always selects the fallback; plan eligibility alone never enables a pending integration.
   features: { edgeCache: true },
   stages: { production: "production", staging: "staging" },
 });

@@ -22,6 +22,10 @@ export const AUDIT_SCHEMA_VERSION = 1;
 /** D1 keeps exported events this long; older history lives in the sink. */
 export const AUDIT_RETENTION_MILLIS = 90 * 24 * 60 * 60 * 1000;
 
+export const AuditRetention = Context.Reference<number>("@repo/audit/AuditRetention", {
+  defaultValue: () => AUDIT_RETENTION_MILLIS,
+});
+
 export const OUTBOX_BATCH_SIZE = 100;
 
 /** What a caller describes; the log assigns `id`, `ts`, the version and the hashes. */
@@ -159,6 +163,7 @@ export const AuditLogLive: Layer.Layer<AuditLog, never, Database | AuditSink> = 
   Effect.gen(function* () {
     const database = yield* Database;
     const sink = yield* AuditSink;
+    const retention = yield* AuditRetention;
 
     const fromDatabase = Effect.mapError(
       (error: { readonly operation: string; readonly cause: unknown }) =>
@@ -257,7 +262,7 @@ export const AuditLogLive: Layer.Layer<AuditLog, never, Database | AuditSink> = 
 
         return rows.length;
       }),
-      prune: Effect.fn("AuditLog.prune")(function* (retentionMillis = AUDIT_RETENTION_MILLIS) {
+      prune: Effect.fn("AuditLog.prune")(function* (retentionMillis = retention) {
         const cutoff = (yield* Clock.currentTimeMillis) - retentionMillis;
 
         const deleted = yield* database
@@ -310,3 +315,22 @@ export const AuditSinkTest: Layer.Layer<AuditSink | AuditSinkMemory> = Layer.eff
     }).pipe(Context.add(AuditSinkMemory, { events: Ref.get(sent) }));
   }),
 );
+
+/**
+ * Without an export sink, standalone denials need the same durable D1 history
+ * as transactional events. They extend the chain and remain unexported.
+ */
+export const AuditLogD1Only: Layer.Layer<AuditLog, never, Database> = Layer.effect(
+  AuditLog,
+  Effect.gen(function* () {
+    const audit = yield* AuditLog;
+
+    return {
+      ...audit,
+      recordStandalone: (input: AuditInput) =>
+        audit
+          .commit(input, () => [])
+          .pipe(Effect.mapError((cause) => new AuditSinkError({ cause }))),
+    } satisfies AuditLogService;
+  }),
+).pipe(Layer.provide(AuditLogLive), Layer.provide(AuditSinkUnconfigured));

@@ -28,6 +28,7 @@
         "@fontsource-variable/jetbrains-mono": "^5.3.0",
         "@repo/shared": "workspace:*",
         "@repo/ui": "workspace:*",
+        "effect": "^4.0.6",
         "lucide-react": "^1.61.0",
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
@@ -44,6 +45,7 @@
     "apps/server": {
       "name": "@repo/server",
       "dependencies": {
+        "@repo/analytics": "workspace:*",
         "@repo/api-spec": "workspace:*",
         "@repo/audit": "workspace:*",
         "@repo/auth": "workspace:*",
@@ -53,6 +55,7 @@
         "@repo/infra": "workspace:*",
         "@repo/mailer": "workspace:*",
         "@repo/oidc": "workspace:*",
+        "@repo/shared": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
       },
@@ -79,6 +82,12 @@
     "packages/analytics": {
       "name": "@repo/analytics",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "@repo/db": "workspace:*",
+        "drizzle-orm": "1.0.0-rc.5",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -154,6 +163,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@repo/shared": "workspace:*",
+        "effect": "^4.0.6",
       },
       "devDependencies": {
         "@repo/config": "workspace:*",
@@ -254,6 +264,7 @@
       "name": "@repo/infra",
       "version": "0.0.0",
       "dependencies": {
+        "@distilled.cloud/cloudflare": "1.0.0-rc.15",
         "@repo/api-spec": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",

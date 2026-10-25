@@ -11,6 +11,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
+    "@repo/analytics": "workspace:*",
     "@repo/api-spec": "workspace:*",
     "@repo/audit": "workspace:*",
     "@repo/auth": "workspace:*",
@@ -20,6 +21,7 @@
     "@repo/infra": "workspace:*",
     "@repo/mailer": "workspace:*",
     "@repo/oidc": "workspace:*",
+    "@repo/shared": "workspace:*",
     "alchemy": "2.0.0-beta.83",
     "effect": "^4.0.6"
   },

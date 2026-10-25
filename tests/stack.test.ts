@@ -40,13 +40,15 @@ describe.skipIf(!enabled)(`stack (${local ? "local" : "deployed"})`, () => {
           yield* outputs;
 
         if (!url) return yield* Effect.die(new Error("Stack did not output a Worker url"));
+
         if (local) {
           expect(new URL(url).hostname).toBe("localhost");
           expect(bucketName.startsWith("dev:")).toBe(true);
           expect(databaseId.startsWith("dev:")).toBe(true);
           expect(cacheNamespaceId.startsWith("dev:")).toBe(true);
-          expect(basinDisabledReason).toContain("no local resource provider");
+          expect(basinDisabledReason).toContain("local development");
         }
+
         api = url;
         // Ride out workers.dev propagation on a fresh deploy.
         yield* Test.getWhenReady(`${url}/v8/artifacts/status`);
@@ -62,13 +64,32 @@ describe.skipIf(!enabled)(`stack (${local ? "local" : "deployed"})`, () => {
     const response = await target().fetch("/");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
-    expect(await response.text()).toContain("Turborepo Remote Cache");
+    expect(await response.text()).toContain("Remote Cache dashboard");
   });
 
   test("builds authentication with the Secrets Store binding", async () => {
     const response = await target().fetch("/api/auth/ok");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  test("reports effective capabilities to doctor and rejects anonymous readers", async () => {
+    expect((await target().fetch("/api/instance/capabilities")).status).toBe(401);
+
+    const response = await target().fetch("/api/instance/capabilities", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const report = await response.json();
+    expect(report.schemaVersion).toBe(1);
+
+    if (local) {
+      expect(report.workersPlan).toBe("local");
+      expect(report.analyticsMode).toBe("lite");
+      expect(report.auditHistory.enabled).toBe(false);
+    }
   });
 
   describeContract(target, uniqueTeam("stack"));

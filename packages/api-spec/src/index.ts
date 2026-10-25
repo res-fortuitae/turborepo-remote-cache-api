@@ -28,3 +28,5 @@ export const Api = HttpApi.make("RemoteCache").add(
   AnalyticsApi,
   AuditApi,
 );
+
+export * from "./capabilities.ts";

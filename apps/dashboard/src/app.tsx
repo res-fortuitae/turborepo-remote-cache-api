@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { CapabilitiesPage } from "./CapabilitiesPage.tsx";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   Check,
@@ -103,6 +104,18 @@ function CommandPanel({ command }: { readonly command: string }) {
 }
 
 export function App() {
+  const [page, setPage] = useState(() =>
+    window.location.hash === "#capabilities" ? "capabilities" : "setup",
+  );
+
+  useEffect(() => {
+    const update = () =>
+      setPage(window.location.hash === "#capabilities" ? "capabilities" : "setup");
+
+    window.addEventListener("hashchange", update);
+
+    return () => window.removeEventListener("hashchange", update);
+  }, []);
   const origin = window.location.origin;
   const localCommand = `export TURBO_API=${origin}\nexport TURBO_TOKEN='<your-token>'\nexport TURBO_TEAM='<your-team>'\n\nbunx turbo run build`;
   const ciCommand = `- name: Build with remote cache\n  run: bunx turbo run build\n  env:\n    TURBO_API: ${origin}\n    TURBO_TOKEN: \u0024{{ secrets.TURBO_TOKEN }}\n    TURBO_TEAM: \u0024{{ vars.TURBO_TEAM }}`;
@@ -123,7 +136,7 @@ export function App() {
           </a>
           <nav aria-label="Workspace" className="flex gap-2 md:flex-col">
             <Button
-              variant="secondary"
+              variant={page === "setup" ? "secondary" : "ghost"}
               className="justify-start"
               render={<a href="#connect" />}
               nativeButton={false}
@@ -139,6 +152,14 @@ export function App() {
             >
               <Zap data-icon="inline-start" />
               Cache basics
+            </Button>
+            <Button
+              variant={page === "capabilities" ? "secondary" : "ghost"}
+              className="justify-start"
+              render={<a href="#capabilities" />}
+              nativeButton={false}
+            >
+              Capabilities
             </Button>
           </nav>
           <div className="hidden flex-1 md:block" />
@@ -167,7 +188,9 @@ export function App() {
               <span aria-hidden="true" className="text-border">
                 /
               </span>
-              <span className="text-xs font-medium">Setup</span>
+              <span className="text-xs font-medium">
+                {page === "capabilities" ? "Capabilities" : "Setup"}
+              </span>
             </div>
             <div className="flex items-center gap-3">
               <Badge variant="outline">Getting started</Badge>
@@ -178,142 +201,154 @@ export function App() {
             id="main"
             className="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-10 lg:px-10 lg:py-16"
           >
-            <section id="connect" aria-labelledby="connect-title" className="flex flex-col gap-8">
-              <div className="flex flex-col gap-3">
-                <p className="font-mono text-[11px] tracking-widest text-muted-foreground uppercase">
-                  Build once. Reuse everywhere.
-                </p>
-                <h1
-                  id="connect-title"
-                  className="text-3xl font-semibold tracking-tight sm:text-4xl"
+            {page === "capabilities" ? (
+              <CapabilitiesPage />
+            ) : (
+              <>
+                <section
+                  id="connect"
+                  aria-labelledby="connect-title"
+                  className="flex flex-col gap-8"
                 >
-                  Connect your cache
-                </h1>
-                <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-                  Share build artifacts across your team and CI. Start with your cache URL, then
-                  connect a Turborepo workspace.
-                </p>
-              </div>
-              <div className="grid items-start gap-8 lg:grid-cols-[1fr_1.65fr]">
-                <ol className="flex flex-col gap-7" aria-label="Connection steps">
-                  {[
-                    {
-                      title: "Use your cache URL",
-                      detail:
-                        "Point Turborepo at this instance. Your team and CI use the same endpoint.",
-                    },
-                    {
-                      title: "Add your credentials",
-                      detail:
-                        "Use your cache token and team identifier. Store CI tokens in your secret manager.",
-                    },
-                    {
-                      title: "Run your first build",
-                      detail:
-                        "Run the same build twice. The second run can restore its outputs from the cache.",
-                    },
-                  ].map((step, index) => (
-                    <li key={step.title} className="flex gap-3">
-                      <span
-                        className="flex size-6 shrink-0 items-center justify-center rounded-full border font-mono text-[11px] text-muted-foreground"
-                        aria-hidden="true"
-                      >
-                        {index + 1}
-                      </span>
-                      <div className="flex flex-col gap-1">
-                        <h2 className="text-sm font-medium">{step.title}</h2>
-                        <p className="text-xs leading-5 text-muted-foreground">{step.detail}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Connect a workspace</CardTitle>
-                    <CardDescription>
-                      Run locally or add the configuration to your build workflow.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex min-w-0 flex-col gap-5">
-                    <div className="flex flex-col gap-2">
-                      <span className="text-xs font-medium">Cache URL</span>
-                      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2">
-                        <code className="min-w-0 break-all font-mono text-xs">{origin}</code>
-                        <CopyButton text={origin} label="Copy cache URL" />
-                      </div>
-                    </div>
-                    <Tabs defaultValue="local">
-                      <TabsList aria-label="Connection environment">
-                        <TabsTrigger value="local">
-                          <Terminal data-icon="inline-start" />
-                          Local development
-                        </TabsTrigger>
-                        <TabsTrigger value="ci">
-                          <GitBranch data-icon="inline-start" />
-                          GitHub Actions
-                        </TabsTrigger>
-                      </TabsList>
-                      <TabsContent value="local">
-                        <CommandPanel command={localCommand} />
-                      </TabsContent>
-                      <TabsContent value="ci">
-                        <CommandPanel command={ciCommand} />
-                      </TabsContent>
-                    </Tabs>
-                  </CardContent>
-                  <CardFooter>
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      Replace the placeholders with your credentials. Never commit a cache token to
-                      your repository.
+                  <div className="flex flex-col gap-3">
+                    <p className="font-mono text-[11px] tracking-widest text-muted-foreground uppercase">
+                      Build once. Reuse everywhere.
                     </p>
-                  </CardFooter>
-                </Card>
-              </div>
-            </section>
-            <Separator />
-            <section id="basics" aria-labelledby="basics-title" className="flex flex-col gap-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 id="basics-title" className="text-lg font-semibold tracking-tight">
-                  A shorter path to a finished build
-                </h2>
-                <Button
-                  variant="link"
-                  render={
-                    <a
-                      href="https://turborepo.dev/docs/core-concepts/remote-caching"
-                      target="_blank"
-                      rel="noreferrer"
-                    />
-                  }
-                  nativeButton={false}
-                >
-                  How remote caching works
-                  <ArrowUpRight data-icon="inline-end" />
-                </Button>
-              </div>
-              <div className="grid gap-6 sm:grid-cols-3">
-                {[
-                  {
-                    title: "One shared result",
-                    detail: "A teammate or CI can reuse the outputs of a task that already ran.",
-                  },
-                  {
-                    title: "Content, not timestamps",
-                    detail: "Turborepo hashes task inputs to find the matching build artifacts.",
-                  },
-                  {
-                    title: "Your storage, your control",
-                    detail:
-                      "Artifacts live in your Cloudflare account, with retention set by your organization.",
-                  },
-                ].map((item) => (
-                  <div key={item.title} className="flex flex-col gap-2">
-                    <h3 className="text-xs font-medium">{item.title}</h3>
-                    <p className="text-xs leading-5 text-muted-foreground">{item.detail}</p>
+                    <h1
+                      id="connect-title"
+                      className="text-3xl font-semibold tracking-tight sm:text-4xl"
+                    >
+                      Connect your cache
+                    </h1>
+                    <p className="max-w-xl text-sm leading-6 text-muted-foreground">
+                      Share build artifacts across your team and CI. Start with your cache URL, then
+                      connect a Turborepo workspace.
+                    </p>
                   </div>
-                ))}
-              </div>
-            </section>
+                  <div className="grid items-start gap-8 lg:grid-cols-[1fr_1.65fr]">
+                    <ol className="flex flex-col gap-7" aria-label="Connection steps">
+                      {[
+                        {
+                          title: "Use your cache URL",
+                          detail:
+                            "Point Turborepo at this instance. Your team and CI use the same endpoint.",
+                        },
+                        {
+                          title: "Add your credentials",
+                          detail:
+                            "Use your cache token and team identifier. Store CI tokens in your secret manager.",
+                        },
+                        {
+                          title: "Run your first build",
+                          detail:
+                            "Run the same build twice. The second run can restore its outputs from the cache.",
+                        },
+                      ].map((step, index) => (
+                        <li key={step.title} className="flex gap-3">
+                          <span
+                            className="flex size-6 shrink-0 items-center justify-center rounded-full border font-mono text-[11px] text-muted-foreground"
+                            aria-hidden="true"
+                          >
+                            {index + 1}
+                          </span>
+                          <div className="flex flex-col gap-1">
+                            <h2 className="text-sm font-medium">{step.title}</h2>
+                            <p className="text-xs leading-5 text-muted-foreground">{step.detail}</p>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Connect a workspace</CardTitle>
+                        <CardDescription>
+                          Run locally or add the configuration to your build workflow.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex min-w-0 flex-col gap-5">
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs font-medium">Cache URL</span>
+                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2">
+                            <code className="min-w-0 break-all font-mono text-xs">{origin}</code>
+                            <CopyButton text={origin} label="Copy cache URL" />
+                          </div>
+                        </div>
+                        <Tabs defaultValue="local">
+                          <TabsList aria-label="Connection environment">
+                            <TabsTrigger value="local">
+                              <Terminal data-icon="inline-start" />
+                              Local development
+                            </TabsTrigger>
+                            <TabsTrigger value="ci">
+                              <GitBranch data-icon="inline-start" />
+                              GitHub Actions
+                            </TabsTrigger>
+                          </TabsList>
+                          <TabsContent value="local">
+                            <CommandPanel command={localCommand} />
+                          </TabsContent>
+                          <TabsContent value="ci">
+                            <CommandPanel command={ciCommand} />
+                          </TabsContent>
+                        </Tabs>
+                      </CardContent>
+                      <CardFooter>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          Replace the placeholders with your credentials. Never commit a cache token
+                          to your repository.
+                        </p>
+                      </CardFooter>
+                    </Card>
+                  </div>
+                </section>
+                <Separator />
+                <section id="basics" aria-labelledby="basics-title" className="flex flex-col gap-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 id="basics-title" className="text-lg font-semibold tracking-tight">
+                      A shorter path to a finished build
+                    </h2>
+                    <Button
+                      variant="link"
+                      render={
+                        <a
+                          href="https://turborepo.dev/docs/core-concepts/remote-caching"
+                          target="_blank"
+                          rel="noreferrer"
+                        />
+                      }
+                      nativeButton={false}
+                    >
+                      How remote caching works
+                      <ArrowUpRight data-icon="inline-end" />
+                    </Button>
+                  </div>
+                  <div className="grid gap-6 sm:grid-cols-3">
+                    {[
+                      {
+                        title: "One shared result",
+                        detail:
+                          "A teammate or CI can reuse the outputs of a task that already ran.",
+                      },
+                      {
+                        title: "Content, not timestamps",
+                        detail:
+                          "Turborepo hashes task inputs to find the matching build artifacts.",
+                      },
+                      {
+                        title: "Your storage, your control",
+                        detail:
+                          "Artifacts live in your Cloudflare account, with retention set by your organization.",
+                      },
+                    ].map((item) => (
+                      <div key={item.title} className="flex flex-col gap-2">
+                        <h3 className="text-xs font-medium">{item.title}</h3>
+                        <p className="text-xs leading-5 text-muted-foreground">{item.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </>
+            )}
             <footer className="flex flex-wrap items-center justify-between gap-3 pt-4 text-xs text-muted-foreground">
               <span>Turborepo Remote Cache</span>
               <span>Built for the work you have already done.</span>

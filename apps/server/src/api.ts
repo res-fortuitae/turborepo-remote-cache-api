@@ -3,7 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
-import { ArtifactQueryRequest, CacheEvents } from "@repo/api-spec";
+import { ArtifactQueryRequest, CacheEvents, type CacheEvent } from "@repo/api-spec";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -80,15 +80,20 @@ export interface ArtifactBucket<R> {
 }
 
 export interface ApiDependencies<R> {
+  readonly maxUploadBytes?: number;
+  readonly emitEvents?: (
+    team: string,
+    events: readonly CacheEvent[],
+  ) => Effect.Effect<void, never, R>;
   readonly bucket: ArtifactBucket<R>;
   readonly token: Redacted.Redacted<string>;
   readonly edgeCacheEnabled: boolean;
   readonly cache: ReturnType<typeof createArtifactCache>;
-  readonly waitUntil: (effect: Effect.Effect<unknown>) => Effect.Effect<void, never, R>;
+  readonly waitUntil: (effect: Effect.Effect<unknown, never, R>) => Effect.Effect<void, never, R>;
 }
 
 /** Constant-time string comparison to avoid leaking the token via timing. */
-const safeEqual = (a: string, b: string) => {
+export const safeEqual = (a: string, b: string) => {
   const enc = new TextEncoder();
   const x = enc.encode(a);
   const y = enc.encode(b);
@@ -132,6 +137,8 @@ export const artifactApi = <R>({
   edgeCacheEnabled,
   cache,
   waitUntil,
+  maxUploadBytes = 100_000_000,
+  emitEvents = () => Effect.void,
 }: ApiDependencies<R>) => {
   const authenticate = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -224,6 +231,13 @@ export const artifactApi = <R>({
       return yield* badRequest("Missing or invalid Content-Length header");
     }
 
+    if (contentLength > maxUploadBytes)
+      return yield* new ApiError({
+        status: 413,
+        code: "payload_too_large",
+        message: `Upload exceeds this instance's ${maxUploadBytes} byte request limit. Multipart upload support is pending STV-492.`,
+      });
+
     const duration = h["x-artifact-duration"];
 
     if (duration !== undefined && !/^\d+$/.test(duration)) {
@@ -289,13 +303,12 @@ export const artifactApi = <R>({
     return yield* HttpServerResponse.json(Object.fromEntries(entries));
   });
 
-  const events = Effect.gen(function* () {
+  const events = Effect.fn("Api.events")(function* (team: string) {
     const events = yield* HttpServerRequest.schemaBodyJson(CacheEvents).pipe(
       Effect.mapError(() => badRequest("Invalid request body")),
     );
 
-    // Events are accepted and logged; persist them (e.g. Analytics Engine) if needed.
-    yield* Effect.logDebug(`Recorded ${events.length} cache events`);
+    yield* waitUntil(emitEvents(team, events));
 
     return HttpServerResponse.empty({ status: 200 });
   });
@@ -323,7 +336,7 @@ export const artifactApi = <R>({
     } else if (segment === "status") {
       if (method === "GET") return yield* status;
     } else if (segment === "events") {
-      if (method === "POST") return yield* events;
+      if (method === "POST") return yield* events(team);
     } else {
       if (!HASH.test(segment)) {
         return yield* badRequest("Invalid artifact hash");
