@@ -117,6 +117,8 @@ steps, security headers and Cloudflare plan limits.
 Organization-owned API keys and their management API are documented in
 [API-key fallback](docs/api-keys.md). See [cache credentials](docs/cache-credentials.md)
 for JWT/API-key routing, project isolation, and the opt-in legacy migration flag.
+[Request guards](docs/request-guards.md) documents credential/IP rate limits,
+organization policy ceilings, and batch/upload bounds.
 
 The CI ID-token verifier and its replay/cache guarantees are documented in
 [`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.

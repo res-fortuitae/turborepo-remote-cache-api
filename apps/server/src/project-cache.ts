@@ -116,6 +116,8 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
         client.cacheGeneration(principal.project),
       ),
       credential,
+      maxQueryHashes: policy.maxQueryHashes ?? 100,
+      requestsPerMinute: policy.cacheRequestsPerMinute ?? 600,
       maxUploadBytes: Math.min(
         row.project.maxArtifactBytes ?? limits.maxArtifactBytes,
         limits.maxArtifactBytes,

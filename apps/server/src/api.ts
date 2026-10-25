@@ -33,6 +33,7 @@ import type { createArtifactCache } from "./edge-cache.ts";
  */
 
 export class ApiError extends Data.TaggedError("ApiError")<{
+  readonly retryAfter?: number;
   readonly status: number;
   readonly code: string;
   readonly message: string;
@@ -63,11 +64,19 @@ interface ArtifactQueryMetadata {
 export interface ArtifactScope {
   readonly prefix: string;
   readonly cacheGeneration?: number;
+  readonly maxQueryHashes?: number;
+  readonly requestsPerMinute?: number;
   readonly credential?: ResolvedCredential;
   readonly maxUploadBytes: number;
 }
 
 export interface ApiDependencies<R> {
+  readonly guard?: (scope: ArtifactScope) => Effect.Effect<void, ApiError, R>;
+  readonly guardAuthFailure?: Effect.Effect<
+    void,
+    ApiError,
+    R | HttpServerRequest.HttpServerRequest
+  >;
   readonly authorize?: (
     token: string,
     url: URL,
@@ -144,6 +153,8 @@ export const artifactApi = <R>({
   legacyTokenEnabled = false,
   emitArtifactOp = () => Effect.void,
   auditDenial = () => Effect.void,
+  guard = () => Effect.void,
+  guardAuthFailure = Effect.void,
 }: ApiDependencies<R>) => {
   const storeLayer = ArtifactStoreLive.pipe(
     Layer.provide(
@@ -320,10 +331,13 @@ export const artifactApi = <R>({
     );
   });
 
-  const query = Effect.fn("Api.query")(function* (team: string) {
+  const query = Effect.fn("Api.query")(function* (team: string, maxHashes: number) {
     const { hashes } = yield* HttpServerRequest.schemaBodyJson(ArtifactQueryRequest).pipe(
       Effect.mapError(() => badRequest("Invalid request body")),
     );
+
+    if (hashes.length > maxHashes)
+      return yield* badRequest(`At most ${maxHashes} hashes are allowed`);
 
     const entries = yield* Effect.forEach(
       hashes,
@@ -383,8 +397,10 @@ export const artifactApi = <R>({
     const method = request.method;
 
     const response = yield* Effect.gen(function* () {
+      yield* guard(scope);
+
       if (segment === undefined) {
-        if (method === "POST") return yield* query(team);
+        if (method === "POST") return yield* query(team, scope.maxQueryHashes ?? 100);
       } else if (segment === "status") {
         if (method === "GET") return yield* status;
       } else if (segment === "events") {
@@ -412,7 +428,10 @@ export const artifactApi = <R>({
         ApiError: (error) =>
           HttpServerResponse.json(
             { code: error.code, message: error.message },
-            { status: error.status },
+            {
+              status: error.status,
+              headers: error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {},
+            },
           ),
       }),
     );
@@ -447,18 +466,36 @@ export const artifactApi = <R>({
     Effect.catchTags({
       ApiError: (error) =>
         Effect.gen(function* () {
-          if (error.status === 401) yield* auditDenial(error);
+          if (error.status === 401) {
+            yield* guardAuthFailure;
+            yield* auditDenial(error).pipe(
+              Effect.mapError(
+                () =>
+                  new ApiError({
+                    status: 500,
+                    code: "unavailable",
+                    message: "Cache audit unavailable",
+                  }),
+              ),
+            );
+          }
 
           return yield* HttpServerResponse.json(
             { code: error.code, message: error.message },
-            { status: error.status },
+            {
+              status: error.status,
+              headers: error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {},
+            },
           );
         }).pipe(
           Effect.catchTags({
-            ApiError: () =>
+            ApiError: (error) =>
               HttpServerResponse.json(
-                { code: "unavailable", message: "Cache audit unavailable" },
-                { status: 500 },
+                { code: error.code, message: error.message },
+                {
+                  status: error.status,
+                  headers: error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {},
+                },
               ),
           }),
         ),

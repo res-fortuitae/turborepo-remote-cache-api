@@ -15,7 +15,9 @@ import { operations } from "./support/permission-matrix.ts";
 import { turboRoundTrip } from "./support/turbo.ts";
 import { Database, InstanceSettingsRepoLive, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
-import { CanonicalOrigin } from "@repo/deploy-config";
+import { RateLimiter, RateLimiterTest } from "@repo/ratelimit";
+import { cacheCredentialGuard, cacheAuthenticationFailureGuard } from "../src/request-guards.ts";
+import { defaultInstancePolicy, CanonicalOrigin } from "@repo/deploy-config";
 import { AuthorizationAuditLive, ProjectLimits } from "@repo/projects";
 import { eq } from "drizzle-orm";
 import { Clock, Context, Effect, Layer, Redacted, Stream } from "effect";
@@ -377,9 +379,11 @@ test("purging one location makes another location miss or return 404 after the g
       const reader = yield* Layer.build(CoordinatorClientLive).pipe(
         Effect.map(Context.get(CoordinatorClient)),
       );
+
       const writer = yield* Layer.build(CoordinatorClientLive).pipe(
         Effect.map(Context.get(CoordinatorClient)),
       );
+
       const cache = yield* EdgeCache;
       const bucket = memoryBucket();
       yield* bucket.put("org/a/abc", Stream.make(new TextEncoder().encode("old")), {
@@ -449,4 +453,162 @@ test("purging one location makes another location miss or return 404 after the g
       Effect.scoped,
       Effect.provide(Layer.mergeAll(CoordinatorNamespaceTest, EdgeCacheTest, TestClock.layer())),
     ),
+  ));
+
+test("request guards cap org policies, isolate credentials and IPs, and reject batches before R2", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((db) => [
+        db
+          .insert(schema.organization)
+          .values({ id: "org", slug: "team", name: "Team", createdAt: new Date(0) }),
+        db.insert(schema.project).values({
+          id: "a",
+          orgId: "org",
+          slug: "a",
+          name: "A",
+          createdAt: 0,
+          maxArtifactBytes: 5,
+        }),
+        db.insert(schema.instanceSettings).values({
+          id: 1,
+          schemaVersion: 1,
+          updatedAt: 0,
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [],
+            cacheRequestsPerMinute: 10,
+            maxQueryHashes: 2,
+          },
+        }),
+        db.insert(schema.organizationPolicy).values({
+          orgId: "org",
+          updatedAt: 0,
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [],
+            cacheRequestsPerMinute: 600,
+            maxQueryHashes: 500,
+          },
+        }),
+      ]);
+      const bucket = memoryBucket();
+      let heads = 0;
+
+      const api = artifactApi<
+        Effect.Services<ReturnType<typeof authorizeProjectCache>> | RateLimiter
+      >({
+        bucket: {
+          ...bucket,
+          head: (key) => {
+            heads++;
+
+            return bucket.head(key);
+          },
+        },
+        token: Redacted.make("unused"),
+        edgeCacheEnabled: false,
+        cache: createArtifactCache(false),
+        waitUntil: () => Effect.void,
+        authorize: authorizeProjectCache,
+        guard: cacheCredentialGuard,
+        guardAuthFailure: cacheAuthenticationFailureGuard,
+      });
+
+      const request = (
+        token: string,
+        path: string,
+        method = "GET",
+        body?: string,
+        ip = "192.0.2.1",
+        spoof = "fake",
+      ) =>
+        api.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request(`https://cache.test${path}`, {
+                method,
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                  "content-length": String(body?.length ?? 0),
+                  "cf-connecting-ip": ip,
+                  "x-forwarded-for": spoof,
+                },
+                body,
+              }),
+            ),
+          ),
+          Effect.provideService(CanonicalOrigin, "https://cache.test"),
+          Effect.map(HttpServerResponse.toWeb),
+        );
+
+      expect(
+        (yield* request(
+          "tcache_writer",
+          "/v8/artifacts",
+          "POST",
+          JSON.stringify({ hashes: ["a", "b", "c"] }),
+        )).status,
+      ).toBe(400);
+      expect(heads).toBe(0);
+      expect(
+        (yield* request(
+          "tcache_writer",
+          "/v8/artifacts",
+          "POST",
+          JSON.stringify({ hashes: ["a", "b"] }),
+        )).status,
+      ).toBe(200);
+      expect(heads).toBe(2);
+      expect((yield* request("tcache_writer", "/v8/artifacts/abc", "PUT", "123456")).status).toBe(
+        413,
+      );
+      expect(yield* bucket.head("org/a/abc")).toBeNull();
+
+      for (let i = 0; i < 7; i++)
+        expect((yield* request("tcache_writer", "/v8/artifacts/status")).status).toBe(200);
+      const denied = yield* request("tcache_writer", "/v8/artifacts/status");
+      expect(denied.status).toBe(429);
+      expect(denied.headers.get("retry-after")).toBe("60");
+      expect(heads).toBe(2);
+      const signer = yield* CacheTokenSigner;
+
+      const jwt = (yield* signer.issue({
+        maxTtlSeconds: 900,
+        subject: "ci",
+        org: "org",
+        project: "a",
+        scope: "read",
+      })).token;
+
+      for (let i = 0; i < 10; i++)
+        expect((yield* request(jwt, "/v8/artifacts/status")).status).toBe(200);
+      expect((yield* request(jwt, "/v8/artifacts/status")).status).toBe(429);
+      expect((yield* request("tcache_reader", "/v8/artifacts/status")).status).toBe(200);
+
+      for (let i = 0; i < 30; i++)
+        expect(
+          (yield* request(
+            `invalid${i}`,
+            "/v8/artifacts/status",
+            "GET",
+            undefined,
+            "192.0.2.1",
+            `spoof${i}`,
+          )).status,
+        ).toBe(401);
+      const ipLimited = yield* request("invalid", "/v8/artifacts/status");
+      expect(ipLimited.status).toBe(429);
+      expect(ipLimited.headers.get("retry-after")).toBe("60");
+      expect(
+        (yield* request("invalid", "/v8/artifacts/status", "GET", undefined, "192.0.2.2")).status,
+      ).toBe(401);
+    }).pipe(Effect.provide(Layer.merge(v2Layer, RateLimiterTest))),
   ));

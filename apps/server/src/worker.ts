@@ -1,5 +1,11 @@
+import { RateLimiterLive, RateLimitBinding } from "@repo/ratelimit";
+import {
+  cacheCredentialGuard,
+  cacheAuthenticationFailureGuard,
+  oidcExchangeGuard,
+} from "./request-guards.ts";
 import * as Cloudflare from "alchemy/Cloudflare";
-import { AlchemyContext } from "alchemy";
+import { type RuntimeContext, AlchemyContext } from "alchemy";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -83,7 +89,7 @@ import {
   DashboardAssets,
   Database,
   GitHubOAuthSecret,
-  RateLimiter,
+  RequestRateLimits,
   SigningKey,
   R2LifecycleToken,
   TransactionalEmail,
@@ -114,6 +120,7 @@ import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
+  RATE_LIMIT_STAGE: Schema.optional(Schema.String),
   LEGACY_TOKEN_ENABLED: Schema.optional(Schema.String),
   R2_LIFECYCLE_ACCOUNT_ID: Schema.optional(Schema.String),
   R2_LIFECYCLE_BUCKET: Schema.optional(Schema.String),
@@ -130,6 +137,7 @@ const AuthEnvironment = Schema.Struct({
 });
 
 interface DeploymentEnvironment {
+  RATE_LIMIT_STAGE: string;
   LEGACY_TOKEN_ENABLED: string;
   R2_LIFECYCLE_ACCOUNT_ID?: string;
   R2_LIFECYCLE_BUCKET?: string;
@@ -174,6 +182,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      RATE_LIMIT_STAGE: stage,
       LEGACY_TOKEN_ENABLED: String(config.features.legacyToken === true),
       PROJECT_RETENTION_DAYS: String(config.limits.artifactRetentionDays),
       IDENTITY_CEILINGS: JSON.stringify(config.identityCeilings ?? {}),
@@ -223,7 +232,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const kv = yield* Cloudflare.KV.ReadWriteNamespace(CacheNamespace);
     const coordinatorNamespace = yield* Coordinator;
-    yield* RateLimiter;
+
+    const rateBindings = yield* Effect.forEach(RequestRateLimits, ({ binding, limit, period }) =>
+      Effect.gen(function* () {
+        const client = yield* binding;
+
+        return { client, limit, period };
+      }),
+    );
+
     const checkpointBucket = yield* Cloudflare.R2.ReadWriteBucket(AuditCheckpointBucket);
     const auditStream = yield* AuditBasin;
 
@@ -442,7 +459,35 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const rateLimitLayer = RateLimiterLive.pipe(
+      Layer.provide(
+        Layer.effect(
+          RateLimitBinding,
+          Effect.gen(function* () {
+            const context = yield* Effect.context<RuntimeContext>();
+
+            return {
+              stage: JSON.stringify([
+                yield* CanonicalOrigin,
+                authEnvironment.RATE_LIMIT_STAGE ?? "default",
+              ]),
+              limit: (key, bucket) => {
+                const binding = rateBindings.find(
+                  (entry) => entry.limit === bucket.limit && entry.period === bucket.period,
+                );
+
+                return binding
+                  ? binding.client.limit({ key }).pipe(Effect.provideContext(context))
+                  : Effect.fail("Unsupported rate limit bucket");
+              },
+            } satisfies typeof RateLimitBinding.Service;
+          }),
+        ),
+      ),
+    );
+
     const authLayer = AuthLive.pipe(
+      Layer.provide(rateLimitLayer),
       Layer.provide(
         Layer.mergeAll(
           Layer.effect(
@@ -551,6 +596,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const artifacts = artifactApi({
+      guard: (scope) => cacheCredentialGuard(scope).pipe(Effect.provide(rateLimitLayer)),
+      guardAuthFailure: cacheAuthenticationFailureGuard.pipe(Effect.provide(rateLimitLayer)),
       authorize: (credential, url, action) =>
         authorizeProjectCache(credential, url, action).pipe(
           Effect.provide(cacheAuthorizationLayer),
@@ -663,6 +710,24 @@ export default class Api extends Cloudflare.Worker<Api>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const { pathname } = new URL(request.url, "http://localhost");
+
+        if (pathname === "/oidc/exchange" || pathname === "/api/oidc/exchange") {
+          const denied = yield* oidcExchangeGuard.pipe(
+            Effect.provide(rateLimitLayer),
+            Effect.result,
+          );
+
+          if (denied._tag === "Failure")
+            return yield* HttpServerResponse.json(
+              { code: denied.failure.code, message: denied.failure.message },
+              {
+                status: denied.failure.status,
+                headers: denied.failure.retryAfter
+                  ? { "Retry-After": String(denied.failure.retryAfter) }
+                  : {},
+              },
+            );
+        }
 
         if (pathname === "/api/instance/capabilities") return yield* report;
 

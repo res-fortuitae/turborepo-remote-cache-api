@@ -18,6 +18,9 @@ export type BetterAuthSecondaryStorage = NonNullable<BetterAuthOptions["secondar
 
 export interface BetterAuthInput {
   readonly config: AuthSettings;
+  readonly rateLimitStorage: NonNullable<
+    NonNullable<BetterAuthOptions["rateLimit"]>["customStorage"]
+  >;
   readonly db: DatabaseDrizzle;
   readonly secondaryStorage: BetterAuthSecondaryStorage | undefined;
   readonly sendInvitation?: (email: string, org: string, url: string) => Promise<boolean>;
@@ -31,6 +34,7 @@ export interface BetterAuthInput {
  */
 export const makeBetterAuth = ({
   config,
+  rateLimitStorage,
   db,
   secondaryStorage,
   sendMagicLink,
@@ -62,6 +66,7 @@ export const makeBetterAuth = ({
     emailAndPassword: { enabled: false },
     advanced: {
       // Better Auth otherwise disables these checks in NODE_ENV=test.
+      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
       disableCSRFCheck: false,
       disableOriginCheck: false,
       useSecureCookies: config.baseURL?.startsWith("https://"),
@@ -180,8 +185,8 @@ export const makeBetterAuth = ({
     },
     // Single-use tokens and device codes need D1's atomic consume.
     verification: { storeInDatabase: true },
-    // KV counters aren't atomic. STV-446 may swap in the Rate Limiting binding.
-    rateLimit: { enabled: true, storage: "database" },
+    // Atomic binding checks; session secondary storage never stores counters.
+    rateLimit: { enabled: true, customStorage: rateLimitStorage },
     disabledPaths: [
       "/api-key/create",
       "/api-key/update",
