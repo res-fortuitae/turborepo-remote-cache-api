@@ -40,3 +40,6 @@ export { authOrDisabled } from "./fallback.ts";
 export { ClientCoreLive } from "./live.ts";
 
 export { CacheProxy, CacheProxyLive, ProxyTransport, ProxySession } from "./cache-proxy.ts";
+
+export { uploadArtifact } from "./uploads.ts";
+export type { ArtifactUploadOptions } from "./uploads.ts";
