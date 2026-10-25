@@ -2,6 +2,7 @@ import { AuditEvent } from "@repo/api-spec";
 import { AlchemyContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
+import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -35,6 +36,17 @@ const infraConfig = Effect.gen(function* () {
 });
 
 const DAY_SECONDS = 60 * 60 * 24;
+
+/** Only explicitly named preview/PR stages are disposable; unknown stages fail closed. */
+export const retainStatefulResources = (
+  stage: string,
+  stages: { readonly production: string; readonly staging: string },
+) =>
+  RemovalPolicy.retain(
+    stage === stages.production ||
+      stage === stages.staging ||
+      !/^(?:preview-.+|pr-\d+(?:-.+)?)$/.test(stage),
+  );
 
 /**
  * Resource props are evaluated in the deployed Worker too, where neither
@@ -78,6 +90,12 @@ export const ArtifactBucket = Cloudflare.R2.Bucket(
       };
     }),
   ),
+).pipe(RemovalPolicy.destroy());
+
+/** Reserved for operator backups; no automatic backup job is installed. */
+export const BackupBucket = Cloudflare.R2.Bucket(
+  "Backups",
+  planOnly(Effect.map(infraConfig, ({ jurisdiction }) => ({ jurisdiction }))),
 );
 
 /** Checkpoints outlive the D1 window and the audit stream's own compaction. */
@@ -141,7 +159,8 @@ const planAuditBasin = Effect.gen(function* () {
 
   const bucket = yield* AuditCatalogBucket;
 
-  const catalog = yield* Cloudflare.Basin.Catalog("AuditCatalog", {
+  // Resource FQNs are unique across types; keep the existing bucket's ID.
+  const catalog = yield* Cloudflare.Basin.Catalog("AuditDataCatalog", {
     bucket,
     compaction: { state: "enabled", targetSizeMb: "128" },
     snapshotExpiration: { state: "enabled", maxSnapshotAge: "7d", minSnapshotsToKeep: 10 },
@@ -194,7 +213,7 @@ export const Database = Cloudflare.D1.Database(
  * Caches only: auth secondary storage, JWKS, analytics drill-downs. Every
  * value must be rebuildable from D1, R2, or an upstream source (STV-483).
  */
-export const CacheNamespace = Cloudflare.KV.Namespace("Cache");
+export const CacheNamespace = Cloudflare.KV.Namespace("Cache").pipe(RemovalPolicy.destroy());
 
 /** Cloudflare allows one Secrets Store per account; Alchemy adopts it and never deletes it. */
 export const SecretStore = Cloudflare.SecretsStore.Store("SecretStore");
@@ -269,8 +288,8 @@ export const RateLimiter = Cloudflare.RateLimit("RATE_LIMITER", {
 
 /** Dashboard build output, served by the API Worker ahead of its fetch handler. */
 export const DashboardAssets = {
-  directory: new URL("../../../apps/dashboard/public", import.meta.url).pathname,
+  directory: new URL("../../../apps/dashboard/dist", import.meta.url).pathname,
   notFoundHandling: "single-page-application",
   // Cache API paths never resolve to dashboard files.
-  runWorkerFirst: ["/v8/*", "/api/*"],
+  runWorkerFirst: ["/v8", "/v8/*", "/api", "/api/*", "/oidc", "/oidc/*", "/.well-known/*"],
 } satisfies Cloudflare.AssetsProps;

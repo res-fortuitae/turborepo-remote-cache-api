@@ -44,6 +44,7 @@ export const dependencies: DependencyPolicy = {
   "@repo/analytics": ["@repo/api-spec", "@repo/db"],
   "@repo/client-core": ["@repo/api-spec"],
   "@repo/config": [],
+  "@repo/ui": [],
 };
 
 const entrypoints = new Set(["@repo/server", "@repo/dashboard", "@repo/cli", "@repo/action"]);
@@ -174,7 +175,16 @@ export function checkBoundaries(root: string): string[] {
             errors.push(`${location}: undeclared workspace dependency ${target}`);
 
           // `<package>/testing` is the public test entry point; it keeps Bun/Node adapters out of runtime bundles.
-          if (target !== "@repo/config" && value !== target && value !== `${target}/testing`)
+          const publicUiPath =
+            target === "@repo/ui" &&
+            /^@repo\/ui\/(components\/[a-z-]+|lib\/utils|styles\.css)$/.test(value);
+
+          if (
+            target !== "@repo/config" &&
+            value !== target &&
+            value !== `${target}/testing` &&
+            !publicUiPath
+          )
             errors.push(`${location}: import ${target} through its public entry point`);
         } else if (value.startsWith(".") || NodePath.isAbsolute(value)) {
           const resolved = NodePath.resolve(NodePath.dirname(file), value);

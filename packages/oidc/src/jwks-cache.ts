@@ -19,7 +19,11 @@ export class KvNamespace extends Context.Service<KvNamespace, KvStore>()(
 ) {}
 
 export const Jwks = Schema.Struct({
-  keys: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+  keys: Schema.Array(
+    Schema.StructWithRest(Schema.Struct({ kty: Schema.String }), [
+      Schema.Record(Schema.String, Schema.Unknown),
+    ]),
+  ),
 });
 
 export type Jwks = typeof Jwks.Type;

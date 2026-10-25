@@ -15,8 +15,15 @@ import {
 } from "@repo/audit";
 import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
-import { D1Client, DatabaseLive } from "@repo/db";
-import { AuthConfig } from "@repo/deploy-config";
+import { D1Client, DatabaseLive, ReplayGuardLive } from "@repo/db";
+import { pruneOidcReplayIds } from "@repo/oidc";
+import {
+  AuthConfig,
+  CanonicalOrigin,
+  OidcAudience,
+  OidcAudiences,
+  resolveOriginSettings,
+} from "@repo/deploy-config";
 import { MailerNoop } from "@repo/mailer";
 import {
   ArtifactBucket,
@@ -34,22 +41,31 @@ import {
 } from "@repo/infra";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { artifactApi } from "./api.ts";
 import { authRoute, isAuthPath } from "./auth.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
-import { resolveDeployment } from "./deployment.ts";
+import { resolveDeployment, validateGitHubOAuth } from "./deployment.ts";
 import * as EdgeCache from "./edge-cache.ts";
+import { withSecurityHeaders } from "./security-headers.ts";
 
-const decodeAuthEnvironment = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    AUTH_BASE_URL: Schema.optional(Schema.String),
-    AUDIT_STREAM_ENABLED: Schema.optional(Schema.Literals(["true", "false"])),
-    GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
-  }),
-);
+const AuthEnvironment = Schema.Struct({
+  OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
+  AUDIT_STREAM_ENABLED: Schema.optional(Schema.Literals(["true", "false"])),
+  GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
+});
+
+interface DeploymentEnvironment {
+  EDGE_CACHE_ENABLED: string;
+  AUDIT_STREAM_ENABLED: "true" | "false";
+  OIDC_AUDIENCES?: string;
+  GITHUB_CLIENT_ID?: string;
+}
+
+const decodeAuthEnvironment = Schema.decodeUnknownEffect(AuthEnvironment);
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
@@ -66,20 +82,27 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Effect.orDie,
     );
 
-    const env: Record<string, string> = {
+    const githubOAuthSecret = yield* Config.option(
+      Config.Redacted("GITHUB_OAUTH_CLIENT_SECRET"),
+    ).pipe(Effect.orDie);
+
+    validateGitHubOAuth(
+      config,
+      Option.isSome(githubOAuthSecret) && Redacted.value(githubOAuthSecret.value).length > 0,
+    );
+
+    const env: DeploymentEnvironment = {
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
       // Must agree with @repo/infra's AuditBasin, which creates the stream.
-      AUDIT_STREAM_ENABLED: String(
-        auditBasinEnabled({
-          dev,
-          jurisdiction: config.jurisdiction,
-          catalogToken: Option.isSome(catalogToken),
-        }),
-      ),
+      AUDIT_STREAM_ENABLED: auditBasinEnabled({
+        dev,
+        jurisdiction: config.jurisdiction,
+        catalogToken: Option.isSome(catalogToken),
+      }) ? "true" : "false",
     };
 
-    // Without a domain, Better Auth derives its URL from each request.
-    if (domain !== undefined) env.AUTH_BASE_URL = `https://${domain}`;
+    if (config.oidcAudiences !== undefined)
+      env.OIDC_AUDIENCES = JSON.stringify(config.oidcAudiences);
 
     if (config.githubApp !== undefined) env.GITHUB_CLIENT_ID = config.githubApp.clientId;
 
@@ -123,6 +146,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
     // Bound to the Worker as a secret at deploy time.
     const token = yield* Config.Redacted("TURBO_TOKEN");
     const environment = yield* Cloudflare.Workers.WorkerEnvironment;
+    // Alchemy resolves the custom domain, workers.dev URL, or local dev URL.
+    // Deferred until request execution: the environment is absent at plan time.
+    const publicUrl = yield* Cloudflare.Worker.URL;
 
     const edgeCacheEnabled = environment.EDGE_CACHE_ENABLED === "true";
     const execution = yield* Cloudflare.Workers.WorkerExecutionContext;
@@ -130,9 +156,21 @@ export default class Api extends Cloudflare.Worker<Api>()(
     // The deploy step writes these variables; a bad value is a deployment bug.
     const authEnvironment = yield* Effect.orDie(decodeAuthEnvironment(environment));
 
+    const originLayer = Layer.unwrap(
+      Effect.map(publicUrl, (url) => {
+        const settings = resolveOriginSettings(new URL(url).origin, authEnvironment.OIDC_AUDIENCES);
+
+        return Layer.mergeAll(
+          Layer.succeed(CanonicalOrigin, settings.canonicalOrigin),
+          Layer.succeed(OidcAudience, settings.oidcAudiences),
+        );
+      }),
+    );
+
     const authConfig = Layer.effect(
       AuthConfig,
       Effect.gen(function* () {
+        const origin = yield* CanonicalOrigin;
         const clientId = authEnvironment.GITHUB_CLIENT_ID;
 
         const github =
@@ -142,8 +180,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
         return {
           secret: yield* authSecret,
-          baseURL: authEnvironment.AUTH_BASE_URL,
-          trustedOrigins: [],
+          baseURL: origin,
+          trustedOrigins: [origin],
           github,
         };
       }),
@@ -186,6 +224,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
     yield* Cloudflare.Workers.cron("17 3 * * *", () =>
       dailyAuditJob.pipe(Effect.provide(auditJobsLayer), Effect.tapCause(Effect.logError)),
     );
+    yield* Cloudflare.Workers.cron("13 * * * *", () =>
+      pruneOidcReplayIds.pipe(
+        Effect.provide(ReplayGuardLive.pipe(Layer.provide(databaseLayer))),
+        Effect.tapCause(Effect.logError),
+      ),
+    );
 
     const authLayer = AuthLive.pipe(
       Layer.provide(
@@ -215,7 +259,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         const { pathname } = new URL(request.url, "http://localhost");
 
         return yield* isAuthPath(pathname) ? auth : artifacts;
-      }),
+      }).pipe(withSecurityHeaders, Effect.provide(originLayer)),
     };
   }).pipe(
     Effect.provide(

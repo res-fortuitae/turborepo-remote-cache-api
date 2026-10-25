@@ -28,13 +28,18 @@ Bun, has no dependencies, and gives us the few primitives we need.
 ## Format
 
 - Header: `alg: EdDSA`, `typ: JWT`, `kid`.
-- Claims: `iss` (our URL), `aud: turbo-cache`, `sub`, `org`, `prj`,
+- Claims: `iss` and `aud` (both our canonical origin), `sub`, `org`, `prj`,
   `scope` (`read` | `read write`), `epoch`, `iat`, `nbf`, `exp`, `jti`.
 - `epoch` is `{ org, prj }`: the Coordinator's revocation epoch for `org:<id>` and
   `project:<id>` at issue time. The two scopes have independent counters, so a single
   number can't detect a bump in both. Verification rejects the token if either scope
   `isRevoked`.
 - TTL is `min(1 h, instance maxTtlSeconds, trust policy maxTtlSeconds)`.
+
+STV-494 replaces the former fixed `turbo-cache` audience with the canonical
+origin to bind tokens to an instance. Accepted upstream CI audiences are configured
+separately so domain migration need not break CI policies. See
+[origin and audience configuration](../origin-and-audiences.md).
 
 ## Keys and rotation
 

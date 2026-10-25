@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import example from "../../../deploy.config.example.ts";
 import { defineDeployConfig, workerDomain } from "../src/deploy-config.ts";
-import { resolveDeployment } from "../src/deployment.ts";
+import { resolveDeployment, validateGitHubOAuth } from "../src/deployment.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
 import { writeDeployConfig } from "../scripts/setup.ts";
 
@@ -23,7 +23,17 @@ test("the shipped config preserves retention and cache defaults", () => {
   expect(example.jurisdiction).toBe("default");
 });
 
+test("GitHub OAuth requires paired public configuration and a nonempty secret", () => {
+  const configured = { githubApp: { appId: 123, clientId: "Iv1.example", slug: "cache" } };
+  expect(() => validateGitHubOAuth({}, false)).not.toThrow();
+  expect(() => validateGitHubOAuth(configured, true)).not.toThrow();
+  expect(() => validateGitHubOAuth(configured, false)).toThrow("GITHUB_OAUTH_CLIENT_SECRET");
+  expect(() => validateGitHubOAuth({}, true)).toThrow("githubApp");
+});
+
 test("deployment validation rejects invalid infrastructure settings", () => {
+  expect(() => defineDeployConfig({ ...example, oidcAudiences: [] })).toThrow();
+  expect(() => defineDeployConfig({ ...example, oidcAudiences: [""] })).toThrow();
   expect(() =>
     defineDeployConfig({ ...example, domain: "https://cache.example.com/path" }),
   ).toThrow();
@@ -73,15 +83,12 @@ test("organization cache settings cannot override jurisdiction restrictions", ()
 });
 
 test("setup writes loadable config and never overwrites organization changes", async () => {
-  // Keep the fixture beside the actual config so its relative type helper resolves.
+  // Keep the fixture beneath the workspace so its package import resolves.
   const root = new URL("../../../", import.meta.url);
   const path = await NodeFSP.mkdtemp(NodePath.join(NodeURL.fileURLToPath(root), ".setup-test-"));
   directories.push(path);
   // Global URL: node:url's type differs from it once @types/node is in scope.
   const url = new URL(NodeURL.pathToFileURL(NodePath.join(path, "deploy.config.ts")).href);
-  // writeDeployConfig's import is relative to the repository root.
-  const helper = NodePath.join(path, "apps");
-  await NodeFSP.symlink(NodeURL.fileURLToPath(new URL("apps/", root)), helper);
 
   const config = defineDeployConfig({
     ...example,

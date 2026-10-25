@@ -90,13 +90,22 @@ export const AuthLive: Layer.Layer<Auth, never, Database | AuthConfig | Mailer |
       const storage = yield* Effect.serviceOption(SecondaryStorage);
       // Required now so hooks can use them without changing the layer type:
       // email (STV-495) and audit (STV-458).
-      yield* Mailer;
+      const mailer = yield* Mailer;
       yield* AuditLog;
 
       const auth = makeBetterAuth({
         config,
         db: database.drizzle,
         secondaryStorage: Option.getOrUndefined(Option.map(storage, toBetterAuthStorage)),
+        // Promise callback is the boundary from Better Auth into our Effect service.
+        sendMagicLink: (email, url) =>
+          Effect.runPromise(
+            mailer.send({
+              to: email,
+              subject: "Sign in to Turborepo Remote Cache",
+              text: `Sign in using this link (expires in 10 minutes):\n\n${url}`,
+            }),
+          ),
       });
 
       const getSession = (headers: Headers) =>

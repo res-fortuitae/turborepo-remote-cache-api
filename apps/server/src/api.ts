@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import { ArtifactQueryRequest, CacheEvents } from "@repo/api-spec";
+import { CanonicalOrigin } from "@repo/deploy-config";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { createArtifactCache } from "./edge-cache.ts";
@@ -247,11 +248,10 @@ export const artifactApi = <R>({
 
     // Drop any stale copy cached in this datacenter.
     if (edgeCacheEnabled) yield* cache.remove(team, hash);
-    const host = h["host"] ?? "localhost";
-    const proto = h["x-forwarded-proto"] ?? (host.startsWith("localhost") ? "http" : "https");
+    const origin = yield* CanonicalOrigin;
 
     return yield* HttpServerResponse.json(
-      { urls: [`${proto}://${host}/v8/artifacts/${hash}`] },
+      { urls: [`${origin}/v8/artifacts/${hash}`] },
       { status: 202 },
     );
   });

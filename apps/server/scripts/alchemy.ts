@@ -13,6 +13,19 @@ const defaultStage = command === "plan" ? config.stages.staging : config.stages.
 const stageArgs =
   explicitStage || Bun.env.ALCHEMY_STAGE || command === "dev" ? [] : ["--stage", defaultStage];
 
+if (command !== "destroy") {
+  const build = Bun.spawn(["bun", "run", "--cwd", "apps/dashboard", "build"], {
+    cwd: new URL("../../../", import.meta.url).pathname,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  const exitCode = await build.exited;
+
+  if (exitCode !== 0) process.exit(exitCode);
+}
+
 const child = Bun.spawn(["alchemy", command, ...stageArgs, ...args], {
   cwd: new URL("../../../", import.meta.url).pathname,
   stdin: "inherit",

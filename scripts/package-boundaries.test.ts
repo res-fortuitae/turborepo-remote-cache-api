@@ -150,3 +150,22 @@ test("allows the public db test layer while retaining dependency and private-sub
   workspace(root, "auth", "import '@repo/db/testing';");
   expect(checkBoundaries(root).join("\n")).toContain("undeclared workspace dependency");
 });
+
+test("allows UI component exports for apps and rejects private UI paths and domain coupling", () => {
+  const root = fixture();
+  workspace(root, "ui", "");
+  workspace(
+    root,
+    "cli",
+    "import '@repo/ui/components/button'; import '@repo/ui/styles.css'; import '@repo/ui/lib/utils';",
+    { "@repo/ui": "workspace:*" },
+  );
+  expect(checkBoundaries(root)).toEqual([]);
+
+  workspace(root, "cli", "import '@repo/ui/src/components/button';", { "@repo/ui": "workspace:*" });
+  expect(checkBoundaries(root).join("\n")).toContain("public entry point");
+
+  workspace(root, "db", "");
+  workspace(root, "ui", "import '@repo/db';", { "@repo/db": "workspace:*" });
+  expect(checkBoundaries(root).join("\n")).toContain("forbidden dependency @repo/ui -> @repo/db");
+});

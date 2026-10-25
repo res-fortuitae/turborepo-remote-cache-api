@@ -15,7 +15,10 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "effect": "^4.0.6"
+    "@repo/db": "workspace:*",
+    "@repo/deploy-config": "workspace:*",
+    "effect": "^4.0.6",
+    "jose": "^6.2.13"
   },
   "devDependencies": {
     "@repo/config": "workspace:*",

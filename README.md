@@ -7,7 +7,8 @@ A self-hosted [Turborepo Remote Cache](https://turborepo.dev/docs/openapi) runni
 This Bun + Turborepo monorepo contains:
 
 - `apps/server`: existing Cloudflare Worker and R2 resource declarations.
-- `apps/dashboard`: dashboard scaffold (application shell follows in STV-466).
+- `apps/dashboard`: React dashboard built with Bun HTML imports (authentication follows in STV-466).
+- `packages/ui`: shared shadcn Mira components, theme tokens, and utilities ([guide](packages/ui/README.md)).
 - `packages/db`: Drizzle schemas, migrations, and composable database/repository layers ([guide](packages/db/README.md)).
 - `packages/api-spec`: shared Effect HttpApi groups, transport schemas and tagged API errors
   ([contract and consumption guide](packages/api-spec/README.md)).
@@ -39,6 +40,8 @@ bun run format:check
 bun run typecheck     # cached workspace type checks
 bun run test          # copied rule suites and config integration checks
 bun run check         # lint, type checks, and formatting
+bun run dashboard:dev   # dashboard UI preview with hot reload
+bun run dashboard:build # production dashboard assets
 bun run setup         # create organization config; bootstrap handoff when available
 bun run plan          # Alchemy plan for the configured staging stage
 ```
@@ -72,8 +75,9 @@ setup above. Setup itself does not deploy infrastructure.
 
 See `deploy.config.example.ts` for the typed settings: production and staging
 domains, R2 jurisdiction, public GitHub App identifiers, retention and Worker CPU
-limits, edge cache, and stage names. GitHub App identifiers are reserved for the
-bootstrap/auth integration; they do not enable authentication in the current API.
+limits, edge cache, and stage names. Set `githubApp` and the root
+`GITHUB_OAUTH_CLIENT_SECRET` together to enable GitHub sign-in through Better Auth.
+See [GitHub sign-in and local OAuth checks](docs/github-sign-in.md).
 Credentials belong in the root `.env` or a secret store, never in config.
 
 Both organization paths are ignored in a fresh upstream checkout. In your fork,
@@ -100,6 +104,14 @@ An explicit `--stage` or `ALCHEMY_STAGE` takes precedence. Development keeps
 Alchemy's local stage default. Production domains only attach to the production
 stage; use `stagingDomain` for staging. Existing installations must preserve their
 current stage name; see [UPGRADING.md](UPGRADING.md).
+
+API, dashboard and auth share that origin. Optional `oidcAudiences` pins accepted
+CI audience identifiers across domain changes; it defaults to each stage's origin.
+See [origin, audiences and upload limits](docs/origin-and-audiences.md) for migration
+steps, security headers and Cloudflare plan limits.
+
+The CI ID-token verifier and its replay/cache guarantees are documented in
+[`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.
 
 ## Upstream releases
 
@@ -143,10 +155,16 @@ the API Worker binds them:
 | Durable Object         | `Coordinator`                                                          | Revocation epochs and other strongly consistent primitives          |
 | Secrets Store secrets  | `SigningKey`, `BetterAuthSecret`, `GitHubOAuthSecret`, `BasinSqlToken` | Stored as `<stage>_<ENV_NAME>` in the account store                 |
 | Rate Limiting          | `RATE_LIMITER`                                                         | Request ceilings (`@repo/ratelimit`)                                |
-| Static assets          | `ASSETS`                                                               | Dashboard build in `apps/dashboard/public`                          |
+| Static assets          | `ASSETS`                                                               | Dashboard build in `apps/dashboard/dist`                            |
 
 The GitHub OAuth and Basin secrets are created only when their variables are set.
 Cloudflare allows one Secrets Store per account; Alchemy adopts it and never deletes it.
+
+Persistent resources use Alchemy retention outside explicitly named preview/PR
+stages. This includes the API Worker because it owns the Coordinator namespace.
+Artifacts and KV remain disposable. The jurisdiction-aware `Backups` bucket is
+reserved storage; no backup job is installed. See [deletion protection and
+recovery](docs/deletion-protection.md) before destroying or re-adopting a stack.
 
 ## Retention
 
