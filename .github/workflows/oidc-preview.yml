@@ -1,0 +1,87 @@
+name: OIDC existing-preview acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      api:
+        description: Existing preview HTTPS origin
+        required: true
+        type: string
+      team:
+        description: Preview organization ID
+        required: true
+        type: string
+      project:
+        description: Preview project ID
+        required: true
+        type: string
+      expectation:
+        description: write on main, read on a PR, denied from an outside repository
+        type: choice
+        options: [write, read, denied]
+        required: true
+      implementation_ref:
+        description: Reviewed full commit SHA of this implementation
+        type: string
+        required: true
+      expiry_probe:
+        description: Also wait for a fresh GitHub assertion to expire (up to 21 minutes)
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      api:
+        required: true
+        type: string
+      team:
+        required: true
+        type: string
+      project:
+        required: true
+        type: string
+      expectation:
+        required: true
+        type: string
+      implementation_ref:
+        required: true
+        type: string
+      expiry_probe:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TCACHE_PREVIEW_API: ${{ inputs.api }}
+      TCACHE_PREVIEW_TEAM: ${{ inputs.team }}
+      TCACHE_PREVIEW_PROJECT: ${{ inputs.project }}
+      EXPECTATION: ${{ inputs.expectation }}
+    steps:
+      - name: Require a full reviewed implementation SHA
+        env:
+          IMPLEMENTATION_REF: ${{ inputs.implementation_ref }}
+        run: '[[ "$IMPLEMENTATION_REF" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: StvyaSharma/turborepo-remote-cache-api
+          ref: ${{ inputs.implementation_ref }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - if: inputs.expectation != 'denied'
+        uses: ./packages/action
+        with:
+          api: ${{ inputs.api }}
+          team: ${{ inputs.team }}
+          project: ${{ inputs.project }}
+          strict: "true"
+      - run: bun scripts/oidc-preview-probe.ts "$EXPECTATION"
+      - if: inputs.expiry_probe
+        run: bun scripts/oidc-preview-probe.ts expired

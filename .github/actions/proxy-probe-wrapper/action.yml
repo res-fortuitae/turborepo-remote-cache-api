@@ -1,0 +1,15 @@
+name: Composite proxy probe wrapper
+description: Exercise the bundled JS Action inside a composite action
+inputs:
+  api:
+    description: Fixture API origin
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: ./packages/action
+      with:
+        api: ${{ inputs.api }}
+        team: org
+        project: p
+        strict: "true"
