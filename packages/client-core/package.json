@@ -8,11 +8,16 @@
   },
   "scripts": {
     "typecheck": "bun check",
-    "test": "bun test --pass-with-no-tests",
+    "test": "bun test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@repo/api-spec": "workspace:*",
+    "effect": "^4.0.6",
+    "jose": "^6.2.13"
   },
   "devDependencies": {
     "@repo/config": "workspace:*",
