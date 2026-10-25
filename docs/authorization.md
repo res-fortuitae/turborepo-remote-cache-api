@@ -31,3 +31,14 @@ compare role names or query grant tables themselves. Authentication and native
 Better Auth plugin callbacks remain owned by `@repo/auth` and its shared role
 definitions. Cross-domain adapters supply authenticated principals; HTTP query
 parameters never establish a principal's organization or project.
+
+The permission matrix in `packages/authz/src/permission-matrix.test.ts` covers
+122,880 combinations of instance role, elevation, organization role, direct grant,
+team grant, team membership, credential kind/scope and action. The same independent
+acceptance table drives both pure decisions and fresh SQLite repository facts.
+Each credential/action combination also checks a different organization and a
+second project in the same organization. New exported actions must be represented
+in the acceptance table. Live policy tests verify TTL/signing/binding clamps and
+audit failure behavior; signed JWT HTTP tests reject spoofed team selectors and
+clean up an upload that races project deletion. `.github/workflows/validate.yml`
+runs `bun run check` and `bun run test` on every PR without cloud credentials.

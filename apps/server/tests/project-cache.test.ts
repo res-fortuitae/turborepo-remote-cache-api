@@ -111,5 +111,20 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
       );
       expect((yield* request(a)).status).toBe(403);
       expect((yield* request(b)).status).toBe(200);
+      const put = bucket.put;
+      bucket.put = (key, value, options) =>
+        put(key, value, options).pipe(
+          Effect.tap(() =>
+            db
+              .query("test.racingDelete", (db) =>
+                db
+                  .insert(schema.projectDeletion)
+                  .values({ projectId: "b", orgId: "org", requestedAt: 1 }),
+              )
+              .pipe(Effect.orDie),
+          ),
+        );
+      expect((yield* request(b, "PUT", "", "race")).status).toBe(403);
+      expect(bucket.objects.has("org/b/abc")).toBe(false);
     }).pipe(Effect.provide(layer), Effect.provideService(CanonicalOrigin, "https://cache.test")),
   ));
