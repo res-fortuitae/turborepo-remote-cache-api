@@ -49,7 +49,11 @@ export const multipartRoute = <R>(
     const owner: MultipartOwner = {
       orgId: credential.orgId,
       projectId: credential.projectId,
-      credentialId: credential.credentialId,
+      // A bound job keeps its key across JWT refreshes; bearer credentials remain token-bound.
+      credentialId:
+        credential.credentialType === "cacheJwt" && credential.principal.cnf
+          ? `dpop:${credential.principal.cnf.jkt}`
+          : credential.credentialId,
       generation: scope.cacheGeneration ?? 0,
       maxBytes: scope.maxUploadBytes,
     };

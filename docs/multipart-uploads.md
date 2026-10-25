@@ -96,3 +96,11 @@ metadata, completion replay, abort and purge races. The production R2 adapter
 also runs against local workerd/Miniflare to verify streaming metadata and actual
 body-length enforcement. These tests use local disposable data; no deployment
 or cloud credentials are required.
+
+The exec/Action proxy translates large streaming PUTs into multipart calls, keeping
+one 64 MiB part in memory and signing each call/retry with a fresh DPoP proof.
+For sender-constrained cache JWTs, upload handles are owned by the verified
+`cnf.jkt` job key (plus tenant/project/generation), so JWT refresh during an upload
+does not change ownership. Other proof keys and cross-tenant callers remain denied.
+API-key and unbound JWT handles retain their credential-ID ownership. Upload
+provenance records the actual issuing credential and verified OIDC identity.

@@ -124,3 +124,10 @@ credentials are required.
 `ProxySession` (redacted session secret), `ProxyTransport` (streaming, no redirects),
 `ClientConfig` and `TokenCache`. Its request method returns a streaming `Response`;
 listener binding, maintenance timers, process execution and cleanup remain app-owned.
+
+Large proxy PUTs (64 MiB and above) use the server multipart API automatically.
+The stream holds one 64 MiB replayable part, rather than buffering the entire
+artifact. Each multipart request peeks the current credential and creates a fresh
+DPoP proof, including part retries. This avoids the Worker request-body ceiling.
+Failed sessions attempt an authenticated abort. Bound upload ownership follows the
+verified job key across JWT refresh, with live authorization on every request.

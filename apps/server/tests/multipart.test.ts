@@ -1,9 +1,10 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- HTTP and streaming adapters at the Bun boundary. */
 import { expect, test } from "bun:test";
+import { MultipartCreated } from "@repo/api-spec";
 import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/artifacts";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import type { ResolvedCredential } from "@repo/credentials";
-import { Effect, Layer, Redacted, Stream } from "effect";
+import { Effect, Layer, Redacted, Stream, Schema } from "effect";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
 import { artifactApi, ApiError } from "../src/api.ts";
@@ -75,11 +76,14 @@ export const multipartFixture = () => {
     orgId: token === "other-org" ? "other" : "o",
     projectId: "p",
     credentialType: "cacheJwt",
-    credentialId: token === "other-key" ? "other-key" : "key",
+    credentialId: token.startsWith("bound-") ? token : token === "other-key" ? "other-key" : "key",
     subject: "ci",
     scopes: ["read", "write"],
     principal: {
       subject: "ci",
+      cnf: token.startsWith("bound-")
+        ? { jkt: (token === "bound-other" ? "B" : "A").repeat(43) }
+        : undefined,
       org: "o",
       project: "p",
       scope: "read write",
@@ -248,4 +252,30 @@ test("direct upload ceilings reject before storage while multipart observes whol
     (await serve("/v8/x/uploads", "POST", "write", '{"hash":"abc","size":3000000000}')).status,
   ).toBe(413);
   expect(operations).toEqual([]);
+});
+
+test("multipart survives bound JWT refresh but refuses a different proof key", async () => {
+  const { serve } = multipartFixture();
+  const created = await serve("/v8/x/uploads", "POST", "bound-initial", '{"hash":"abc","size":3}');
+  expect(created.status).toBe(201);
+  const upload = Schema.decodeUnknownSync(MultipartCreated)(await created.json());
+  const path = `/v8/x/uploads/${encodeURIComponent(upload.id)}`;
+  expect(
+    (await serve(`${path}/parts/1`, "PUT", "bound-other", "abc", { "content-length": "3" })).status,
+  ).toBe(403);
+  const response = await serve(`${path}/parts/1`, "PUT", "bound-refreshed", "abc", {
+    "content-length": "3",
+  });
+  expect(response.status).toBe(200);
+  const part = await response.json();
+  expect(
+    (
+      await serve(
+        `${path}/complete`,
+        "POST",
+        "bound-refreshed-again",
+        JSON.stringify({ parts: [part] }),
+      )
+    ).status,
+  ).toBe(202);
 });
