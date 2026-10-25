@@ -181,3 +181,12 @@ export const notification = sqliteTable("notification", {
   detail: text().notNull(),
   createdAt: integer("created_at").notNull(),
 });
+
+export const invitationClaim = sqliteTable("invitation_claim", {
+  invitationId: text("invitation_id").primaryKey(),
+  nonce: text().notNull(),
+});
+export const invitationWindow = sqliteTable("invitation_window", {
+  key: text().primaryKey(),
+  count: integer().notNull(),
+});

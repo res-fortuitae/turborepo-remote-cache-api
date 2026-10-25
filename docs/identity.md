@@ -37,3 +37,28 @@ GitHub organizations use GitHub's public membership check and fail closed on
 private/unavailable memberships. An allowlisted organization must expose the
 user's membership publicly. When both restrictions are configured, both apply.
 Policies apply to returning OAuth sign-ins and account linking too.
+
+## Organizations and invitations
+
+The organization plugin is enabled. An org is a Turbo team, and its immutable,
+lowercase slug is `TURBO_TEAM`. `/organization/create` gives the creator the
+org owner role, subject to the instance org-creation policy. Instance admins
+use `/instance/orgs/create` to assign a lead without becoming org members.
+Native member list/update/remove APIs remain available; owner removal and
+ownership changes use the explicit transfer operation. Archived orgs deny access.
+
+Use `POST /organization/invite` with `{ organizationId, email?, githubUsername?,
+role? }`. Roles are admin or member (default). Username invitations resolve an
+existing GitHub-linked user's private account email, so that user must sign in
+once first. GitHub-restricted instances require recipients to have signed in;
+acceptance rechecks membership. Invites expire after 48 hours. D1 enforces ten
+invitations per inviter/org/hour, including failed delivery attempts.
+
+The response contains `{ invitation, url, delivered }`. A disabled/failed mailer
+returns `delivered: false` with a usable signed link. Authorized org admins can
+retrieve it again via `POST /organization/invitation-link` with `{ invitationId }`.
+The fragment contains `id`, `expires`, and `signature`; submit ID and signature
+to `/organization/accept-signed-invitation`. The recipient must have a verified,
+matching email and a live session, and still satisfy instance signup rules.
+Acceptance and a unique consume record commit together in a D1 batch. Native
+unsigned acceptance and direct member addition are disabled.

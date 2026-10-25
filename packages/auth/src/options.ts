@@ -8,6 +8,7 @@ import type { AuditLogService } from "@repo/audit";
 import { and, eq, sql } from "drizzle-orm";
 import { APIError } from "better-auth/api";
 import { readInstancePolicy, instancePlugin } from "./instance.ts";
+import { organizationPlugins } from "./organizations.ts";
 import { instanceAdmin } from "./instance-access.ts";
 import { githubIdentityHooks } from "./github.ts";
 
@@ -17,6 +18,7 @@ export interface BetterAuthInput {
   readonly config: AuthSettings;
   readonly db: DatabaseDrizzle;
   readonly secondaryStorage: BetterAuthSecondaryStorage | undefined;
+  readonly sendInvitation?: (email: string, org: string, url: string) => Promise<boolean>;
   readonly audit?: AuditLogService;
   readonly sendMagicLink?: (email: string, url: string) => Promise<void>;
 }
@@ -31,6 +33,7 @@ export const makeBetterAuth = ({
   secondaryStorage,
   sendMagicLink,
   audit,
+  sendInvitation,
 }: BetterAuthInput) => {
   const socialProviders: NonNullable<BetterAuthOptions["socialProviders"]> = {};
 
@@ -139,6 +142,7 @@ export const makeBetterAuth = ({
     },
     plugins: [
       instanceAdmin(),
+      ...organizationPlugins(db, config, audit, sendInvitation),
       instancePlugin(db, config, audit),
       ...(config.magicLink === true
         ? [

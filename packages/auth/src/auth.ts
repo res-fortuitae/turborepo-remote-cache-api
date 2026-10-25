@@ -1,7 +1,7 @@
 import { AuditLog } from "@repo/audit";
 import { Database, schema, type DatabaseError } from "@repo/db";
 import { AuthConfig } from "@repo/deploy-config";
-import { Mailer } from "@repo/mailer";
+import { invitationMessage, Mailer } from "@repo/mailer";
 import { isAPIError } from "better-auth/api";
 import { and, eq, gt } from "drizzle-orm";
 import * as Clock from "effect/Clock";
@@ -98,6 +98,13 @@ export const AuthLive: Layer.Layer<Auth, never, Database | AuthConfig | Mailer |
         audit,
         db: database.drizzle,
         secondaryStorage: Option.getOrUndefined(Option.map(storage, toBetterAuthStorage)),
+        sendInvitation: (email, org, url) =>
+          Effect.runPromise(
+            mailer.send(invitationMessage(email, org, url)).pipe(
+              Effect.as(true),
+              Effect.catchTag("MailerError", () => Effect.succeed(false)),
+            ),
+          ),
         // Promise callback is the boundary from Better Auth into our Effect service.
         sendMagicLink: (email, url) =>
           Effect.runPromise(
