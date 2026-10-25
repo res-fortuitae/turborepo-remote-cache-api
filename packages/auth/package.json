@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./api-key-warning": "./src/api-key-warning.ts"
   },
   "scripts": {
     "typecheck": "bun check",
@@ -16,11 +17,13 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
+    "@better-auth/api-key": "1.7.12",
     "@better-auth/passkey": "1.7.12",
     "@repo/audit": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/deploy-config": "workspace:*",
     "@repo/mailer": "workspace:*",
+    "@repo/ratelimit": "workspace:*",
     "better-auth": "^1.7.12",
     "drizzle-orm": "1.0.0-rc.5",
     "effect": "^4.0.6",

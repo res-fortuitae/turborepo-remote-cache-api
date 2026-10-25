@@ -76,7 +76,8 @@ not generate them or deploy infrastructure. The first newly registered user
 claims instance ownership, so control initial OAuth access before publishing
 the instance. See [identity, organizations and passkeys](docs/identity.md).
 The setup script's optional bootstrap handoff remains unavailable; use the
-token-based setup above.
+scoped API-key management API after signing in. Shared-token cache access
+requires `features.legacyToken: true`; see [cache credentials](docs/cache-credentials.md).
 
 See `deploy.config.example.ts` for the typed settings: production and staging
 domains, R2 jurisdiction, public GitHub App identifiers, retention and Worker CPU
@@ -115,6 +116,14 @@ CI audience identifiers across domain changes; it defaults to each stage's origi
 See [origin, audiences and upload limits](docs/origin-and-audiences.md) for migration
 steps, security headers and Cloudflare plan limits.
 
+Organization-owned API keys and their management API are documented in
+[API-key fallback](docs/api-keys.md). See [cache credentials](docs/cache-credentials.md)
+for JWT/API-key routing, project isolation, and the opt-in legacy migration flag.
+[Request guards](docs/request-guards.md) documents credential/IP rate limits,
+organization policy ceilings, and batch/upload bounds.
+[Upload provenance and incident response](docs/artifact-purge.md) covers dry-run
+filters, audited background purge jobs, the dashboard, and `tcache admin purge`.
+
 The CI ID-token verifier and its replay/cache guarantees are documented in
 [`@repo/oidc`](packages/oidc/README.md). `POST /oidc/exchange` issues project-scoped cache JWTs; see that guide for
 policy, audit, rate-limit, supported CI issuers and pinned custom issuer configuration,
@@ -137,10 +146,13 @@ notes, and run `bun run check`, `bun run test`, and `bun run plan` before deploy
 
 ## Use it from Turborepo
 
+See [Turbo compatibility](docs/turbo-compatibility.md) for supported versions,
+the CI matrix, preflight/signatures, and what replaces `turbo login` / `turbo link`.
+
 ```sh
 export TURBO_API=https://<your-worker>.workers.dev
-export TURBO_TOKEN=<same token>
-export TURBO_TEAM=my-team   # artifacts are namespaced per team
+export TURBO_TOKEN=<cache JWT or tcache_ API key>
+export TURBO_TEAM=my-org-slug   # must match the credential's organization
 turbo run build
 ```
 
@@ -155,7 +167,7 @@ turbo run build
 | POST   | `/v8/artifacts`        | Query metadata for many hashes          |
 | POST   | `/v8/artifacts/events` | Record cache events (validated, logged) |
 
-Legacy shared-token artifacts use `<teamId|slug|default>/<hash>`; verified JWTs use
+Opt-in legacy shared-token artifacts use `<teamId|slug|default>/<hash>`; verified JWTs and API keys use
 `{orgId}/{projectId}/{hash}`. The `x-artifact-*` headers are kept as R2 custom metadata.
 
 ## Cloudflare resources
@@ -192,7 +204,7 @@ changing residency of existing data needs a separate migration.
 
 ## Edge caching
 
-Downloads are stored in the datacenter's Workers Cache (`apps/server/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by team + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
+Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + cache generation + hash. Artifacts over 512 MB bypass edge caching. Project purges invalidate copies across locations within five seconds; see [purge semantics](docs/cache-credentials.md#purging-edge-copies). Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
 Set `features.edgeCache=false` to bypass the cache for downloads and uploads.
 
 When a jurisdiction is set, artifact edge caching is disabled regardless of the
@@ -259,9 +271,8 @@ valid. `edgeCache` keeps its existing behavior. Custom Worker CPU limits are
 only sent for a detected/asserted Workers Paid account.
 
 - **Analytics:** lite mode batches remote hit/miss/request/time-saved counters in
-  D1's existing hourly rollup table. Local hits are excluded. The current Turbo
-  API uses its team namespace as both org and legacy project scope until project
-  credential routing is implemented. Counter writes run under `waitUntil`, and
+  D1's existing hourly rollup table. Local hits are excluded. The Turbo API uses the credential’s organization and project; opt-in legacy
+  requests use their team namespace for both. Counter writes run under `waitUntil`, and
   failures are logged without failing cache traffic. Counters are at least once;
   retransmitted event batches can count twice. `analytics: false` selects a no-op
   emitter. Basin analytics/history/drill-downs remain pending STV-462–465, even
@@ -280,7 +291,8 @@ only sent for a detected/asserted Workers Paid account.
   100,000,000-byte request ceiling. A Business/Enterprise serving zone permits
   up to 200,000,000 bytes in this version; Cloudflare can impose a lower zone
   upload setting before the Worker runs. `directUploads: false` restores the
-  conservative ceiling. Multipart proxy support remains pending STV-492.
+  conservative ceiling. The [multipart API and shared proxy transport](docs/multipart-uploads.md) support
+  larger artifacts; the `tcache exec` command follows in STV-485.
 
 Plan prerequisites follow Cloudflare's [Email Service pricing](https://developers.cloudflare.com/email-service/platform/pricing/)
 and [Workers request limits](https://developers.cloudflare.com/workers/platform/limits/).

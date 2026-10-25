@@ -39,6 +39,22 @@ test("allows declared providers and ignores comments and string data", () => {
   expect(checkBoundaries(root)).toEqual([]);
 });
 
+test("allows narrow request-time entry points but rejects their private descendants", () => {
+  const root = fixture();
+  workspace(root, "artifacts", "");
+  workspace(root, "auth", "");
+  const providers = { "@repo/artifacts": "workspace:*", "@repo/auth": "workspace:*" };
+  workspace(
+    root,
+    "cli",
+    "import '@repo/artifacts/cache'; import '@repo/auth/api-key-warning';",
+    providers,
+  );
+  expect(checkBoundaries(root)).toEqual([]);
+  workspace(root, "cli", "import '@repo/artifacts/cache/private';", providers);
+  expect(checkBoundaries(root).join("\n")).toContain("public entry point");
+});
+
 test("rejects reverse dependencies in manifests and catches cycles", () => {
   const root = fixture();
   workspace(root, "db", "", { "@repo/auth": "workspace:*" });

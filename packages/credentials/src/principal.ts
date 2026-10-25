@@ -10,9 +10,20 @@ export type CacheScope = typeof CacheScope.Type;
  * from the signed claims, never from the request, so authz and artifacts can
  * trust it as is.
  */
+export const UploadIdentity = Schema.Struct({
+  provider: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  repositoryId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  ref: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  jobWorkflowRef: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  commitSha: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  runId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+});
+export type UploadIdentity = typeof UploadIdentity.Type;
+
 export const Principal = Schema.Struct({
   /** `oidc:github:repo:<id>:ref:...` or `user:<id>`. */
   subject: Schema.NonEmptyString,
+  uploadIdentity: Schema.optional(UploadIdentity),
   org: Schema.NonEmptyString,
   project: Schema.NonEmptyString,
   scope: CacheScope,

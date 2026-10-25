@@ -32,7 +32,7 @@ export const describeContract = (target: () => Target, team: string) =>
       expect((await fetch(`${base}/status`)).status).toBe(401);
       expect(
         (await fetch(`${base}/status`, { headers: { Authorization: "Bearer invalid" } })).status,
-      ).toBe(403);
+      ).toBe(401);
     });
 
     test("status reports caching enabled", async () => {

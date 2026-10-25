@@ -25,7 +25,7 @@ import {
   PolicyGuardrailsLive,
   GITHUB_ACTIONS_ISSUER,
 } from "@repo/oidc";
-import { RateLimiter } from "@repo/ratelimit";
+import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
 import { sql } from "drizzle-orm";
 import { Effect, Layer, Redacted, Schema } from "effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -505,6 +505,8 @@ test("exchange binds cache JWT to verified ephemeral key and rejects proof reuse
       const verifier = yield* CacheTokenVerifier;
       const principal = yield* verifier.verify(Redacted.value(result.token));
       expect(principal.cnf?.jkt).toHaveLength(43);
+      expect(principal.uploadIdentity?.repositoryId).toBe("1");
+      expect(principal.uploadIdentity?.ref).toBe("refs/heads/main");
       expect(decodeJwt(Redacted.value(result.token)).cnf).toEqual(principal.cnf);
       expect((yield* serve(body(yield* token()), { dpop: proof })).status).toBe(403);
       expect((yield* serve(body(yield* token()))).status).toBe(403);

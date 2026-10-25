@@ -3,7 +3,9 @@ import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 
 // These payload schemas intentionally preserve the existing Turbo wire contract.
 // Query hashes are not refined: invalid hashes have per-entry errors.
-export const ArtifactQueryRequest = Schema.Struct({ hashes: Schema.Array(Schema.String) });
+export const ArtifactQueryRequest = Schema.Struct({
+  hashes: Schema.Array(Schema.String).check(Schema.isMaxLength(1000)),
+});
 
 export const CacheEvent = Schema.Struct({
   sessionId: Schema.String,

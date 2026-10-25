@@ -1,3 +1,4 @@
+import { RateLimiterTest } from "@repo/ratelimit";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun calls the public auth service at this test boundary. */
 import { expect, test } from "bun:test";
 import { AuditLogTest } from "@repo/audit/testing";
@@ -21,6 +22,7 @@ const run = <A, E>(
         AuthLive.pipe(
           Layer.provide(
             Layer.mergeAll(
+              RateLimiterTest,
               Layer.succeed(AuthConfig, {
                 secret: Redacted.make("magic-link-test-secret-0123456789abcdef0123456789"),
                 baseURL: ORIGIN,
