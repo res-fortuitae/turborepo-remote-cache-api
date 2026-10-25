@@ -312,7 +312,21 @@ export const DashboardAssets = {
   directory: new URL("../../../apps/dashboard/dist", import.meta.url).pathname,
   notFoundHandling: "single-page-application",
   // Cache API paths never resolve to dashboard files.
-  runWorkerFirst: ["/v8", "/v8/*", "/api", "/api/*", "/oidc", "/oidc/*", "/.well-known/*"],
+  runWorkerFirst: [
+    "/v8",
+    "/v8/*",
+    "/api",
+    "/api/*",
+    "/oidc",
+    "/oidc/*",
+    "/.well-known/*",
+    "/v2/*",
+    "/v3/user/tokens/*",
+    "/v5/user/tokens/*",
+    "/v0/spaces",
+    "/registration/verify",
+    "/login/oauth/*",
+  ],
 } satisfies Cloudflare.AssetsProps;
 
 export {

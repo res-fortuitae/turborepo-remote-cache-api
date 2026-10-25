@@ -2,6 +2,7 @@ import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/ar
 import { multipartRoute } from "./multipart-route.ts";
 import { MULTIPART_PART_BYTES, MAX_MULTIPART_PARTS } from "@repo/api-spec";
 import { makeMultipartBucket } from "./multipart-bucket.ts";
+import { uploadChunked } from "./chunked-upload.ts";
 
 import { and, eq } from "drizzle-orm";
 import {
@@ -716,6 +717,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const artifacts = artifactApi({
+      uploadChunked: (key, body, options) =>
+        Effect.flatMap(bucket.raw, (raw) => uploadChunked(raw, key, body, options)),
       multipart: (scope, recheck) =>
         multipartRoute(
           scope,

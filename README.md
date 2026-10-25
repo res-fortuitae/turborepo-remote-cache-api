@@ -138,6 +138,9 @@ notes, and run `bun run check`, `bun run test`, and `bun run plan` before deploy
 
 ## Use it from Turborepo
 
+See [Turbo compatibility](docs/turbo-compatibility.md) for supported versions,
+the CI matrix, preflight/signatures, and what replaces `turbo login` / `turbo link`.
+
 ```sh
 export TURBO_API=https://<your-worker>.workers.dev
 export TURBO_TOKEN=<cache JWT or tcache_ API key>

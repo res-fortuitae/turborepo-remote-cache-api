@@ -187,11 +187,14 @@ export function checkBoundaries(root: string): string[] {
           const publicUiPath =
             target === "@repo/ui" &&
             /^@repo\/ui\/(components\/[a-z-]+|lib\/utils|styles\.css)$/.test(value);
+          const publicRuntimePath =
+            value === "@repo/artifacts/cache" || value === "@repo/auth/api-key-warning";
 
           if (
             target !== "@repo/config" &&
             value !== target &&
             value !== `${target}/testing` &&
+            !publicRuntimePath &&
             !publicUiPath
           )
             errors.push(`${location}: import ${target} through its public entry point`);

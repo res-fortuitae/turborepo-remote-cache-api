@@ -3,7 +3,7 @@ import {
   EdgeCache,
   EdgeCacheLive,
   type ArtifactCache,
-} from "@repo/artifacts";
+} from "@repo/artifacts/cache";
 import { Effect, Layer } from "effect";
 
 /** Host-only adapter: domains never discover global bindings. */

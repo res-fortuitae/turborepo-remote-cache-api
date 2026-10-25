@@ -1,6 +1,7 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import type * as Stream from "effect/Stream";
 import {
   uploadProvenance,
   ArtifactStore,
@@ -8,17 +9,22 @@ import {
   R2Bucket,
   type ArtifactMetadata,
   type ArtifactBucket,
-} from "@repo/artifacts";
+} from "@repo/artifacts/cache";
 import * as Layer from "effect/Layer";
 import type { ArtifactOperation } from "@repo/analytics";
 import type { ResolvedCredential } from "@repo/credentials";
-import { API_KEY_WARNING } from "@repo/auth";
+import { API_KEY_WARNING } from "@repo/auth/api-key-warning";
 import { ArtifactQueryRequest, CacheEvents, type CacheEvent } from "@repo/api-spec";
 import { MAX_EDGE_ARTIFACT_BYTES } from "@repo/api-spec";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import type { createArtifactCache } from "./edge-cache.ts";
+import {
+  isTurboIdentityPath,
+  TURBO_COMPATIBILITY_DOCS,
+  TURBO_PREFLIGHT_HEADERS,
+} from "./turbo-compatibility.ts";
 
 /**
  * Turborepo Remote Cache API (https://turborepo.dev/api/remote-cache-spec).
@@ -76,6 +82,15 @@ export interface ArtifactScope {
 }
 
 export interface ApiDependencies<R> {
+  readonly uploadChunked?: (
+    key: string,
+    body: Stream.Stream<Uint8Array, unknown>,
+    options: {
+      maxBytes: number;
+      customMetadata: Record<string, string>;
+      httpMetadata: { contentType: string };
+    },
+  ) => Effect.Effect<void, ApiError, R>;
   readonly multipart?: (
     scope: ArtifactScope,
     recheck: Effect.Effect<ArtifactScope, ApiError, R | HttpServerRequest.HttpServerRequest>,
@@ -156,6 +171,7 @@ const artifactHeaders = (size: number, meta: ArtifactMetadata) => {
 
 export const artifactApi = <R>({
   bucket,
+  uploadChunked,
   multipart,
   token,
   edgeCacheEnabled,
@@ -299,13 +315,17 @@ export const artifactApi = <R>({
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const h = request.headers;
-    const contentLength = Number(h["content-length"]);
+    const contentLength =
+      h["content-length"] === undefined ? undefined : Number(h["content-length"]);
 
-    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+    if (
+      (contentLength === undefined && !uploadChunked) ||
+      (contentLength !== undefined && (!Number.isSafeInteger(contentLength) || contentLength < 0))
+    ) {
       return yield* badRequest("Missing or invalid Content-Length header");
     }
 
-    if (contentLength > uploadLimit)
+    if (contentLength !== undefined && contentLength > uploadLimit)
       return yield* new ApiError({
         status: 413,
         code: "payload_too_large",
@@ -329,11 +349,16 @@ export const artifactApi = <R>({
     if (h["x-artifact-dirty-hash"]) meta.dirtyHash = h["x-artifact-dirty-hash"];
 
     const store = yield* ArtifactStore;
-    yield* store.put(team, hash, request.stream, {
-      contentLength,
+    const options = {
       httpMetadata: { contentType: "application/octet-stream" },
       customMetadata: { ...meta },
-    });
+    };
+    if (contentLength === undefined)
+      yield* uploadChunked!(`${team}/${hash}`, request.stream, {
+        ...options,
+        maxBytes: uploadLimit,
+      });
+    else yield* store.put(team, hash, request.stream, { ...options, contentLength });
 
     // A deletion or archive racing an upload must not leave a newly written artifact.
     yield* authenticate.pipe(
@@ -413,6 +438,16 @@ export const artifactApi = <R>({
     const url = new URL(request.url, "http://localhost");
     const match = ROUTE.exec(url.pathname);
 
+    if (isTurboIdentityPath(url.pathname))
+      return yield* HttpServerResponse.json(
+        {
+          code: "unsupported_turbo_identity",
+          message: `This cache uses tcache login / tcache link. See ${TURBO_COMPATIBILITY_DOCS}`,
+          docs: TURBO_COMPATIBILITY_DOCS,
+        },
+        { status: 404, headers: { "cache-control": "no-store" } },
+      );
+
     const multipartRequest = isMultipartPath(url.pathname);
     if (match === null && !multipartRequest) {
       return yield* new ApiError({
@@ -421,6 +456,11 @@ export const artifactApi = <R>({
         message: "Not found",
       });
     }
+
+    // Preflight reveals no cache data and does not require a browser to send credentials.
+    // Every subsequent operation still authenticates and runs the normal guards.
+    if (request.method === "OPTIONS")
+      return HttpServerResponse.empty({ status: 204, headers: TURBO_PREFLIGHT_HEADERS });
 
     const scope = yield* authenticate;
     const team = scope.prefix;
