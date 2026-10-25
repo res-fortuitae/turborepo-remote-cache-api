@@ -72,7 +72,10 @@ AWS projected tokens, Azure projected workload tokens and Google environments.
   and fork restrictions. Request and ID-token credentials are masked.
 - Vercel rereads the current `x-vercel-oidc-token` header, then the file named by
   `VERCEL_OIDC_TOKEN_FILE`, then `VERCEL_OIDC_TOKEN`. A configured but unreadable
-  file is an error. Build tokens are documented by [Vercel](https://vercel.com/docs/oidc).
+  file is an error. Each acquisition exchanges that source at the fixed
+  `https://oidc.vercel.com/~token` endpoint for the configured audience and a fresh
+  `jti`. Both credentials are masked; exchanged assertions are never cached or
+  retried. No Vercel SDK or CLI login is needed in builds. Build tokens are documented by [Vercel](https://vercel.com/docs/oidc).
 - GitLab reads `CACHE_ID_TOKEN`; CircleCI reads `CIRCLE_OIDC_TOKEN_V2`; Bitbucket
   reads `BITBUCKET_STEP_OIDC_TOKEN`. Configure their token audiences upstream.
 - Buildkite calls the injected command adapter with
@@ -87,8 +90,8 @@ AWS projected tokens, Azure projected workload tokens and Google environments.
   Arbitrary metadata host overrides are not followed.
 
 Provider readers do not establish server support. Issuer registry/guardrail profiles
-follow in STV-451/STV-491; this library never accepts a default-audience token or
-changes server trust settings. Projected/file/env tokens must already have the
+for additional issuers follow in STV-451; this library never accepts a default-audience token or
+changes server trust settings. Except for Vercel's explicit audience exchange, projected/file/env tokens must already have the
 accepted audience. Files are bounded to 16 KiB, HTTP replies to 64 KiB, and identity
 HTTP calls time out after 10 seconds. Fetch requests explicitly disable redirects.
 

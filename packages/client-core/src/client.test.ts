@@ -268,11 +268,22 @@ test("missing GitHub permission is typed; invalid explicit provider is never a d
   );
 });
 
+const vercelResponse = (request: HttpClientRequest.HttpClientRequest) => {
+  if (!Predicate.isTagged(request.body, "Uint8Array")) throw new Error("Expected JSON");
+  const body = JSON.parse(new TextDecoder().decode(request.body.body));
+  expect(request.url).toBe("https://oidc.vercel.com/~token");
+  expect(body.aud).toBe(api);
+  expect(body.jti).toMatch(/^[0-9a-f-]{36}$/);
+
+  return Effect.succeed(Response.json({ token: body.token }));
+};
+
 test("Vercel header wins; files are reread before env and missing files never downgrade", async () => {
   const header = fixture({
     env: { VERCEL: "1", VERCEL_OIDC_TOKEN_FILE: "token", VERCEL_OIDC_TOKEN: "env" },
     files: { token: "file" },
     header: "header",
+    response: vercelResponse,
   });
 
   await run(
@@ -287,6 +298,7 @@ test("Vercel header wins; files are reread before env and missing files never do
   const f = fixture({
     env: { VERCEL: "1", VERCEL_OIDC_TOKEN_FILE: "token", VERCEL_OIDC_TOKEN: "env" },
     files: { token: "first" },
+    response: vercelResponse,
   });
 
   await run(
@@ -599,7 +611,7 @@ test("DPoP uses a per-job ES256 key, fresh jti, normalized URL, ath and nonce", 
 
 test("refresh rereads projected CI identity; clearing starts a fresh job acquisition", () => {
   const f = fixture({
-    env: { VERCEL: "1", VERCEL_OIDC_TOKEN_FILE: "token" },
+    env: { AWS_WEB_IDENTITY_TOKEN_FILE: "token" },
     files: { token: "first-ci" },
   });
 
@@ -683,4 +695,55 @@ test("injected developer credentials refresh and mask optional signature keys", 
     }),
     f,
   );
+});
+
+test("Vercel exchanges freshly on each refresh, masks source and never exposes provider errors", async () => {
+  const f = fixture({
+    env: { VERCEL: "1", VERCEL_OIDC_TOKEN: "source-secret" },
+    response: () => Effect.succeed(Response.json({ token: "audience-token" })),
+  });
+
+  await run(
+    Effect.gen(function* () {
+      const provider = yield* CiProvider;
+      expect(Redacted.value(yield* provider.token)).toBe("audience-token");
+      yield* provider.token;
+      expect(f.requests).toHaveLength(2);
+
+      const bodies = f.requests.map((request) => {
+        if (!Predicate.isTagged(request.body, "Uint8Array")) throw new Error("Expected JSON");
+
+        return JSON.parse(new TextDecoder().decode(request.body.body));
+      });
+
+      expect(bodies[0].jti).not.toBe(bodies[1].jti);
+      expect(f.masks).toEqual([
+        "source-secret",
+        "audience-token",
+        "source-secret",
+        "audience-token",
+      ]);
+    }),
+    f,
+  );
+
+  for (const response of [
+    Response.json({ error: "source-secret" }, { status: 403 }),
+    Response.json({ error: "source-secret" }),
+    Response.json({ token: "x".repeat(70000) }),
+  ]) {
+    const bad = fixture({
+      env: { VERCEL: "1", VERCEL_OIDC_TOKEN: "source-secret" },
+      response: () => Effect.succeed(response),
+    });
+
+    await run(
+      Effect.gen(function* () {
+        const result = yield* Effect.result((yield* CiProvider).token);
+        expect(Result.isFailure(result)).toBe(true);
+        expect(JSON.stringify(result)).not.toContain("source-secret");
+      }),
+      bad,
+    );
+  }
 });

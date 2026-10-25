@@ -307,7 +307,8 @@ export const OidcVerifierLive = Layer.effect(
         if (
           claims.exp <= claims.iat ||
           claims.nbf >= claims.exp ||
-          claims.exp - claims.iat > config.maxTokenAgeSeconds
+          claims.exp - claims.iat > (issuer.maxTokenLifetimeSeconds ?? config.maxTokenAgeSeconds) ||
+          (issuer.validateClaims !== undefined && !issuer.validateClaims(payload))
         )
           return yield* invalid("claims");
         const audience = matchOidcAudience(audiences, claims.aud);

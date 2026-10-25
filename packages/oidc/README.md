@@ -169,3 +169,40 @@ requirement is rejected until then, never downgraded to bearer. Signature-key de
 follows STV-475; mandatory artifact signing also fails closed until available.
 `ExchangeConfig` carries deployment identity ceilings; hosts must supply real rate
 limits. No infrastructure is provisioned by this service or its tests.
+
+## Use the cache from Vercel builds
+
+`BuiltinIssuerRegistry` adds Vercel team (`https://oidc.vercel.com/<team-slug>`)
+and global (`https://oidc.vercel.com`) modes to GitHub. The Worker uses it; the
+GitHub-only layer remains available. Registration does not change instance defaults:
+add the exact issuer to the effective `allowedOidcIssuers` policy. Discovery and
+JWKS stay on `https://oidc.vercel.com`, with RS256 signatures only.
+
+Vercel claims are schema-validated after signature verification: `owner`,
+`owner_id` (`team_…`), `project`, `project_id` (`prj_…`) and `environment`.
+Policies must bind immutable owner/project IDs and the API audience. Use production
+for read/write, preview for read-only. Slugs in `sub` change on rename; immutable
+IDs keep policy identity stable, but a team-mode issuer rename requires a new exact
+allowlist entry. Never replace ID conditions with slug-only conditions.
+
+The client reads the current header, configured token file, or build's
+`VERCEL_OIDC_TOKEN`, in that order, on every acquisition. It then calls Vercel's
+fixed audience exchange endpoint with the API audience and a fresh `jti`. The
+[SDK implementation](https://github.com/vercel/vercel/blob/main/packages/oidc/src/exchange-vercel-oidc-token.ts)
+uses the same JSON protocol in builds and Functions. The original default audience
+is not sent to our cache or automatically trusted. Source and exchanged credentials
+are masked. Provider responses are stream-bounded, redirects disabled, no retries.
+
+[Vercel documents](https://vercel.com/docs/oidc/reference) build tokens lasting one
+hour and Function tokens two hours. Its custom-audience exchange resets `iat` and
+preserves expiration. This profile therefore bounds declared lifetime to two hours
+while preserving the independent 600-second maximum age, expiry/skew checks and
+atomic replay enforcement. A missing `jti` is refused: the client always requests
+one. Development tokens with a remaining lifetime over two hours are refused.
+Cache JWT TTL still uses the normal live policy/instance/signer ceiling.
+
+When STV-485 supplies the CLI wrapper, configure the build command as
+`tcache exec -- turbo run build`, with API/team/project configuration. Until then,
+hosts can compose `ClientCoreLive` as documented in `@repo/client-core`; the CLI
+command is not implemented by this issuer change. Refresh rereads the source and
+requests a new assertion; expiry of a fixed source cannot be repaired by reusing it.

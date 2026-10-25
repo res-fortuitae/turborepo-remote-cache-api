@@ -10,7 +10,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 import {
   GITHUB_ACTIONS_ISSUER as issuer,
-  GitHubIssuerRegistry,
+  BuiltinIssuerRegistry,
   IssuerRegistry,
   JwksCache,
   JwksCacheTest,
@@ -116,7 +116,7 @@ const run = <A, E>(
 ) => {
   const dependencies = Layer.mergeAll(
     network.layer,
-    GitHubIssuerRegistry,
+    BuiltinIssuerRegistry,
     JwksCacheTest,
     ReplayGuardLive.pipe(Layer.provide(DatabaseTest)),
     TestClock.layer(),
@@ -454,5 +454,83 @@ describe("JWKS discovery and rotation", () => {
         }),
       );
     }
+  });
+});
+
+describe("Vercel issuer profile", () => {
+  const vercel = {
+    owner: "acme",
+    owner_id: "team_123",
+    project: "web",
+    project_id: "prj_456",
+    environment: "production",
+    iat: 1000,
+    nbf: 1000,
+    exp: 8200,
+  };
+
+  test("team and global modes verify real signatures, bound lifetime and atomic replay", async () => {
+    for (const iss of ["https://oidc.vercel.com/acme", "https://oidc.vercel.com"]) {
+      const network = http();
+      network.discovery({ issuer: iss, jwks_uri: "https://oidc.vercel.com/.well-known/jwks" });
+      await run(
+        Effect.gen(function* () {
+          const token = yield* sign({ ...vercel, iss });
+          expect((yield* verify(token)).claims).toMatchObject(vercel);
+          expect(yield* reason(verify(token))).toBe("replay");
+          expect(
+            yield* reason(verify(yield* sign({ ...vercel, iss, exp: 8201, jti: "long" }))),
+          ).toBe("claims");
+          expect(
+            yield* reason(verify(yield* sign({ ...vercel, iss, owner_id: undefined, jti: "bad" }))),
+          ).toBe("claims");
+          expect(
+            yield* reason(
+              verify(
+                yield* sign({ ...vercel, iss, aud: "https://vercel.com/acme", jti: "default" }),
+              ),
+            ),
+          ).toBe("audience");
+          expect(
+            yield* reason(verify(yield* sign({ ...vercel, iss, iat: 369, nbf: 369, jti: "old" }))),
+          ).toBe("expired");
+          expect(yield* reason(verify(yield* sign({ ...vercel, iss, jti: undefined })))).toBe(
+            "claims",
+          );
+        }),
+        network,
+        [iss],
+      );
+    }
+  });
+  test("registration does not enable Vercel; lookalikes and unsafe discovery never fetch keys", async () => {
+    for (const iss of [
+      "https://oidc.vercel.com/acme",
+      "https://oidc.vercel.com.evil/acme",
+      "https://oidc.vercel.com/acme/extra",
+      "https://oidc.vercel.com/acme?x=1",
+    ]) {
+      const network = http();
+      await run(
+        Effect.gen(function* () {
+          expect(yield* reason(verify(yield* sign({ ...vercel, iss })))).toBe("issuer");
+          expect(network.urls).toEqual([]);
+        }),
+        network,
+        iss === "https://oidc.vercel.com/acme" ? [issuer] : [iss],
+      );
+    }
+
+    const iss = "https://oidc.vercel.com/acme";
+    const network = http();
+    network.discovery({ issuer: iss, jwks_uri: "https://127.0.0.1/keys" });
+    await run(
+      Effect.gen(function* () {
+        expect(yield* reason(verify(yield* sign({ ...vercel, iss })))).toBe("unavailable");
+        expect(network.urls).toHaveLength(1);
+      }),
+      network,
+      [iss],
+    );
   });
 });

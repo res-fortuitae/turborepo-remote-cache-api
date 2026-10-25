@@ -60,7 +60,7 @@ import {
   OidcExchangeLive,
   OidcVerifierLive,
   OidcVerifierConfig,
-  GitHubIssuerRegistry,
+  BuiltinIssuerRegistry,
   JwksCacheLive,
   KvNamespace,
   TrustPolicyMatcherLive,
@@ -554,7 +554,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(
         Layer.mergeAll(
           FetchHttpClient.layer,
-          GitHubIssuerRegistry,
+          BuiltinIssuerRegistry,
           ReplayGuardLive,
           JwksCacheLive.pipe(Layer.provide(Layer.effect(KvNamespace, kv.raw))),
           Layer.effect(

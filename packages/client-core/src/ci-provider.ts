@@ -1,5 +1,6 @@
 import { CiProvider as ProviderSchema } from "@repo/api-spec";
 import { Context, Effect, FileSystem, Layer, Redacted, Schema } from "effect";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClient from "effect/http/HttpClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ClientAuthError, ClientConfig, ClientEnvironment, ClientMessages } from "./config.ts";
@@ -35,6 +36,11 @@ const decodeToken = Schema.decodeUnknownEffect(Token);
 const ProviderResponse = Schema.fromJsonString(Schema.Struct({ value: Token }));
 
 const decodeProvider = Schema.decodeUnknownEffect(ProviderSchema);
+
+const decodeVercelResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ token: Token })),
+);
+
 const decodeProviderResponse = Schema.decodeUnknownEffect(ProviderResponse);
 
 const make = Effect.gen(function* () {
@@ -138,13 +144,31 @@ const make = Effect.gen(function* () {
 
     if (provider === "vercel") {
       const header = env.header?.("x-vercel-oidc-token");
-
-      if (header) return header;
       const path = env.get("VERCEL_OIDC_TOKEN_FILE");
 
-      if (path) return yield* file(path);
+      const source = yield* decodeToken(
+        (header || (path ? yield* file(path) : env.get("VERCEL_OIDC_TOKEN")))?.trim(),
+      );
 
-      return env.get("VERCEL_OIDC_TOKEN");
+      yield* messages.mask(Redacted.make(source));
+
+      // Fixed trusted endpoint, fresh ID per attempt; never cache a single-use assertion.
+      const request = HttpClientRequest.post("https://oidc.vercel.com/~token").pipe(
+        HttpClientRequest.bodyJsonUnsafe({
+          token: source,
+          aud: config.audience,
+          jti: crypto.randomUUID(),
+        }),
+      );
+
+      const response = yield* http.execute(request);
+
+      if (response.status !== 200)
+        return yield* missing(
+          "Vercel audience exchange failed. Check OIDC federation and deployment token expiry.",
+        );
+
+      return (yield* decodeVercelResponse(yield* readText(response))).token;
     }
 
     if (provider === "gitlab") return env.get("CACHE_ID_TOKEN");
