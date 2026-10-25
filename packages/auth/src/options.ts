@@ -9,6 +9,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { APIError } from "better-auth/api";
 import { readInstancePolicy, instancePlugin } from "./instance.ts";
 import { organizationPlugins } from "./organizations.ts";
+import { passkeyPlugins } from "./passkeys.ts";
 import { instanceAdmin } from "./instance-access.ts";
 import { githubIdentityHooks } from "./github.ts";
 
@@ -142,6 +143,7 @@ export const makeBetterAuth = ({
     },
     plugins: [
       instanceAdmin(),
+      ...passkeyPlugins(db, config, audit),
       ...organizationPlugins(db, config, audit, sendInvitation),
       instancePlugin(db, config, audit),
       ...(config.magicLink === true

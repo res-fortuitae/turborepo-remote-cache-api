@@ -22,6 +22,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { z } from "zod";
 
+import { requirePasskeyProof } from "./passkey-proof.ts";
+
 const decodePolicy = Schema.decodeUnknownSync(InstancePolicy);
 
 export const readInstancePolicy = async (db: DatabaseDrizzle, config: AuthSettings) => {
@@ -75,6 +77,9 @@ export const instancePlugin = (
       !(ctx.path === "/instance/orgs" && live.user.role === "auditor")
     )
       throw new APIError("FORBIDDEN");
+
+    if (ctx.method === "POST" && (await readInstancePolicy(db, config)).requirePasskeyForAdmins)
+      await requirePasskeyProof(db, live.session.id, live.user.id);
 
     return { session: live };
   });
@@ -132,6 +137,13 @@ export const instancePlugin = (
           } catch {
             throw new APIError("BAD_REQUEST", { message: "Invalid instance policy" });
           }
+
+          if (policy.requirePasskeyForAdmins)
+            await requirePasskeyProof(
+              db,
+              ctx.context.session.session.id,
+              ctx.context.session.user.id,
+            );
 
           await commit(
             event(ctx.context.session.user, "instance.settings.update", "instance"),
@@ -458,6 +470,9 @@ export const instancePlugin = (
             ].includes(ctx.path);
 
             if (read) return;
+
+            if ((await readInstancePolicy(db, config)).requirePasskeyForAdmins)
+              await requirePasskeyProof(db, live.session.id, live.user.id);
 
             if (live.user.role !== "owner" && live.user.role !== "admin")
               throw new APIError("FORBIDDEN");

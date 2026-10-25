@@ -1,3 +1,4 @@
+import { passkey } from "@better-auth/passkey";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { organization } from "better-auth/plugins/organization";
@@ -21,6 +22,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    passkey(),
     organization({ dynamicAccessControl: { enabled: true }, teams: { enabled: true } }),
     admin(),
     magicLink({ storeToken: "hashed", sendMagicLink: async () => {} }),

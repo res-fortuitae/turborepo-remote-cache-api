@@ -68,10 +68,12 @@ bun run deploy         # first run prompts for Cloudflare login and bootstraps t
 ```
 
 Setup validates and creates config without overwriting it, then runs the API's
-`bootstrap` script when available. Automatic secrets, owner setup links, and the
-GitHub App manifest bootstrap are pending [STV-499](https://linear.app/stvyas-workspace/issue/STV-499).
-Until then setup reports that bootstrap is pending; use the existing token-based
-setup above. Setup itself does not deploy infrastructure.
+`bootstrap` script when available. Secrets remain in the root `.env`; setup does
+not generate them or deploy infrastructure. The first newly registered user
+claims instance ownership, so control initial OAuth access before publishing
+the instance. See [identity, organizations and passkeys](docs/identity.md).
+The setup script's optional bootstrap handoff remains unavailable; use the
+token-based setup above.
 
 See `deploy.config.example.ts` for the typed settings: production and staging
 domains, R2 jurisdiction, public GitHub App identifiers, retention and Worker CPU

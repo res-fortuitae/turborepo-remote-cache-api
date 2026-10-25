@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
 import { AuditLogTest } from "@repo/audit/testing";
 import { Database, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
-import { AuthConfig } from "@repo/deploy-config";
+import { AuthConfig, defaultInstancePolicy } from "@repo/deploy-config";
 import { MailerNoop } from "@repo/mailer";
 import { eq } from "drizzle-orm";
 import { Effect, Layer, Redacted, Schema } from "effect";
@@ -248,6 +248,10 @@ test("concurrent callbacks keep each GitHub profile bound to its own account", a
         db.select().from(schema.account),
       );
 
+      const users = yield* database.query("test.owners", (db) => db.select().from(schema.user));
+      expect(users.filter((user) => user.role === "owner")).toHaveLength(1);
+      expect(users.filter((user) => user.role === "member")).toHaveLength(1);
+
       const profiles = yield* Effect.all([providerUser("octocat"), providerUser("ada")]);
       expect(accounts.map((account) => [account.accountId, account.githubLogin]).sort()).toEqual(
         profiles.map((profile) => [String(profile.id), profile.login]).sort(),
@@ -307,6 +311,33 @@ test("untrusted browser origins with cookies and callback redirects are rejected
       }
 
       expect(calls).toEqual([]);
+    }),
+  );
+});
+
+test("instance signup domain policy gates new users and returning OAuth identities", async () => {
+  await run(
+    Effect.gen(function* () {
+      const database = yield* Database;
+      yield* finish("octocat");
+      const policy = { ...defaultInstancePolicy, allowedEmailDomains: ["other.example"] };
+      yield* database.query("test.policy", (db) =>
+        db.insert(schema.instanceSettings).values({
+          id: 1,
+          schemaVersion: 1,
+          settings: {
+            ...policy,
+            allowedEmailDomains: [...policy.allowedEmailDomains],
+            allowedGithubOrgs: [...policy.allowedGithubOrgs],
+            allowedOidcIssuers: [...policy.allowedOidcIssuers],
+          },
+          updatedAt: Date.now(),
+        }),
+      );
+      expect((yield* finish("octocat")).headers.get("location")).not.toBe("/dashboard");
+      expect((yield* finish("ada")).headers.get("location")).not.toBe("/dashboard");
+      const users = yield* database.query("test.users", (db) => db.select().from(schema.user));
+      expect(users).toHaveLength(1);
     }),
   );
 });

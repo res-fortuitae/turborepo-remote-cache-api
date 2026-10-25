@@ -196,3 +196,9 @@ export const organizationPolicy = sqliteTable("organization_policy", {
   settings: text({ mode: "json" }).$type<JsonObject>().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+export const passkeyProof = sqliteTable("passkey_proof", {
+  sessionId: text("session_id").primaryKey(),
+  userId: text("user_id").notNull(),
+  verifiedAt: integer("verified_at").notNull(),
+});

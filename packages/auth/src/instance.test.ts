@@ -171,3 +171,38 @@ test("org lifecycle requires an audited session-bound elevation", () =>
       ).toBe(2);
     }),
   ));
+
+test("owner impersonation requires a reason and expires within five minutes", () =>
+  scenario("owner", (auth, db, headers) =>
+    Effect.gen(function* () {
+      yield* db.query("test.target", (db) =>
+        db.insert(schema.user).values({
+          id: "target",
+          name: "Target",
+          email: "target@example.com",
+          role: "member",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      );
+      expect(
+        (yield* auth.handler(request("/admin/impersonate-user", headers, { userId: "target" })))
+          .status,
+      ).toBe(403);
+      const response = yield* auth.handler(
+        request("/admin/impersonate-user", headers, {
+          userId: "target",
+          reason: "Support investigation",
+        }),
+      );
+      expect(response.status).toBe(200);
+      const sessions = yield* db.query("test.impersonation", (db) =>
+        db.select().from(schema.session).where(eq(schema.session.userId, "target")),
+      );
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.impersonatedBy).toBe("actor");
+      expect((sessions[0]?.expiresAt.getTime() ?? Infinity) - Date.now()).toBeLessThanOrEqual(
+        300000,
+      );
+    }),
+  ));

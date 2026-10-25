@@ -37,8 +37,10 @@ export const organizationPlugins = (
     change: (db: DatabaseQueries) => readonly DatabaseStatement[] = () => [],
   ) => {
     if (!audit) throw new APIError("SERVICE_UNAVAILABLE", { message: "Audit unavailable" });
+
     return Effect.runPromise(audit.commit(input, change));
   };
+
   const event = (
     user: { id: string; name: string },
     orgId: string,
@@ -56,16 +58,21 @@ export const organizationPlugins = (
     requestId: crypto.randomUUID(),
     metadata: {},
   });
+
   const activeOrg = async (id: string) => {
     const [state] = await db
       .select()
       .from(schema.orgLifecycle)
       .where(eq(schema.orgLifecycle.orgId, id));
+
     if (state?.archivedAt) throw new APIError("FORBIDDEN", { message: "Organization is archived" });
   };
+
   const fresh = createAuthMiddleware(async (ctx) => {
     const cached = await getAuthoritativeSessionFromCtx(ctx);
+
     if (!cached) throw new APIError("UNAUTHORIZED");
+
     const [live] = await db
       .select({ user: schema.user, session: schema.session })
       .from(schema.session)
@@ -76,21 +83,29 @@ export const organizationPlugins = (
           gt(schema.session.expiresAt, new Date()),
         ),
       );
+
     if (!live || live.user.banned || live.session.impersonatedBy) throw new APIError("FORBIDDEN");
+
     return { session: live };
   });
+
   const adminMember = async (orgId: string, userId: string) => {
     await activeOrg(orgId);
+
     const [member] = await db
       .select()
       .from(schema.member)
       .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)));
+
     if (!member || !(await hasOrganizationPermission(db, orgId, userId, "invitation", "create")))
       throw new APIError("FORBIDDEN");
+
     return member;
   };
+
   const eligibleEmail = async (email: string) => {
     const policy = await readInstancePolicy(db, config);
+
     if (
       policy.allowedEmailDomains.length &&
       !policy.allowedEmailDomains.some(
@@ -100,27 +115,51 @@ export const organizationPlugins = (
       throw new APIError("FORBIDDEN", {
         message: "Recipient is outside the instance signup policy",
       });
+
     if (policy.allowedGithubOrgs.length) {
       const [recipient] = await db
         .select()
         .from(schema.user)
         .where(sql`lower(${schema.user.email}) = ${email.toLowerCase()}`);
+
       if (!recipient)
         throw new APIError("FORBIDDEN", {
           message: "Recipient must sign in under the GitHub signup policy first",
         });
     }
   };
+
   const recipientEligible = async (userId: string, email: string) => {
     await eligibleEmail(email);
     const policy = await readInstancePolicy(db, config);
+
     if (!policy.allowedGithubOrgs.length) return;
+
     const [account] = await db
       .select()
       .from(schema.account)
       .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, "github")));
+
     if (!account?.githubLogin) throw new APIError("FORBIDDEN");
+
+    const identity = await fetch(
+      `https://api.github.com/users/${encodeURIComponent(account.githubLogin)}`,
+      {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "turborepo-remote-cache" },
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+
+    if (!identity.ok) throw new APIError("FORBIDDEN");
+
+    const profile = z
+      .object({ id: z.union([z.string(), z.number()]) })
+      .parse(await identity.json());
+
+    if (String(profile.id) !== account.accountId)
+      throw new APIError("FORBIDDEN", { message: "GitHub username changed; sign in again" });
     let allowed = false;
+
     for (const org of policy.allowedGithubOrgs) {
       const response = await fetch(
         `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(account.githubLogin)}`,
@@ -132,15 +171,19 @@ export const organizationPlugins = (
           signal: AbortSignal.timeout(5000),
         },
       );
+
       if (response.status === 204) allowed = true;
     }
+
     if (!allowed) throw new APIError("FORBIDDEN");
   };
+
   return [
     organization({
       allowUserToCreateOrganization: async (user) => {
         const [live] = await db.select().from(schema.user).where(eq(schema.user.id, user.id));
         const policy = await readInstancePolicy(db, config);
+
         return (
           !!live &&
           !live.banned &&
@@ -171,6 +214,7 @@ export const organizationPlugins = (
         },
         beforeAddTeamMember: async ({ teamMember, organization: org }) => {
           await activeOrg(org.id);
+
           const [member] = await db
             .select()
             .from(schema.member)
@@ -180,6 +224,7 @@ export const organizationPlugins = (
                 eq(schema.member.userId, teamMember.userId),
               ),
             );
+
           if (!member)
             throw new APIError("FORBIDDEN", {
               message: "Groups contain organization members only",
@@ -239,6 +284,7 @@ export const organizationPlugins = (
             .from(schema.project)
             .where(eq(schema.project.orgId, org.id))
             .limit(1);
+
           if (project)
             throw new APIError("CONFLICT", { message: "Remove org projects before deletion" });
           await record(event(user, org.id, "org.delete.requested", org.id));
@@ -261,6 +307,7 @@ export const organizationPlugins = (
           if (member.role.split(",").includes("owner"))
             throw new APIError("FORBIDDEN", { message: "Use elevated ownership transfer" });
           await activeOrg(org.id);
+
           if (newRole.split(",").includes("owner"))
             throw new APIError("FORBIDDEN", { message: "Use organization ownership transfer" });
         },
@@ -290,6 +337,7 @@ export const organizationPlugins = (
           async (ctx) => {
             const orgId = ctx.body.organizationId;
             await activeOrg(orgId);
+
             if (
               !(await hasOrganizationPermission(
                 db,
@@ -300,6 +348,7 @@ export const organizationPlugins = (
               ))
             )
               throw new APIError("FORBIDDEN");
+
             const [lead] = await db
               .select()
               .from(schema.member)
@@ -310,6 +359,7 @@ export const organizationPlugins = (
                   eq(schema.member.userId, ctx.body.newOwnerId),
                 ),
               );
+
             if (!lead || lead.user.banned)
               throw new APIError("BAD_REQUEST", {
                 message: "New owner must be an active org member",
@@ -339,6 +389,7 @@ export const organizationPlugins = (
                   ),
               ],
             );
+
             return ctx.json({ success: true });
           },
         ),
@@ -352,6 +403,7 @@ export const organizationPlugins = (
           async (ctx) => {
             const orgId = ctx.body.organizationId;
             await activeOrg(orgId);
+
             if (
               !(await hasOrganizationPermission(
                 db,
@@ -363,18 +415,22 @@ export const organizationPlugins = (
             )
               throw new APIError("FORBIDDEN");
             const instance = await readInstancePolicy(db, config);
+
             if (ctx.body.policy === undefined) {
               const [row] = await db
                 .select()
                 .from(schema.organizationPolicy)
                 .where(eq(schema.organizationPolicy.orgId, orgId));
+
               return ctx.json({
                 policy: row
                   ? tightenPolicy(instance, Schema.decodeUnknownSync(InstancePolicy)(row.settings))
                   : instance,
               });
             }
+
             let policy;
+
             try {
               policy = tightenPolicy(
                 instance,
@@ -383,12 +439,14 @@ export const organizationPlugins = (
             } catch {
               throw new APIError("BAD_REQUEST");
             }
+
             const settings = {
               ...policy,
               allowedEmailDomains: [...policy.allowedEmailDomains],
               allowedGithubOrgs: [...policy.allowedGithubOrgs],
               allowedOidcIssuers: [...policy.allowedOidcIssuers],
             };
+
             await record(
               event(ctx.context.session.user, orgId, "org.policy.update", orgId),
               (db) => [
@@ -401,6 +459,7 @@ export const organizationPlugins = (
                   }),
               ],
             );
+
             return ctx.json({ policy });
           },
         ),
@@ -425,6 +484,7 @@ export const organizationPlugins = (
           async (ctx) => {
             const user = ctx.context.session.user;
             await adminMember(ctx.body.organizationId, user.id);
+
             if (
               !(await canDelegateOrganizationRole(
                 db,
@@ -437,6 +497,7 @@ export const organizationPlugins = (
                 message: "Cannot delegate this organization role",
               });
             let email = ctx.body.email?.toLowerCase();
+
             if (ctx.body.githubUsername) {
               const [recipient] = await db
                 .select({ email: schema.user.email, id: schema.user.id })
@@ -448,6 +509,7 @@ export const organizationPlugins = (
                     eq(schema.account.providerId, "github"),
                   ),
                 );
+
               if (!recipient)
                 throw new APIError("BAD_REQUEST", {
                   message: "GitHub recipient must sign in once before a username invitation",
@@ -455,15 +517,19 @@ export const organizationPlugins = (
               email = recipient.email.toLowerCase();
               await recipientEligible(recipient.id, email);
             }
+
             if (!email)
               throw new APIError("BAD_REQUEST", { message: "Email or GitHub username required" });
             await eligibleEmail(email);
+
             const [knownRecipient] = await db
               .select()
               .from(schema.user)
               .where(sql`lower(${schema.user.email}) = ${email}`);
+
             if (knownRecipient) await recipientEligible(knownRecipient.id, email);
             const key = `${user.id}:${ctx.body.organizationId}:${Math.floor(Date.now() / 3600000)}`;
+
             const [window] = await db
               .insert(schema.invitationWindow)
               .values({ key, count: 1 })
@@ -472,12 +538,16 @@ export const organizationPlugins = (
                 set: { count: sql`${schema.invitationWindow.count} + 1` },
               })
               .returning();
+
             if (!window || window.count > 10) throw new APIError("TOO_MANY_REQUESTS");
+
             const [org] = await db
               .select()
               .from(schema.organization)
               .where(eq(schema.organization.id, ctx.body.organizationId));
+
             if (!org) throw new APIError("NOT_FOUND");
+
             const invitation = {
               id: crypto.randomUUID(),
               organizationId: org.id,
@@ -488,6 +558,7 @@ export const organizationPlugins = (
               expiresAt: new Date(Date.now() + 48 * 3600000),
               createdAt: new Date(),
             };
+
             await record(event(user, org.id, "org.invitation.created", invitation.id), (db) => [
               db.insert(schema.invitation).values(invitation),
             ]);
@@ -501,6 +572,7 @@ export const organizationPlugins = (
                 invitation.id,
               ),
             );
+
             return ctx.json({ invitation, url, delivered });
           },
         ),
@@ -512,6 +584,7 @@ export const organizationPlugins = (
               .select()
               .from(schema.invitation)
               .where(eq(schema.invitation.id, ctx.body.invitationId));
+
             if (
               !invitation ||
               invitation.status !== "pending" ||
@@ -519,6 +592,7 @@ export const organizationPlugins = (
             )
               throw new APIError("NOT_FOUND");
             await adminMember(invitation.organizationId, ctx.context.session.user.id);
+
             return ctx.json({
               url: await signInviteLink(config, invitation.id, invitation.expiresAt),
             });
@@ -533,10 +607,12 @@ export const organizationPlugins = (
           },
           async (ctx) => {
             const user = ctx.context.session.user;
+
             const [invitation] = await db
               .select()
               .from(schema.invitation)
               .where(eq(schema.invitation.id, ctx.body.invitationId));
+
             if (
               !invitation ||
               invitation.status !== "pending" ||
@@ -546,6 +622,7 @@ export const organizationPlugins = (
               throw new APIError("FORBIDDEN");
             await activeOrg(invitation.organizationId);
             await recipientEligible(user.id, user.email);
+
             if (
               !(await verifyInviteLink(
                 config,
@@ -608,11 +685,14 @@ export const organizationPlugins = (
                   ),
               ],
             );
+
             const [claim] = await db
               .select()
               .from(schema.invitationClaim)
               .where(eq(schema.invitationClaim.invitationId, invitation.id));
+
             if (claim?.nonce !== nonce) throw new APIError("CONFLICT");
+
             return ctx.json({ organizationId: invitation.organizationId });
           },
         ),
@@ -631,7 +711,9 @@ export const organizationPlugins = (
               )
                 throw new APIError("FORBIDDEN", { message: "Use signed organization invitations" });
               const cached = await getAuthoritativeSessionFromCtx(ctx);
+
               if (!cached) throw new APIError("UNAUTHORIZED");
+
               const [live] = await db
                 .select({ user: schema.user, session: schema.session })
                 .from(schema.session)
@@ -642,8 +724,10 @@ export const organizationPlugins = (
                     gt(schema.session.expiresAt, new Date()),
                   ),
                 );
+
               if (!live || live.user.banned || live.session.impersonatedBy)
                 throw new APIError("FORBIDDEN");
+
               const body = z
                 .object({
                   organizationId: z.string().optional(),
@@ -652,23 +736,29 @@ export const organizationPlugins = (
                 })
                 .passthrough()
                 .parse(ctx.body ?? ctx.query ?? {});
+
               const [targetTeam] = body.teamId
                 ? await db.select().from(schema.team).where(eq(schema.team.id, body.teamId))
                 : [];
+
               const orgId =
                 targetTeam?.organizationId ??
                 body.organizationId ??
                 live.session.activeOrganizationId;
+
               if (orgId) {
                 await activeOrg(orgId);
+
                 if (ctx.path === "/organization/update-member-role" && body.role) {
                   const roles = (Array.isArray(body.role) ? body.role : [body.role]).flatMap(
                     (role) => role.split(","),
                   );
+
                   for (const role of roles)
                     if (!(await canDelegateOrganizationRole(db, orgId, live.user.id, role.trim())))
                       throw new APIError("FORBIDDEN");
                 }
+
                 if (ctx.request?.method === "POST")
                   await record(
                     event(
