@@ -1,10 +1,11 @@
+import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Deliberately run shipped bundles with Node 24: the Action must not need Bun at runtime.
-const dist = new URL("../dist/", import.meta.url).pathname;
+const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 
 const fixture = async (mode: "proxy" | "env", status = 200, strict = false) => {
   const directory = await mkdtemp(join(tmpdir(), "action-test-"));
@@ -124,24 +125,30 @@ test("shipped node24 proxy survives main exit, streams across steps, masks and p
     expect(await readFile(f.files.GITHUB_ENV, "utf8")).not.toContain("actual-cache-secret");
     expect(result.stdout).toContain("::add-mask::ci-secret");
     expect((await fetch(values.TURBO_API + "/v8/artifacts/abc")).status).toBe(401);
+
     const download = await fetch(values.TURBO_API + "/v8/artifacts/abc", {
       headers: { authorization: `Bearer ${values.TURBO_TOKEN}` },
     });
+
     expect(download.status).toBe(200);
     expect(await download.text()).toBe("artifact");
     expect(f.requests[0]?.get("authorization")).toBe("DPoP actual-cache-secret");
     expect(f.requests[0]?.get("dpop")?.split(".")).toHaveLength(3);
+
     const upload = await fetch(values.TURBO_API + "/v8/artifacts/abc", {
       method: "PUT",
       headers: { authorization: `Bearer ${values.TURBO_TOKEN}`, "content-length": "1048576" },
       body: new Uint8Array(1048576),
     });
+
     expect(upload.status).toBe(202);
     expect(f.uploadedBytes).toBe(1048576);
+
     const head = await fetch(values.TURBO_API + "/v8/artifacts/abc", {
       method: "HEAD",
       headers: { authorization: `Bearer ${values.TURBO_TOKEN}` },
     });
+
     expect(head.status).toBe(200);
     expect(head.headers.get("content-length")).toBe("8");
     const post = await f.run("post.cjs", { STATE_directory: directory });

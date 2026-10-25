@@ -133,6 +133,10 @@ M2 project management supports CRUD, direct/team grants, live authorization,
 archive and durable deletion. Verified cache JWTs use isolated project prefixes.
 See [project management](docs/projects.md) for routes, policy ceilings and retention.
 
+See [OIDC acceptance and runner probes](docs/oidc-e2e.md) for the four-case real
+Turbo suite, hosted runner workflow, optional existing-preview tests and CI dogfood
+configuration.
+
 ## Upstream releases
 
 Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`) with a matching

@@ -1,0 +1,7 @@
+name: Verify proxy cleanup
+description: Register a verifier before the cache Action so its post runs after cache cleanup
+runs:
+  using: node24
+  main: main.cjs
+  post: post.cjs
+  post-if: always()
