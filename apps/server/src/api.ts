@@ -1,8 +1,17 @@
-import type * as Cloudflare from "alchemy/Cloudflare";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import type * as Stream from "effect/Stream";
+import {
+  ArtifactStore,
+  ArtifactStoreLive,
+  R2Bucket,
+  type ArtifactMetadata,
+  type ArtifactBucket,
+} from "@repo/artifacts";
+import * as Layer from "effect/Layer";
+import type { ArtifactOperation } from "@repo/analytics";
+import type { ResolvedCredential } from "@repo/credentials";
+import { API_KEY_WARNING } from "@repo/auth";
 import { ArtifactQueryRequest, CacheEvents, type CacheEvent } from "@repo/api-spec";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -34,13 +43,12 @@ const badRequest = (message: string) => new ApiError({ status: 400, code: "bad_r
 const HASH = /^[a-fA-F0-9]+$/;
 const ROUTE = /^\/v8\/artifacts(?:\/([^/]+))?\/?$/;
 
-/** Artifact metadata persisted as R2 custom metadata. */
-interface ArtifactMetadata {
-  duration?: string;
-  tag?: string;
-  sha?: string;
-  dirtyHash?: string;
-}
+export type {
+  ArtifactBucket,
+  StoredArtifact,
+  StoredArtifactBody,
+  ArtifactPutOptions,
+} from "@repo/artifacts";
 
 interface ArtifactResponseHeaders {
   [header: string]: string;
@@ -52,36 +60,9 @@ interface ArtifactQueryMetadata {
   tag?: string;
 }
 
-export interface StoredArtifact {
-  readonly size: number;
-  readonly customMetadata?: ArtifactMetadata | undefined;
-}
-
-export interface StoredArtifactBody extends StoredArtifact {
-  readonly body: Stream.Stream<Uint8Array, Cloudflare.R2.R2Error>;
-  readonly readable?: ReadableStream<Uint8Array> | undefined;
-}
-
-export interface ArtifactPutOptions {
-  contentLength: number;
-  httpMetadata: { contentType: string };
-  customMetadata: Record<string, string>;
-}
-
-/** The subset of the R2 bucket client the API uses. */
-export interface ArtifactBucket<R> {
-  delete?(keys: string[]): Effect.Effect<void, Cloudflare.R2.R2Error, R>;
-  head(key: string): Effect.Effect<StoredArtifact | null, Cloudflare.R2.R2Error, R>;
-  get(key: string): Effect.Effect<StoredArtifactBody | null, Cloudflare.R2.R2Error, R>;
-  put<Err>(
-    key: string,
-    value: Stream.Stream<Uint8Array, Err>,
-    options: ArtifactPutOptions,
-  ): Effect.Effect<unknown, Cloudflare.R2.R2Error | Err, R>;
-}
-
 export interface ArtifactScope {
   readonly prefix: string;
+  readonly credential?: ResolvedCredential;
   readonly maxUploadBytes: number;
 }
 
@@ -91,7 +72,15 @@ export interface ApiDependencies<R> {
     url: URL,
     action: "cache:read" | "cache:write",
   ) => Effect.Effect<ArtifactScope, ApiError, R>;
+  readonly auditDenial?: (
+    error: ApiError,
+  ) => Effect.Effect<void, ApiError, R | HttpServerRequest.HttpServerRequest>;
   readonly maxUploadBytes?: number;
+  readonly legacyTokenEnabled?: boolean;
+  readonly emitArtifactOp?: (
+    scope: ArtifactScope,
+    operation: ArtifactOperation,
+  ) => Effect.Effect<void, never, R>;
   readonly emitEvents?: (
     team: string,
     events: readonly CacheEvent[],
@@ -151,13 +140,36 @@ export const artifactApi = <R>({
   maxUploadBytes = 100_000_000,
   emitEvents = () => Effect.void,
   authorize,
+  legacyTokenEnabled = false,
+  emitArtifactOp = () => Effect.void,
+  auditDenial = () => Effect.void,
 }: ApiDependencies<R>) => {
+  const storeLayer = ArtifactStoreLive.pipe(
+    Layer.provide(
+      Layer.effect(
+        R2Bucket,
+        Effect.gen(function* () {
+          const context = yield* Effect.context<R>();
+
+          return {
+            head: (key) => bucket.head(key).pipe(Effect.provideContext(context)),
+            get: (key) => bucket.get(key).pipe(Effect.provideContext(context)),
+            put: (key, body, options) =>
+              bucket.put(key, body, options).pipe(Effect.provideContext(context)),
+            delete: (keys) => bucket.delete(keys).pipe(Effect.provideContext(context)),
+          };
+        }),
+      ),
+    ),
+  );
+
   const authenticate = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const header = request.headers["authorization"] ?? "";
-    const [scheme, value] = header.split(" ", 2);
+    const match = /^Bearer ([^\s,]+)$/i.exec(header);
+    const value = match?.[1];
 
-    if (scheme?.toLowerCase() !== "bearer" || !value) {
+    if (!value) {
       return yield* new ApiError({
         status: 401,
         code: "unauthorized",
@@ -166,23 +178,27 @@ export const artifactApi = <R>({
     }
 
     const url = new URL(request.url, "http://localhost");
-    if (authorize && !safeEqual(value, Redacted.value(token))) {
+
+    if (authorize) {
       return yield* authorize(value, url, request.method === "PUT" ? "cache:write" : "cache:read");
     }
-    if (!safeEqual(value, Redacted.value(token))) {
+
+    if (!legacyTokenEnabled || !safeEqual(value, Redacted.value(token))) {
       return yield* new ApiError({
-        status: 403,
-        code: "forbidden",
+        status: 401,
+        code: "unauthorized",
         message: "Invalid token",
       });
     }
+
     return { prefix: yield* teamScope(url), maxUploadBytes };
   });
 
   const status = HttpServerResponse.json({ status: "enabled" });
 
-  const head = Effect.fn("Api.head")(function* (key: string) {
-    const object = yield* bucket.head(key);
+  const head = Effect.fn("Api.head")(function* (team: string, hash: string) {
+    const store = yield* ArtifactStore;
+    const object = yield* store.head(team, hash);
 
     if (object === null) return HttpServerResponse.empty({ status: 404 });
     const meta: ArtifactMetadata = object.customMetadata ?? {};
@@ -203,7 +219,8 @@ export const artifactApi = <R>({
       });
     }
 
-    const object = yield* bucket.get(`${team}/${hash}`);
+    const store = yield* ArtifactStore;
+    const object = yield* store.get(team, hash);
 
     if (object === null) {
       return yield* new ApiError({
@@ -275,7 +292,8 @@ export const artifactApi = <R>({
 
     if (h["x-artifact-dirty-hash"]) meta.dirtyHash = h["x-artifact-dirty-hash"];
 
-    yield* bucket.put(`${team}/${hash}`, request.stream, {
+    const store = yield* ArtifactStore;
+    yield* store.put(team, hash, request.stream, {
       contentLength,
       httpMetadata: { contentType: "application/octet-stream" },
       customMetadata: { ...meta },
@@ -283,11 +301,7 @@ export const artifactApi = <R>({
 
     // A deletion or archive racing an upload must not leave a newly written artifact.
     yield* authenticate.pipe(
-      Effect.catch((error) =>
-        (bucket.delete ? bucket.delete([`${team}/${hash}`]) : Effect.void).pipe(
-          Effect.andThen(Effect.fail(error)),
-        ),
-      ),
+      Effect.catch((error) => store.remove(team, hash).pipe(Effect.andThen(Effect.fail(error)))),
     );
 
     // Drop any stale copy cached in this datacenter.
@@ -313,7 +327,8 @@ export const artifactApi = <R>({
             return [hash, { error: { message: "Invalid hash" } }] as const;
           }
 
-          const object = yield* bucket.head(`${team}/${hash}`);
+          const store = yield* ArtifactStore;
+          const object = yield* store.head(team, hash);
 
           if (object === null) return [hash, null] as const;
           const meta: ArtifactMetadata = object.customMetadata ?? {};
@@ -361,32 +376,55 @@ export const artifactApi = <R>({
     const segment = match[1];
     const method = request.method;
 
-    if (segment === undefined) {
-      if (method === "POST") return yield* query(team);
-    } else if (segment === "status") {
-      if (method === "GET") return yield* status;
-    } else if (segment === "events") {
-      if (method === "POST") return yield* events(team);
-    } else {
-      if (!HASH.test(segment)) {
-        return yield* badRequest("Invalid artifact hash");
+    const response = yield* Effect.gen(function* () {
+      if (segment === undefined) {
+        if (method === "POST") return yield* query(team);
+      } else if (segment === "status") {
+        if (method === "GET") return yield* status;
+      } else if (segment === "events") {
+        if (method === "POST") return yield* events(team);
+      } else {
+        if (!HASH.test(segment)) {
+          return yield* badRequest("Invalid artifact hash");
+        }
+
+        if (method === "HEAD") return yield* head(team, segment);
+
+        if (method === "GET") return yield* download(team, segment);
+
+        if (method === "PUT") return yield* upload(team, segment, scope.maxUploadBytes);
       }
 
-      if (method === "HEAD") return yield* head(`${team}/${segment}`);
+      return yield* new ApiError({
+        status: 405,
+        code: "method_not_allowed",
+        message: `${method} not allowed`,
+      });
+    }).pipe(
+      Effect.catchTags({
+        ApiError: (error) =>
+          HttpServerResponse.json(
+            { code: error.code, message: error.message },
+            { status: error.status },
+          ),
+      }),
+    );
 
-      if (method === "GET") return yield* download(team, segment);
+    const operation: { method: string; hash?: string; status: number } = {
+      method,
+      status: response.status,
+    };
 
-      if (method === "PUT") return yield* upload(team, segment, scope.maxUploadBytes);
-    }
+    if (segment && HASH.test(segment)) operation.hash = segment;
+    yield* waitUntil(emitArtifactOp(scope, operation));
 
-    return yield* new ApiError({
-      status: 405,
-      code: "method_not_allowed",
-      message: `${method} not allowed`,
-    });
+    return scope.credential?.credentialType === "apiKey"
+      ? HttpServerResponse.setHeader(response, "warning", API_KEY_WARNING)
+      : response;
   }).pipe(
+    Effect.provide(storeLayer),
     Effect.catchTags({
-      R2Error: (error) =>
+      ArtifactStorageError: (error) =>
         Effect.logError("R2 error", error).pipe(
           Effect.andThen(
             Effect.fail(
@@ -401,9 +439,21 @@ export const artifactApi = <R>({
     }),
     Effect.catchTags({
       ApiError: (error) =>
-        HttpServerResponse.json(
-          { code: error.code, message: error.message },
-          { status: error.status },
+        Effect.gen(function* () {
+          if (error.status === 401) yield* auditDenial(error);
+
+          return yield* HttpServerResponse.json(
+            { code: error.code, message: error.message },
+            { status: error.status },
+          );
+        }).pipe(
+          Effect.catchTags({
+            ApiError: () =>
+              HttpServerResponse.json(
+                { code: "unavailable", message: "Cache audit unavailable" },
+                { status: 500 },
+              ),
+          }),
         ),
     }),
   );
