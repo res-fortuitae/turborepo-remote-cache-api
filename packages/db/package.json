@@ -19,6 +19,7 @@
     "db:auth:generate": "bun scripts/generate-auth.ts"
   },
   "dependencies": {
+    "@repo/deploy-config": "workspace:*",
     "drizzle-orm": "1.0.0-rc.5",
     "effect": "^4.0.6"
   },
