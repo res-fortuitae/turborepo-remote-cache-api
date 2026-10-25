@@ -1,3 +1,5 @@
+import { MULTIPART_PART_BYTES } from "@repo/api-spec";
+import { uploadStream, type UploadSend } from "./proxy-upload.ts";
 import { Context, Effect, Layer, Redacted } from "effect";
 import { TokenCache } from "./token-cache.ts";
 import { DpopSigner } from "./dpop.ts";
@@ -59,6 +61,36 @@ const make = Effect.gen(function* () {
   const signer = yield* DpopSigner;
   const stats = { hits: 0, misses: 0, uploads: 0, errors: 0, retries: 0 };
 
+  const send: UploadSend = (path, method, body, headers, signal) =>
+    Effect.gen(function* () {
+      const credential = yield* cache.peek;
+
+      if (!credential) return new Response(null, { status: 503 });
+      const url = new URL(path, config.api).href;
+      headers.set(
+        "authorization",
+        `${config.boundTokens && credential.source !== "apiKey" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
+      );
+
+      if (config.boundTokens && credential.source !== "apiKey")
+        headers.set(
+          "dpop",
+          Redacted.value(yield* signer.proof({ url, method, accessToken: credential.token })),
+        );
+      const init: RequestInit & { duplex: "half" } = {
+        method,
+        body,
+        headers,
+        signal,
+        redirect: "manual",
+        duplex: "half",
+      };
+
+      return yield* transport
+        .send(new Request(url, init))
+        .pipe(Effect.catch(() => Effect.succeed(new Response(null, { status: 502 }))));
+    });
+
   return {
     stats: Effect.sync(() => ({ ...stats })),
     handle: Effect.fn("CacheProxy.handle")(function* (request: Request) {
@@ -76,6 +108,7 @@ const make = Effect.gen(function* () {
         !["GET", "HEAD", "PUT", "POST", "OPTIONS"].includes(request.method)
       )
         return new Response(null, { status: 404 });
+
       // Turbo checks this header before forwarding its session secret on real requests.
       // Answer locally after session authentication; no credential or body goes upstream.
       if (request.method === "OPTIONS")
@@ -92,6 +125,19 @@ const make = Effect.gen(function* () {
       const credential = yield* cache.peek;
 
       if (credential === undefined) return new Response(null, { status: 503 });
+      const length = Number(request.headers.get("content-length"));
+
+      if (request.method === "PUT" && length >= MULTIPART_PART_BYTES) {
+        const response = yield* uploadStream(request, length, send, () => {
+          stats.retries++;
+        });
+
+        if (response.ok) stats.uploads++;
+        else if (response.status >= 500) stats.errors++;
+
+        return response;
+      }
+
       const target = new URL(incoming.pathname + incoming.search, config.api);
       // Only safe reads can be retried: upload streams and event batches cannot be replayed.
       const attempts = ["GET", "HEAD"].includes(request.method) ? 3 : 1;
@@ -109,16 +155,20 @@ const make = Effect.gen(function* () {
             method: request.method,
             accessToken: credential.token,
           });
+
           headers.set("dpop", Redacted.value(proof));
         }
 
-        const upstream = new Request(target.href, {
+        const init: RequestInit & { duplex: "half" } = {
+          duplex: "half",
           method: request.method,
           headers,
           body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
           redirect: "manual",
           signal: request.signal,
-        });
+        };
+
+        const upstream = new Request(target.href, init);
 
         const response = yield* transport
           .send(upstream)

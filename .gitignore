@@ -42,3 +42,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Organization-owned; upstream never commits these paths.
 /deploy.config.ts
 /custom/
+
+# The JavaScript Action ships reviewed bundles; it downloads no code at runtime.
+!/packages/action/dist/
+!/packages/action/dist/*.cjs
+!/packages/action/dist/THIRD_PARTY_LICENSES.txt

@@ -16,7 +16,7 @@ This Bun + Turborepo monorepo contains:
 - `packages/shared`: compatibility schema exports and redacted bearer token types.
 - `packages/client-core`: shared CI authentication, exchange, DPoP signing and in-memory refresh
   ([composition guide](packages/client-core/README.md)).
-- `packages/action`: GitHub Action scaffold.
+- `packages/action`: bundled Node 24 OIDC GitHub Action with proxy/env modes ([guide](packages/action/README.md)).
 - `packages/cli`: local authentication proxy, exec/env modes and server doctor ([guide](packages/cli/README.md)).
 - `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.
 

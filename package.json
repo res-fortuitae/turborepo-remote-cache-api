@@ -35,6 +35,7 @@
     "@repo/deploy-config": "workspace:*",
     "@repo/infra": "workspace:*",
     "@types/bun": "latest",
+    "@types/node": "^24",
     "alchemy": "2.0.0-beta.83",
     "effect": "^4.0.6",
     "oxfmt": "0.74.0",
