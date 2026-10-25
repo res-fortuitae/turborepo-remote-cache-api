@@ -19,6 +19,8 @@ import {
   CacheTokenVerifierLive,
   KeyStoreTest,
   DpopVerifierLive,
+  CredentialResolverLive,
+  ApiKeyVerifierTest,
 } from "@repo/credentials";
 import {
   Database,
@@ -42,7 +44,7 @@ import {
   GITHUB_ACTIONS_ISSUER,
 } from "@repo/oidc";
 import { AuthorizationAuditLive, ProjectLimits } from "@repo/projects";
-import { RateLimiter } from "@repo/ratelimit";
+import { ExchangeRateLimiter } from "@repo/ratelimit";
 import { artifactApi } from "../src/api.ts";
 import { authorizeProjectCache } from "../src/project-cache.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
@@ -126,7 +128,7 @@ test("OIDC E2E: main writes, PR restores but cannot PUT, outside repo/expired id
         ExchangeConfigLive,
         TrustPolicyMatcherLive,
         PolicyGuardrailsLive,
-        Layer.succeed(RateLimiter, { allow: () => Effect.succeed(true) }),
+        Layer.succeed(ExchangeRateLimiter, { allow: () => Effect.succeed(true) }),
       ),
     ),
   );
@@ -134,6 +136,8 @@ test("OIDC E2E: main writes, PR restores but cannot PUT, outside repo/expired id
   const runtime = ManagedRuntime.make(
     Layer.mergeAll(
       exchange,
+      CoordinatorClientTest,
+      CredentialResolverLive.pipe(Layer.provide(Layer.mergeAll(tokens, ApiKeyVerifierTest()))),
       proof,
       tokens,
       InstanceSettingsRepoLive,
