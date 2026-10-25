@@ -26,6 +26,7 @@ export const dependencies: DependencyPolicy = {
   ],
   "@repo/authz": ["@repo/api-spec", "@repo/db", "@repo/auth"],
   "@repo/projects": [
+    "@repo/oidc",
     "@repo/api-spec",
     "@repo/db",
     "@repo/auth",

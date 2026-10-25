@@ -6,6 +6,8 @@ import { Database, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
 import { Clock, Effect, Layer, Result, Schema } from "effect";
 import { Project as ProjectResponse, TrustPolicyRequest } from "@repo/api-spec";
+import { PolicyGuardrailsLive } from "@repo/oidc";
+import { OidcAudience } from "@repo/deploy-config";
 import { Projects, ProjectsLive, ProjectLimits, type ProjectActor } from "./index.ts";
 import { ProjectsTest } from "./testing.ts";
 import { AuthorizationDatabaseLive } from "@repo/authz";
@@ -276,6 +278,8 @@ test("an audit insert failure rolls the project mutation back", () =>
 
       // Duplicate audit ids force a real batch failure after the project insert.
       const broken = Layer.fresh(ProjectsLive).pipe(
+        Layer.provide(PolicyGuardrailsLive),
+        Layer.provide(Layer.succeed(OidcAudience, ["cache"])),
         Layer.provide(Layer.mergeAll(ProjectRepoLive, AuthorizationDatabaseLive)),
         Layer.provide(
           Layer.succeed(AuditLog, {
@@ -321,7 +325,13 @@ test("an audit insert failure rolls the project mutation back", () =>
           return yield* projects.create(actor, "a", {
             slug: "cache",
             name: "Cache",
-            github: { repository: "org/repo", defaultBranch: "main", audience: "cache" },
+            github: {
+              repository: "org/repo",
+              repositoryId: "1",
+              repositoryOwnerId: "2",
+              defaultBranch: "main",
+              audience: "cache",
+            },
           });
         }).pipe(Effect.provide(broken)),
       );
@@ -453,7 +463,13 @@ const trustInput = {
   provider: "github" as const,
   enabled: true,
   issuer: "https://token.actions.githubusercontent.com",
-  claims: { aud: ["cache"], repository: ["org/repo"] },
+  claims: {
+    aud: ["cache"],
+    repository: ["org/repo"],
+    repository_id: ["1"],
+    repository_owner_id: ["2"],
+    event_name: ["push"],
+  },
   scope: "read write" as const,
   ttlSeconds: 600,
 };
@@ -526,7 +542,15 @@ test("policy validation rejects unsafe issuers, missing audience, empty rules an
         { ...trustInput, issuer: "https://issuer/#" },
         { ...trustInput, issuer: "https://user:password@issuer" },
         { ...trustInput, claims: {} },
-        { ...trustInput, claims: { repository: ["org/repo"] } },
+        {
+          ...trustInput,
+          claims: {
+            repository: ["org/repo"],
+            repository_id: ["1"],
+            repository_owner_id: ["2"],
+            event_name: ["push"],
+          },
+        },
         { ...trustInput, claims: { aud: [] } },
         { ...trustInput, claims: { aud: [""] } },
         { ...trustInput, ttlSeconds: 0 },
@@ -552,7 +576,13 @@ test("GitHub defaults are explicit, project-scoped, audited with creation, and d
       const project = yield* projects.create(actor, "a", {
         slug: "cache",
         name: "Cache",
-        github: { repository: "org/repo", defaultBranch: "develop", audience: "cache" },
+        github: {
+          repository: "org/repo",
+          repositoryId: "1",
+          repositoryOwnerId: "2",
+          defaultBranch: "develop",
+          audience: "cache",
+        },
       });
 
       const policies = yield* projects.listTrustPolicies(actor, project.id);
@@ -560,11 +590,16 @@ test("GitHub defaults are explicit, project-scoped, audited with creation, and d
       expect(policies.find((policy) => policy.scope === "read write")?.claims).toEqual({
         aud: ["cache"],
         repository: ["org/repo"],
+        repository_id: ["1"],
+        repository_owner_id: ["2"],
+        event_name: ["push"],
         ref: ["refs/heads/develop"],
       });
       expect(policies.find((policy) => policy.scope === "read")?.claims).toEqual({
         aud: ["cache"],
         repository: ["org/repo"],
+        repository_id: ["1"],
+        repository_owner_id: ["2"],
         sub: ["repo:org/repo:pull_request"],
       });
       yield* projects.delete(actor, project.id, project.id);
@@ -617,11 +652,120 @@ test("policy access requires project admin and live membership; passkey policy g
       );
       const denied = yield* Effect.result(projects.saveTrustPolicy(actor, project.id, trustInput));
       expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
-      expect(yield* projects.listTrustPolicies(actor, project.id)).toEqual([policy]);
+      expect((yield* projects.listTrustPolicies(actor, project.id))[0]).toMatchObject({
+        id: policy.id,
+        errors: [{ code: "issuer_disallowed" }],
+      });
       yield* db.query("test.revokeMembership", (db) =>
         db.delete(schema.member).where(eq(schema.member.id, "m")),
       );
       const revoked = yield* Effect.result(projects.listTrustPolicies(actor, project.id));
       expect(Result.isFailure(revoked) && revoked.failure._tag).toBe("Forbidden");
+    }),
+  ));
+
+test("guardrails protect direct saves and updates, audit overrides and use tightened live settings", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const db = yield* Database;
+      const project = yield* projects.create(actor, "a", {
+        slug: "guardrails",
+        name: "Guardrails",
+      });
+      const saved = yield* projects.saveTrustPolicy(actor, project.id, trustInput);
+      const denied = yield* Effect.result(
+        projects.saveTrustPolicy(
+          actor,
+          project.id,
+          { ...trustInput, claims: { ...trustInput.claims, event_name: ["pull_request_target"] } },
+          saved.id,
+        ),
+      );
+      expect(Result.isFailure(denied) && denied.failure._tag).toBe("BadRequest");
+      expect((yield* projects.listTrustPolicies(actor, project.id))[0]?.claims.event_name).toEqual([
+        "push",
+      ]);
+      const override = yield* projects.saveTrustPolicy(
+        actor,
+        project.id,
+        {
+          ...trustInput,
+          claims: { ...trustInput.claims, event_name: ["pull_request_target"] },
+          allowUntrustedWrites: true,
+        },
+        saved.id,
+      );
+      expect(override.warnings.map((warning) => warning.code)).toContain(
+        "untrusted_writes_enabled",
+      );
+      const events = yield* db.query("test.guardrailAudit", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      const updates = events.filter((row) => row.payload.action === "project.trust_policy.update");
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.payload.metadata).toMatchObject({
+        allowUntrustedWrites: true,
+        warningCodes: ["untrusted_writes_enabled", "unrestricted_write_job"],
+      });
+      yield* db.query("test.strictOidcPolicy", (db) =>
+        db.insert(schema.organizationPolicy).values({
+          orgId: "a",
+          updatedAt: 1,
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [trustInput.issuer],
+            requireBoundTokens: true,
+            oidcWriteEnvironments: ["protected"],
+          },
+        }),
+      );
+      for (const input of [
+        trustInput,
+        { ...trustInput, requireBoundTokens: true },
+        { ...trustInput, claims: { ...trustInput.claims, aud: ["attacker"] } },
+      ]) {
+        const result = yield* Effect.result(projects.saveTrustPolicy(actor, project.id, input));
+        expect(Result.isFailure(result) && result.failure._tag).toBe("BadRequest");
+      }
+      const result = yield* projects.testTrustPolicies(actor, project.id, {
+        claims: {
+          iss: trustInput.issuer,
+          aud: "cache",
+          repository: "org/repo",
+          repository_id: "1",
+          repository_owner_id: "2",
+          event_name: "pull_request_target",
+        },
+      });
+      expect(result.matched).toBe(false);
+      expect(result.policies[0]?.errors.map((error) => error.code)).toContain(
+        "bound_tokens_required",
+      );
+      const constrained = yield* projects.saveTrustPolicy(actor, project.id, {
+        ...trustInput,
+        requireBoundTokens: true,
+        claims: { ...trustInput.claims, environment: ["protected"] },
+      });
+      expect(constrained.errors).toEqual([]);
+      const defaultsDenied = yield* Effect.result(
+        projects.create(actor, "a", {
+          slug: "defaults",
+          name: "Defaults",
+          github: {
+            repository: "org/repo",
+            repositoryId: "1",
+            repositoryOwnerId: "2",
+            defaultBranch: "main",
+            audience: "cache",
+          },
+        }),
+      );
+      expect(Result.isFailure(defaultsDenied) && defaultsDenied.failure._tag).toBe("BadRequest");
+      expect((yield* projects.list(actor, "a")).items.map((item) => item.slug)).toEqual([
+        "guardrails",
+      ]);
     }),
   ));

@@ -95,3 +95,45 @@ match requires it. Archived projects force read-only; a deleted project never
 matches. Denials return the closest policy ID and failed rule names (first policy
 wins ties), without claim values. STV-449 consumes these diagnostics for denial audit
 and returns 403; HTTP exchange is not implemented by the matcher.
+
+### Policy guardrails and simulation
+
+`PolicyGuardrailsLive` / `PolicyGuardrailsTest` expose pure `evaluate(policy,
+settings)` and `test(project, policies, sampleClaims, settings)` methods. Callers
+supply the deployment audiences and effective instance/org policy on each call.
+The tester excludes policies with hard errors and returns individual rule results,
+warning/error codes, matching IDs, and the restrictive resulting scope/TTL. Samples
+are **unverified simulations**: the tester never authenticates a workload, fetches
+keys, consumes replay IDs, signs tokens, or changes policies.
+
+Saves require immutable GitHub `repository_id` + `repository_owner_id`, Vercel
+`owner_id` + `project_id`, or GitLab `project_id` + `namespace_id`. GitHub/GitLab IDs
+must be numeric. Every audience must be in the deployment's accepted audience list,
+and issuers must be in the effective allowlist. All claim values are exact: `*` and
+`?` are rejected outside `refPatterns`. Other providers fail closed until STV-451
+adds their immutable identity profiles; registering a verifier alone cannot bypass
+these checks.
+
+GitHub write policies must restrict `event_name` to `push`, `workflow_dispatch`, or
+`schedule`; Vercel writes require exactly `environment=production`; GitLab writes
+must restrict `pipeline_source` to `push`, `web`, or `schedule`. Broader event
+policies, fork/PR subjects and preview deployments require the explicit policy
+flag `allowUntrustedWrites=true` and always produce a warning. This is a deliberate
+security override, recorded with policy mutations in audit metadata. Without it,
+the matcher also caps legacy policies to read on PR/target-PR, fork, GitLab merge
+request, or preview claims. A read policy always keeps an overlapping decision
+read-only, including when another policy has the override.
+
+Warnings identify wildcard write refs, writes without a workflow/environment
+restriction, and TTLs at least 80% of the effective maximum. TTLs over the maximum
+are refused. `requireBoundTokens` in effective instance/org policy must also be
+present on saved policies. Instance/org `oidcWriteWorkflowRefs` and
+`oidcWriteEnvironments` allowlists require exact restrictions on write policies;
+organizations may narrow but cannot clear or broaden parent restrictions. Admins
+must select environments with protection rules in their CI provider; saving a
+policy does not query that provider's protection settings.
+
+Future exchange handlers must evaluate guardrails with the current effective
+settings before matching, so legacy policies and tightened settings fail closed.
+The tester demonstrates that composition. Signature, audience, expiry and replay
+verification remain mandatory before any real exchange.

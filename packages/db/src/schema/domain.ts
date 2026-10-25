@@ -52,6 +52,7 @@ export interface TrustPolicyBody {
   ttlSeconds: number;
   refPatterns?: string[];
   requireBoundTokens?: boolean;
+  allowUntrustedWrites?: boolean;
 }
 
 export const trustPolicy = sqliteTable(

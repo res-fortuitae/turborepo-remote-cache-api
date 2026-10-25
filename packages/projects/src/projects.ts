@@ -7,13 +7,15 @@ import {
   NotFound,
   UpdateProjectRequest,
   TrustPolicyRequest,
+  TestTrustPoliciesRequest,
   type Project as ProjectResponse,
 } from "@repo/api-spec";
 import { AuditLog, type AuditInput, type AuditLogError } from "@repo/audit";
 import { readInstancePolicy, requirePasskeyProof } from "@repo/auth";
 import { Authorization, type SessionPrincipal, type ProjectAction } from "@repo/authz";
 import { Database, ProjectRepo, schema, type Project, type TrustPolicy } from "@repo/db";
-import { AuthConfig, InstancePolicy, tightenPolicy } from "@repo/deploy-config";
+import { PolicyGuardrails, type PolicyGuardrailSettings } from "@repo/oidc";
+import { AuthConfig, InstancePolicy, OidcAudience, tightenPolicy } from "@repo/deploy-config";
 import { ProjectRetentionRules, artifactPrefix } from "./maintenance.ts";
 import { and, eq, ne } from "drizzle-orm";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
@@ -68,6 +70,8 @@ const projects = Effect.gen(function* () {
   const audit = yield* AuditLog;
   const config = yield* AuthConfig;
   const limits = yield* ProjectLimits;
+  const guardrails = yield* PolicyGuardrails;
+  const audiences = yield* OidcAudience;
   const retentionRules = yield* Effect.serviceOption(ProjectRetentionRules);
 
   const syncRetention = (row: Project, policy: typeof InstancePolicy.Type) =>
@@ -155,6 +159,33 @@ const projects = Effect.gen(function* () {
 
     return policy;
   });
+
+  const guardrailSettings = (policy: typeof InstancePolicy.Type): PolicyGuardrailSettings => ({
+    audiences,
+    maxTokenTtlSeconds: policy.maxTokenTtlSeconds,
+    allowedIssuers: policy.allowedOidcIssuers,
+    requireBoundTokens: policy.requireBoundTokens,
+    workflowRefs: policy.oidcWriteWorkflowRefs,
+    environments: policy.oidcWriteEnvironments,
+  });
+  const checkTrustPolicy = (
+    input: typeof TrustPolicyRequest.Type,
+    policy: typeof InstancePolicy.Type,
+  ) => {
+    const report = guardrails.evaluate(input, guardrailSettings(policy));
+    return report.errors.length > 0
+      ? Effect.fail(
+          new BadRequest({
+            message: report.errors
+              .map(
+                (error) =>
+                  `${error.code}${error.claim ? ` (${error.claim})` : ""}: ${error.message}`,
+              )
+              .join("; "),
+          }),
+        )
+      : Effect.succeed(report);
+  };
 
   const present = (row: Project, policy: typeof InstancePolicy.Type): ProjectResponse => ({
     ...row,
@@ -248,7 +279,7 @@ const projects = Effect.gen(function* () {
       actor: ProjectActor,
       id: string,
     ) {
-      yield* policyProject(actor, id);
+      const project = yield* policyProject(actor, id);
 
       const rows = yield* database.query("Projects.listTrustPolicies", (db) =>
         db
@@ -258,7 +289,29 @@ const projects = Effect.gen(function* () {
           .orderBy(schema.trustPolicy.id),
       );
 
-      return rows.map(presentTrustPolicy);
+      const policy = yield* policyFor(project.orgId);
+      return rows.map((row) => ({
+        ...presentTrustPolicy(row),
+        ...guardrails.evaluate(
+          { ...row.body, provider: row.provider, enabled: row.enabled },
+          guardrailSettings(policy),
+        ),
+      }));
+    }),
+    testTrustPolicies: Effect.fn("Projects.testTrustPolicies")(function* (
+      actor: ProjectActor,
+      id: string,
+      input: typeof TestTrustPoliciesRequest.Type,
+    ) {
+      const project = yield* policyProject(actor, id);
+      const decoded = yield* Schema.decodeUnknownEffect(TestTrustPoliciesRequest)(input).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Invalid sample claims" })),
+      );
+      const policy = yield* policyFor(project.orgId);
+      const rows = yield* database.query("Projects.testTrustPolicies", (db) =>
+        db.select().from(schema.trustPolicy).where(eq(schema.trustPolicy.projectId, id)),
+      );
+      return guardrails.test(project, rows, decoded.claims, guardrailSettings(policy));
     }),
     saveTrustPolicy: Effect.fn("Projects.saveTrustPolicy")(function* (
       actor: ProjectActor,
@@ -267,12 +320,13 @@ const projects = Effect.gen(function* () {
       policyId?: string,
     ) {
       const project = yield* policyProject(actor, id);
-      yield* mutationPolicy(actor, project.orgId);
+      const policy = yield* mutationPolicy(actor, project.orgId);
 
       const decoded = yield* decodeTrustPolicy(input).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid trust policy" })),
       );
 
+      const report = yield* checkTrustPolicy(decoded, policy);
       const before = policyId === undefined ? undefined : yield* findTrustPolicy(id, policyId);
       const { provider, enabled, ...body } = decoded;
 
@@ -300,7 +354,11 @@ const projects = Effect.gen(function* () {
             before ? "trust_policy.update" : "trust_policy.create",
             id,
           ),
-          metadata: { policyId: row.id },
+          metadata: {
+            policyId: row.id,
+            warningCodes: report.warnings.map((warning) => warning.code),
+            allowUntrustedWrites: body.allowUntrustedWrites === true,
+          },
         },
         (db) => [
           before
@@ -312,7 +370,7 @@ const projects = Effect.gen(function* () {
         ],
       );
 
-      return presentTrustPolicy(row);
+      return { ...presentTrustPolicy(row), ...report };
     }),
     deleteTrustPolicy: Effect.fn("Projects.deleteTrustPolicy")(function* (
       actor: ProjectActor,
@@ -520,7 +578,10 @@ const projects = Effect.gen(function* () {
                 claims: {
                   aud: [decoded.github.audience],
                   repository: [decoded.github.repository],
+                  repository_id: [decoded.github.repositoryId],
+                  repository_owner_id: [decoded.github.repositoryOwnerId],
                   ref: [`refs/heads/${decoded.github.defaultBranch}`],
+                  event_name: ["push"],
                 },
                 scope: "read write",
               },
@@ -531,12 +592,17 @@ const projects = Effect.gen(function* () {
                 claims: {
                   aud: [decoded.github.audience],
                   repository: [decoded.github.repository],
+                  repository_id: [decoded.github.repositoryId],
+                  repository_owner_id: [decoded.github.repositoryOwnerId],
                   sub: [`repo:${decoded.github.repository}:pull_request`],
                 },
                 scope: "read",
               },
             ];
 
+      for (const body of defaultBodies) {
+        yield* checkTrustPolicy({ ...body, provider: "github", enabled: true }, policy);
+      }
       const defaults: TrustPolicy[] = defaultBodies.map((body) => ({
         id: crypto.randomUUID(),
         projectId: row.id,

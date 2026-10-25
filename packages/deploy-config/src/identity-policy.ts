@@ -25,6 +25,8 @@ export const InstancePolicy = Schema.Struct({
   requireArtifactSigning: Schema.Boolean,
   requireBoundTokens: Schema.Boolean,
   requirePasskeyForAdmins: Schema.Boolean,
+  oidcWriteWorkflowRefs: Schema.optional(Schema.mutable(Schema.Array(Schema.NonEmptyString))),
+  oidcWriteEnvironments: Schema.optional(Schema.mutable(Schema.Array(Schema.NonEmptyString))),
 });
 
 export type InstancePolicy = typeof InstancePolicy.Type;
@@ -93,6 +95,12 @@ export const tightenPolicy = (
       apiKeyRank[parent.apiKeys] > apiKeyRank[requested.apiKeys]
         ? parent.apiKeys
         : requested.apiKeys,
+    oidcWriteWorkflowRefs: [
+      ...intersect(parent.oidcWriteWorkflowRefs ?? [], requested.oidcWriteWorkflowRefs ?? []),
+    ],
+    oidcWriteEnvironments: [
+      ...intersect(parent.oidcWriteEnvironments ?? [], requested.oidcWriteEnvironments ?? []),
+    ],
     requireArtifactSigning: parent.requireArtifactSigning || requested.requireArtifactSigning,
     requireBoundTokens: parent.requireBoundTokens || requested.requireBoundTokens,
     requirePasskeyForAdmins: parent.requirePasskeyForAdmins || requested.requirePasskeyForAdmins,

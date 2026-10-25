@@ -46,7 +46,7 @@ const glob = (pattern: string, value: string): boolean => {
   return p === pattern.length;
 };
 
-const matcher = {
+export const matcher = {
   /** Claims must already have passed OidcVerifier signature and lifetime checks. */
   match: (
     project: {
@@ -98,7 +98,18 @@ const matcher = {
       matched: true,
       policyIds: matches.map((policy) => policy.id),
       scope:
-        project.archivedAt !== null || matches.some((policy) => policy.body.scope === "read")
+        project.archivedAt !== null ||
+        matches.some(
+          (policy) =>
+            policy.body.scope === "read" ||
+            (policy.body.allowUntrustedWrites !== true &&
+              (["pull_request", "pull_request_target"].includes(String(claims.event_name)) ||
+                claims.environment === "preview" ||
+                claims.pipeline_source === "merge_request_event" ||
+                claims.fork === true ||
+                claims.fork === "true" ||
+                (typeof claims.sub === "string" && claims.sub.endsWith(":pull_request")))),
+        )
           ? "read"
           : "read write",
       ttlSeconds: Math.min(...matches.map((policy) => policy.body.ttlSeconds)),

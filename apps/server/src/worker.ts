@@ -1,3 +1,4 @@
+import { PolicyGuardrailsLive } from "@repo/oidc";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { AlchemyContext } from "alchemy";
 import { Stage } from "alchemy/Stage";
@@ -517,6 +518,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const auth = authRoute(authLayer);
 
     const projectsLayer = ProjectsLive.pipe(
+      Layer.provide(PolicyGuardrailsLive),
       Layer.provide(
         Layer.mergeAll(
           ProjectRepoLive,

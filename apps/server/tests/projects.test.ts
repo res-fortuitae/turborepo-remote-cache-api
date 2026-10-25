@@ -4,7 +4,13 @@ import { Auth } from "@repo/auth";
 import { AuthTest } from "@repo/auth/testing";
 import { Database, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
-import { Project, ProjectList, TrustPolicy, TrustPolicyList } from "@repo/api-spec";
+import {
+  Project,
+  ProjectList,
+  TrustPolicy,
+  TrustPolicyList,
+  TestTrustPoliciesResponse,
+} from "@repo/api-spec";
 import { Projects } from "@repo/projects";
 import { ProjectsTest } from "@repo/projects/testing";
 import { Effect, Layer, Schema } from "effect";
@@ -42,7 +48,7 @@ type Serve = (
   },
 ) => Effect.Effect<Response, unknown>;
 
-const scenario = (task: (serve: Serve) => Effect.Effect<void, unknown>) =>
+const scenario = (task: (serve: Serve) => Effect.Effect<void, unknown, Database>) =>
   Effect.runPromise(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -223,7 +229,13 @@ test("trust policy routes enforce contract, session, origin, validation and proj
         provider: "github",
         enabled: true,
         issuer: "https://token.actions.githubusercontent.com",
-        claims: { aud: ["cache"], repository: ["org/repo"] },
+        claims: {
+          aud: ["cache"],
+          repository: ["org/repo"],
+          repository_id: ["1"],
+          repository_owner_id: ["2"],
+          event_name: ["push"],
+        },
         scope: "read write",
         ttlSeconds: 600,
       };
@@ -258,5 +270,91 @@ test("trust policy routes enforce contract, session, origin, validation and proj
       ).toBe(400);
       expect((yield* serve(`${path}/${policy.id}`, { method: "DELETE" })).status).toBe(204);
       expect((yield* serve(`${path}/${policy.id}`, { method: "DELETE" })).status).toBe(404);
+    }),
+  ));
+
+test("policy tester is an admin-only CSRF-protected simulation with claim explanations and no mutation", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const created = yield* serve("/orgs/org/projects", {
+        method: "POST",
+        body: { slug: "tester", name: "Tester" },
+      });
+      const project = decodeProject(yield* Effect.promise(() => created.json()));
+      const path = `/projects/${project.id}/trust-policies`;
+      const policy = {
+        provider: "github",
+        enabled: true,
+        issuer: "https://token.actions.githubusercontent.com",
+        scope: "read write",
+        ttlSeconds: 800,
+        claims: {
+          aud: ["cache"],
+          repository_id: ["1"],
+          repository_owner_id: ["2"],
+          event_name: ["push"],
+        },
+        refPatterns: ["refs/heads/*"],
+      };
+      expect(
+        (yield* serve(path, {
+          method: "POST",
+          body: { ...policy, claims: { aud: ["cache"], repository: ["org/repo"] } },
+        })).status,
+      ).toBe(400);
+      const saved = yield* serve(path, { method: "POST", body: policy });
+      expect(saved.status).toBe(201);
+      const stored = decodeTrustPolicy(yield* Effect.promise(() => saved.json()));
+      expect(stored.warnings.map((warning) => warning.code)).toContain("broad_write_refs");
+      const body = {
+        claims: {
+          iss: policy.issuer,
+          aud: "cache",
+          repository_id: "1",
+          repository_owner_id: "2",
+          event_name: "push",
+          ref: "refs/heads/main",
+        },
+      };
+      expect((yield* serve(`${path}/test`, { method: "POST", anonymous: true, body })).status).toBe(
+        401,
+      );
+      expect(
+        (yield* serve(`${path}/test`, { method: "POST", origin: "https://attacker.example", body }))
+          .status,
+      ).toBe(403);
+      expect((yield* serve(`${path}/test`, { method: "POST", body: {} })).status).toBe(400);
+      expect(
+        (yield* serve(`${path}/test`, { method: "POST", rawBody: "x".repeat(16_385) })).status,
+      ).toBe(400);
+      expect((yield* serve(`${path}/test`)).status).toBe(405);
+      const response = yield* serve(`${path}/test`, { method: "POST", body });
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const result = Schema.decodeUnknownSync(TestTrustPoliciesResponse)(
+        yield* Effect.promise(() => response.json()),
+      );
+      expect(result).toMatchObject({
+        simulation: true,
+        matched: true,
+        scope: "read write",
+        policyIds: [stored.id],
+      });
+      expect(result.policies[0]?.checks.every((check) => check.matched)).toBe(true);
+      const mismatch = yield* serve(`${path}/test`, {
+        method: "POST",
+        body: { claims: { ...body.claims, repository_id: "3" } },
+      });
+      expect(
+        Schema.decodeUnknownSync(TestTrustPoliciesResponse)(
+          yield* Effect.promise(() => mismatch.json()),
+        ),
+      ).toMatchObject({ matched: false, policies: [{ failedClaims: ["repository_id"] }] });
+      const listed = yield* serve(path);
+      expect(decodeTrustPolicyList(yield* Effect.promise(() => listed.json()))).toHaveLength(1);
+      const db = yield* Database;
+      yield* db.query("test.demoteTester", (db) =>
+        db.update(schema.member).set({ role: "member" }),
+      );
+      expect((yield* serve(`${path}/test`, { method: "POST", body })).status).toBe(403);
     }),
   ));
