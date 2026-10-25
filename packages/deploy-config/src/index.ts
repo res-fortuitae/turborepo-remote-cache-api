@@ -22,3 +22,4 @@ export {
   defaultInstancePolicy,
   clampPolicy,
 } from "./identity-policy.ts";
+export { tightenPolicy } from "./identity-policy.ts";

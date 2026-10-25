@@ -190,3 +190,9 @@ export const invitationWindow = sqliteTable("invitation_window", {
   key: text().primaryKey(),
   count: integer().notNull(),
 });
+
+export const organizationPolicy = sqliteTable("organization_policy", {
+  orgId: text("org_id").primaryKey(),
+  settings: text({ mode: "json" }).$type<JsonObject>().notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});

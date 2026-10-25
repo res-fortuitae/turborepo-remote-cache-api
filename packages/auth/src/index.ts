@@ -11,3 +11,5 @@ export {
 } from "./secondary-storage.ts";
 
 export type { KvStore, SecondaryStorageService } from "./secondary-storage.ts";
+
+export { organizationAccess, organizationRoles } from "./organization-access.ts";

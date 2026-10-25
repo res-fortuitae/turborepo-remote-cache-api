@@ -192,3 +192,77 @@ test("groups are optional, role-free, scoped to org members, and respect configu
     ),
   );
 });
+
+test("custom org roles work without conferring instance privileges or exceeding delegator permissions", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const db = yield* Database;
+      const owner = yield* seed("owner", "owner");
+      const inviter = yield* seed("inviter");
+      const admin = yield* seed("admin");
+      const outsider = yield* seed("outsider", "owner");
+      const created = yield* post(auth, owner, "create", { name: "Web", slug: "web" });
+      const org = yield* Effect.promise(async () => responseOrg(await created.json()));
+      yield* db.batch((db) => [
+        db.insert(schema.member).values({
+          id: "inviter-member",
+          organizationId: org.id,
+          userId: "inviter",
+          role: "recruiter",
+          createdAt: new Date(),
+        }),
+        db.insert(schema.member).values({
+          id: "admin-member",
+          organizationId: org.id,
+          userId: "admin",
+          role: "admin",
+          createdAt: new Date(),
+        }),
+      ]);
+      expect(
+        (yield* post(auth, owner, "create-role", {
+          organizationId: org.id,
+          role: "recruiter",
+          permission: { invitation: ["create"] },
+        })).status,
+      ).toBe(200);
+      expect(
+        (yield* post(auth, outsider, "create-role", {
+          organizationId: org.id,
+          role: "nope",
+          permission: { audit: ["read"] },
+        })).status,
+      ).toBe(403);
+      const escalation = yield* post(auth, admin, "create-role", {
+        organizationId: org.id,
+        role: "delete-org",
+        permission: { organization: ["delete"] },
+      });
+      expect(escalation.status).not.toBe(200);
+      expect(
+        (yield* post(auth, inviter, "invite", { organizationId: org.id, email: "new@example.com" }))
+          .status,
+      ).toBe(200);
+      expect(
+        (yield* post(auth, inviter, "invite", {
+          organizationId: org.id,
+          email: "new-admin@example.com",
+          role: "admin",
+        })).status,
+      ).toBe(403);
+      expect(
+        (yield* post(auth, admin, "transfer-ownership", {
+          organizationId: org.id,
+          newOwnerId: "admin",
+        })).status,
+      ).toBe(403);
+      expect(
+        (yield* post(auth, owner, "transfer-ownership", {
+          organizationId: org.id,
+          newOwnerId: "admin",
+        })).status,
+      ).toBe(200);
+    }).pipe(Effect.provide(AuthTest)),
+  );
+});

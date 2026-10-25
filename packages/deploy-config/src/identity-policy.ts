@@ -63,3 +63,38 @@ export const clampPolicy = (
       ceilings.allowedOidcIssuers === undefined || ceilings.allowedOidcIssuers.includes(issuer),
   ),
 });
+
+/** Effective organization policy can never weaken its instance's policy. */
+export const tightenPolicy = (
+  parent: InstancePolicy,
+  requested: InstancePolicy,
+): InstancePolicy => {
+  const intersect = (ceiling: readonly string[], child: readonly string[]) => {
+    if (ceiling.length === 0) return child;
+    if (child.length === 0) return ceiling;
+    const result = child.filter((value) => ceiling.includes(value));
+    if (!result.length)
+      throw new Error("Organization allowlist must overlap its instance allowlist");
+    return result;
+  };
+  const apiKeyRank = { allowed: 0, warn: 1, disallowed: 2 };
+  return {
+    ...clampPolicy(requested, {
+      maxTokenTtlSeconds: parent.maxTokenTtlSeconds,
+      maxApiKeyLifetimeDays: parent.maxApiKeyLifetimeDays,
+      maxRetentionDays: parent.retentionDays,
+      maxQuotaBytes: parent.quotaBytes,
+      allowedOidcIssuers: parent.allowedOidcIssuers,
+    }),
+    orgCreation: parent.orgCreation === "admins" ? "admins" : requested.orgCreation,
+    allowedEmailDomains: intersect(parent.allowedEmailDomains, requested.allowedEmailDomains),
+    allowedGithubOrgs: intersect(parent.allowedGithubOrgs, requested.allowedGithubOrgs),
+    apiKeys:
+      apiKeyRank[parent.apiKeys] > apiKeyRank[requested.apiKeys]
+        ? parent.apiKeys
+        : requested.apiKeys,
+    requireArtifactSigning: parent.requireArtifactSigning || requested.requireArtifactSigning,
+    requireBoundTokens: parent.requireBoundTokens || requested.requireBoundTokens,
+    requirePasskeyForAdmins: parent.requirePasskeyForAdmins || requested.requirePasskeyForAdmins,
+  };
+};
