@@ -1,5 +1,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { organization } from "better-auth/plugins/organization";
+import { admin } from "better-auth/plugins/admin";
 import { magicLink } from "better-auth/plugins/magic-link";
 
 /**
@@ -18,5 +20,9 @@ export const auth = betterAuth({
       githubLogin: { type: "string", required: false, input: false },
     },
   },
-  plugins: [magicLink({ storeToken: "hashed", sendMagicLink: async () => {} })],
+  plugins: [
+    organization(),
+    admin(),
+    magicLink({ storeToken: "hashed", sendMagicLink: async () => {} }),
+  ],
 });

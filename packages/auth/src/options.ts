@@ -4,6 +4,11 @@ import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins/magic-link";
 import * as Redacted from "effect/Redacted";
+import type { AuditLogService } from "@repo/audit";
+import { and, eq, sql } from "drizzle-orm";
+import { APIError } from "better-auth/api";
+import { readInstancePolicy, instancePlugin } from "./instance.ts";
+import { instanceAdmin } from "./instance-access.ts";
 import { githubIdentityHooks } from "./github.ts";
 
 export type BetterAuthSecondaryStorage = NonNullable<BetterAuthOptions["secondaryStorage"]>;
@@ -12,6 +17,7 @@ export interface BetterAuthInput {
   readonly config: AuthSettings;
   readonly db: DatabaseDrizzle;
   readonly secondaryStorage: BetterAuthSecondaryStorage | undefined;
+  readonly audit?: AuditLogService;
   readonly sendMagicLink?: (email: string, url: string) => Promise<void>;
 }
 
@@ -24,6 +30,7 @@ export const makeBetterAuth = ({
   db,
   secondaryStorage,
   sendMagicLink,
+  audit,
 }: BetterAuthInput) => {
   const socialProviders: NonNullable<BetterAuthOptions["socialProviders"]> = {};
 
@@ -37,6 +44,8 @@ export const makeBetterAuth = ({
   if (config.magicLink === true && sendMagicLink === undefined) {
     throw new Error("Magic-link authentication requires a mail delivery callback");
   }
+
+  const identity = githubIdentityHooks();
 
   return betterAuth({
     appName: "Turborepo Remote Cache",
@@ -59,9 +68,79 @@ export const makeBetterAuth = ({
         githubLogin: { type: "string", required: false, input: false },
       },
     },
-    ...githubIdentityHooks(),
-    plugins:
-      config.magicLink === true
+    ...identity,
+    user: {
+      ...identity.user,
+      validateUserInfo: async (data, context) => {
+        await identity.user.validateUserInfo(data, context);
+        const policy = await readInstancePolicy(db, config);
+
+        if (policy.allowedEmailDomains.length > 0) {
+          const email = data.user.email;
+          const domain = typeof email === "string" ? email.split("@")[1]?.toLowerCase() : undefined;
+
+          if (
+            !data.user.emailVerified ||
+            !domain ||
+            !policy.allowedEmailDomains.some((allowed) => allowed.toLowerCase() === domain)
+          )
+            throw new APIError("FORBIDDEN", {
+              message: "Email domain is not allowed by instance policy",
+            });
+        }
+
+        if (policy.allowedGithubOrgs.length > 0) {
+          const login = data.source.oauth?.profile?.login;
+
+          if (data.source.oauth?.providerId !== "github" || typeof login !== "string")
+            throw new APIError("FORBIDDEN");
+          let allowed = false;
+
+          for (const org of policy.allowedGithubOrgs) {
+            const response = await fetch(
+              `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(login)}`,
+              {
+                headers: {
+                  Accept: "application/vnd.github+json",
+                  "User-Agent": "turborepo-remote-cache",
+                },
+                signal: AbortSignal.timeout(5000),
+              },
+            );
+
+            if (response.status === 204) allowed = true;
+          }
+
+          if (!allowed)
+            throw new APIError("FORBIDDEN", {
+              message: "GitHub organization membership is required",
+            });
+        }
+      },
+    },
+    databaseHooks: {
+      ...identity.databaseHooks,
+      user: {
+        create: {
+          after: async (user) => {
+            // One atomic UPDATE; concurrent first logins cannot both claim ownership.
+            await db
+              .update(schema.user)
+              .set({ role: "owner" })
+              .where(
+                and(
+                  eq(schema.user.id, user.id),
+                  sql`not exists (select 1 from user where role = 'owner')`,
+                ),
+              );
+          },
+        },
+      },
+    },
+    plugins: [
+      instanceAdmin(),
+      instancePlugin(db, config, audit),
+      ...(config.magicLink === true
         ? [
             magicLink({
               expiresIn: 600,
@@ -74,7 +153,8 @@ export const makeBetterAuth = ({
               },
             }),
           ]
-        : [],
+        : []),
+    ],
     // D1 has no interactive transactions; the SQLite adapter paths never need one.
     database: drizzleAdapter(db, { provider: "sqlite", schema: { ...schema }, transaction: false }),
     secondaryStorage,

@@ -91,10 +91,11 @@ export const AuthLive: Layer.Layer<Auth, never, Database | AuthConfig | Mailer |
       // Required now so hooks can use them without changing the layer type:
       // email (STV-495) and audit (STV-458).
       const mailer = yield* Mailer;
-      yield* AuditLog;
+      const audit = yield* AuditLog;
 
       const auth = makeBetterAuth({
         config,
+        audit,
         db: database.drizzle,
         secondaryStorage: Option.getOrUndefined(Option.map(storage, toBetterAuthStorage)),
         // Promise callback is the boundary from Better Auth into our Effect service.
@@ -130,8 +131,9 @@ export const AuthLive: Layer.Layer<Auth, never, Database | AuthConfig | Mailer |
 
         const rows = yield* database.query("Auth.requireFreshSession", (db) =>
           db
-            .select({ id: schema.session.id })
+            .select({ user: schema.user, session: schema.session })
             .from(schema.session)
+            .innerJoin(schema.user, eq(schema.session.userId, schema.user.id))
             .where(
               and(
                 eq(schema.session.token, session.session.token),
@@ -141,9 +143,16 @@ export const AuthLive: Layer.Layer<Auth, never, Database | AuthConfig | Mailer |
             .limit(1),
         );
 
-        if (rows.length === 0) return yield* new Unauthenticated({ reason: "revoked" });
+        const live = rows[0];
 
-        return session;
+        if (live === undefined || live.user.banned)
+          return yield* new Unauthenticated({ reason: "revoked" });
+
+        return {
+          ...session,
+          user: { ...session.user, ...live.user },
+          session: { ...session.session, ...live.session },
+        };
       });
 
       return {

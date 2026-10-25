@@ -20,6 +20,7 @@ import { D1Client, DatabaseLive, ReplayGuardLive } from "@repo/db";
 import { pruneOidcReplayIds } from "@repo/oidc";
 import {
   AuthConfig,
+  IdentityCeilings,
   CanonicalOrigin,
   OidcAudience,
   OidcAudiences,
@@ -60,6 +61,7 @@ const AuthEnvironment = Schema.Struct({
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
   CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
   GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
+  IDENTITY_CEILINGS: Schema.optional(Schema.fromJsonString(IdentityCeilings)),
 });
 
 interface DeploymentEnvironment {
@@ -67,6 +69,7 @@ interface DeploymentEnvironment {
   CAPABILITIES: string;
   OIDC_AUDIENCES?: string;
   GITHUB_CLIENT_ID?: string;
+  IDENTITY_CEILINGS?: string;
 }
 
 const decodeAuthEnvironment = Schema.decodeUnknownEffect(AuthEnvironment);
@@ -99,6 +102,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      IDENTITY_CEILINGS: JSON.stringify(config.identityCeilings ?? {}),
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
       CAPABILITIES: JSON.stringify(capabilities),
     };
@@ -188,6 +192,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           baseURL: origin,
           trustedOrigins: [origin],
           github,
+          identityCeilings: authEnvironment.IDENTITY_CEILINGS,
         };
       }),
     );

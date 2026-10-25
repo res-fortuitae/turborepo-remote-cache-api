@@ -1,3 +1,4 @@
+import { IdentityCeilings } from "./identity-policy.ts";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 
@@ -19,6 +20,7 @@ export const AuthSettings = Schema.Struct({
   github: Schema.optional(GitHubOAuthCredentials),
   /** Opt in only alongside a delivering Mailer layer. The stock Worker leaves this off. */
   magicLink: Schema.optional(Schema.Boolean),
+  identityCeilings: Schema.optional(IdentityCeilings),
 });
 
 export type AuthSettings = typeof AuthSettings.Type;
