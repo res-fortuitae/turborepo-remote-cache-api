@@ -11,14 +11,22 @@
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "build": "bun build.ts",
+    "test": "bun build.ts --check && bun test src",
+    "check:bundle": "bun build.ts --check"
   },
   "dependencies": {
-    "@repo/shared": "workspace:*"
+    "@actions/core": "^3.0.0",
+    "@effect/platform-node": "^4.0.6",
+    "@repo/client-core": "workspace:*",
+    "@repo/shared": "workspace:*",
+    "effect": "^4.0.6"
   },
   "devDependencies": {
     "@repo/config": "workspace:*",
     "@types/bun": "latest",
+    "@types/node": "^24",
     "typescript": "^7"
   }
 }

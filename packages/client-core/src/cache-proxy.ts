@@ -99,13 +99,15 @@ const make = Effect.gen(function* () {
           headers.set("dpop", Redacted.value(proof));
         }
 
-        const upstream = new Request(target.href, {
+        const init: RequestInit & { duplex: "half" } = {
+          duplex: "half",
           method: request.method,
           headers,
           body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
           redirect: "manual",
           signal: request.signal,
-        });
+        };
+        const upstream = new Request(target.href, init);
 
         const response = yield* transport
           .send(upstream)

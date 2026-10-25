@@ -1,0 +1,26 @@
+name: Turbo Cache OIDC
+description: Authenticate Turbo with CI OIDC and a refreshing local proxy
+inputs:
+  api:
+    description: Cache API origin and OIDC audience
+    required: true
+  team:
+    description: Organization ID
+    required: true
+  project:
+    description: Project ID
+    required: true
+  mode:
+    description: proxy (refreshing, DPoP-bound) or env (one-time bearer)
+    default: proxy
+  strict:
+    description: Fail the step if authentication fails
+    default: "false"
+runs:
+  using: node24
+  main: dist/main.cjs
+  post: dist/post.cjs
+  post-if: always()
+branding:
+  icon: database
+  color: purple
