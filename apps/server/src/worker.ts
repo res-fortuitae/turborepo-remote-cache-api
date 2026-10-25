@@ -1,3 +1,8 @@
+import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/artifacts";
+import { multipartRoute } from "./multipart-route.ts";
+import { MULTIPART_PART_BYTES, MAX_MULTIPART_PARTS } from "@repo/api-spec";
+import { makeMultipartBucket } from "./multipart-bucket.ts";
+
 import { and, eq } from "drizzle-orm";
 import {
   IncidentPurge,
@@ -130,6 +135,8 @@ import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
+  MAX_ARTIFACT_BYTES: Schema.optional(Schema.NumberFromString),
+  MAX_DIRECT_UPLOAD_BYTES: Schema.optional(Schema.NumberFromString),
   RATE_LIMIT_STAGE: Schema.optional(Schema.String),
   LEGACY_TOKEN_ENABLED: Schema.optional(Schema.String),
   R2_LIFECYCLE_ACCOUNT_ID: Schema.optional(Schema.String),
@@ -147,6 +154,8 @@ const AuthEnvironment = Schema.Struct({
 });
 
 interface DeploymentEnvironment {
+  MAX_ARTIFACT_BYTES: string;
+  MAX_DIRECT_UPLOAD_BYTES: string;
   RATE_LIMIT_STAGE: string;
   LEGACY_TOKEN_ENABLED: string;
   R2_LIFECYCLE_ACCOUNT_ID?: string;
@@ -192,6 +201,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      MAX_ARTIFACT_BYTES: String(config.limits.maxArtifactBytes ?? 10_000_000_000),
+      MAX_DIRECT_UPLOAD_BYTES: String(
+        Math.min(
+          config.limits.maxDirectUploadBytes ?? Number.MAX_SAFE_INTEGER,
+          capabilities.directUploads.enabled ? 200_000_000 : 100_000_000,
+        ),
+      ),
       RATE_LIMIT_STAGE: stage,
       LEGACY_TOKEN_ENABLED: String(config.features.legacyToken === true),
       PROJECT_RETENTION_DAYS: String(config.limits.artifactRetentionDays),
@@ -451,7 +467,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const limitsLayer = Layer.succeed(ProjectLimits, {
       retentionDays: authEnvironment.PROJECT_RETENTION_DAYS ?? 30,
-      maxArtifactBytes: capabilities.directUploads.enabled ? 200_000_000 : 100_000_000,
+      maxArtifactBytes: Math.min(
+        authEnvironment.MAX_ARTIFACT_BYTES ?? 10_000_000_000,
+        MULTIPART_PART_BYTES * MAX_MULTIPART_PARTS,
+      ),
     });
 
     const authorizationLayer = AuthorizationDatabaseLive.pipe(
@@ -687,14 +706,57 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const multipartLayer = MultipartUploadsLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.effect(MultipartSecret, authSecret),
+          Layer.effect(MultipartBucket, Effect.map(bucket.raw, makeMultipartBucket)),
+        ),
+      ),
+    );
+
     const artifacts = artifactApi({
+      multipart: (scope, recheck) =>
+        multipartRoute(
+          scope,
+          recheck,
+          (scope, operation) =>
+            Effect.flatMap(ArtifactOpEmitter, (emitter) =>
+              emitter.emit(
+                { orgId: scope.credential!.orgId, projectId: scope.credential!.projectId },
+                operation,
+              ),
+            ).pipe(
+              Effect.provide(ArtifactOpEmitterD1Uploads.pipe(Layer.provide(databaseLayer))),
+              Effect.catch(() => Effect.void),
+            ),
+          (hash) =>
+            EdgeCache.createArtifactCache(edgeCacheEnabled).remove(
+              scope.prefix,
+              hash,
+              scope.cacheGeneration,
+            ),
+        ).pipe(
+          Effect.provide(multipartLayer),
+          Effect.mapError((error) =>
+            error instanceof ApiError
+              ? error
+              : new ApiError({
+                  status: 503,
+                  code: "multipart_unavailable",
+                  message: "Multipart upload unavailable",
+                }),
+          ),
+        ),
       guard: (scope) => cacheCredentialGuard(scope).pipe(Effect.provide(rateLimitLayer)),
       guardAuthFailure: cacheAuthenticationFailureGuard.pipe(Effect.provide(rateLimitLayer)),
       authorize: (credential, url, action) =>
         authorizeProjectCache(credential, url, action).pipe(
           Effect.provide(cacheAuthorizationLayer),
           Effect.tap((scope) =>
-            action === "cache:write" && scope.credential?.credentialType !== "legacy"
+            action === "cache:write" &&
+            !url.pathname.endsWith("/abort") &&
+            scope.credential?.credentialType !== "legacy"
               ? Effect.gen(function* () {
                   const db = yield* DatabaseService;
                   const [active] = yield* db.query("Purge.writeFence", (q) =>
@@ -782,7 +844,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
       edgeCacheEnabled,
       cache: EdgeCache.createArtifactCache(edgeCacheEnabled),
       waitUntil: execution.waitUntil,
-      maxUploadBytes: capabilities.directUploads.enabled ? 200_000_000 : 100_000_000,
+      maxUploadBytes:
+        authEnvironment.MAX_DIRECT_UPLOAD_BYTES ??
+        (capabilities.directUploads.enabled ? 200_000_000 : 100_000_000),
       emitEvents: Effect.fn("Server.emitCacheEvents")(
         function* (team, events) {
           const emitter = yield* AnalyticsEmitter;

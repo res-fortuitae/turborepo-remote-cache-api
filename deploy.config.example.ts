@@ -11,7 +11,11 @@ export default defineDeployConfig({
   // githubApp: { appId: 123, clientId: "Iv1.example", slug: "my-cache" },
   // Optional deployment ceilings; runtime org policy can only tighten these.
   // identityCeilings: { maxCacheRequestsPerMinute: 300, maxQueryHashes: 100 },
-  limits: { artifactRetentionDays: 30 },
+  limits: {
+    artifactRetentionDays: 30,
+    // maxArtifactBytes: 10_000_000_000, // Whole artifact, including multipart.
+    // maxDirectUploadBytes: 100_000_000, // Can only lower the zone request ceiling.
+  },
   // Optional workersPlan: "free" | "paid" asserts billing when the deploy token cannot read it.
   // Optional feature flags emailSending, analytics, auditHistory, directUploads default to requested.
   // False always selects the fallback; plan eligibility alone never enables a pending integration.

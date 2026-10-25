@@ -6,6 +6,23 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Multipart artifact uploads (STV-492)
+
+- Direct requests retain their zone-dependent 100/200 MB ceiling. Optional
+  `limits.maxDirectUploadBytes` can lower it. The separate whole-object limit
+  `limits.maxArtifactBytes` defaults to 10 GB; project and effective quota policy
+  can lower it. Existing project rows may explicitly retain 100/200 MB and must
+  be updated by an admin before large uploads can succeed.
+- `/v8/x/uploads` adds authenticated multipart uploads. The shared client-core
+  transport preserves artifact headers and splits large files; the `tcache exec`
+  proxy command follows in STV-485. Direct Turbo/env mode still sends one PUT.
+- Objects larger than 512 MB bypass edge caching. New additive D1 migrations
+  retain purge jobs/upload provenance and the status of upload operations. Apply
+  them through the normal authorized deployment. See
+  [multipart uploads](docs/multipart-uploads.md) and
+  [incident response](docs/artifact-purge.md). No infrastructure was deployed by
+  these implementation changes.
+
 ### Scoped cache credentials (STV-445)
 
 - Cache requests now resolve JWTs and organization-owned `tcache_` keys into a

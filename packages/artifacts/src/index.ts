@@ -39,3 +39,11 @@ export {
   matchesPurge,
 } from "./incident.ts";
 export type { PurgeObject } from "./incident.ts";
+export {
+  MultipartUploads,
+  MultipartUploadsLive,
+  MultipartBucket,
+  MultipartSecret,
+  MultipartError,
+} from "./multipart.ts";
+export type { MultipartOwner, UploadTicket } from "./multipart.ts";

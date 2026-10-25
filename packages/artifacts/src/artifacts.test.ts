@@ -119,3 +119,16 @@ test("purge removes R2 bytes then invalidates all hashes without revoking creden
       ),
     ),
   ));
+
+test("edge cache skips objects above the non-Enterprise size ceiling without buffering their body", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const cache = yield* EdgeCache;
+      yield* cache.put(
+        "o/p",
+        "abc",
+        new Response("x", { headers: { "content-length": "512000001" } }),
+      );
+      expect(yield* cache.match("o/p", "abc")).toBeUndefined();
+    }).pipe(Effect.provide(EdgeCacheTest)),
+  ));

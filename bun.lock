@@ -66,8 +66,11 @@
         "effect": "^4.0.6",
       },
       "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261023.1",
+        "@repo/client-core": "workspace:*",
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
+        "miniflare": "^4.20260730.0",
       },
       "peerDependencies": {
         "typescript": "^7",
@@ -198,6 +201,10 @@
     "packages/client-core": {
       "name": "@repo/client-core",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",

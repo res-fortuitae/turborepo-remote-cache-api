@@ -31,6 +31,8 @@ export const DeployConfigSchema = Schema.Struct({
   ),
   limits: Schema.Struct({
     artifactRetentionDays: PositiveInteger,
+    maxArtifactBytes: Schema.optional(PositiveInteger),
+    maxDirectUploadBytes: Schema.optional(PositiveInteger),
     cpuMs: Schema.optional(PositiveInteger),
   }),
   features: Schema.Struct({
