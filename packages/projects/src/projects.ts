@@ -2,6 +2,7 @@ import {
   BadRequest,
   Conflict,
   CreateProjectRequest,
+  GrantRequest,
   Forbidden,
   NotFound,
   UpdateProjectRequest,
@@ -34,6 +35,7 @@ export interface ProjectActor extends SessionPrincipal {
 const decodePolicy = Schema.decodeUnknownEffect(InstancePolicy);
 const decodeCreate = Schema.decodeUnknownEffect(CreateProjectRequest);
 const decodeUpdate = Schema.decodeUnknownEffect(UpdateProjectRequest);
+const decodeGrant = Schema.decodeUnknownEffect(GrantRequest);
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Adapter failures are unknown by definition.
 const slugConflict = (error: unknown): boolean => {
@@ -79,7 +81,7 @@ const projects = Effect.gen(function* () {
     projectId?: string,
   ) {
     yield* authorization
-      .require(actor, action, { orgId })
+      .require(actor, action, { orgId, projectId })
       .pipe(
         Effect.catchTag("Forbidden", (error) =>
           audit
@@ -181,6 +183,123 @@ const projects = Effect.gen(function* () {
       );
 
   return {
+    listGrants: Effect.fn("Projects.listGrants")(function* (actor: ProjectActor, id: string) {
+      const row = yield* locate(id);
+      yield* requirePermission(actor, "grant", row.orgId, id);
+
+      const rows = yield* database.query("Projects.listGrants", (db) =>
+        db
+          .select()
+          .from(schema.projectGrant)
+          .where(eq(schema.projectGrant.projectId, id))
+          .orderBy(schema.projectGrant.principalType, schema.projectGrant.principalId),
+      );
+
+      return rows.map((grant) => ({
+        ...grant,
+        createdAt: new Date(grant.createdAt).toISOString(),
+      }));
+    }),
+    addGrant: Effect.fn("Projects.addGrant")(function* (
+      actor: ProjectActor,
+      id: string,
+      input: typeof GrantRequest.Type,
+    ) {
+      const row = yield* locate(id);
+      yield* requirePermission(actor, "grant", row.orgId, id);
+      yield* mutationPolicy(actor, row.orgId);
+      const grant = yield* decodeGrant(input).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Invalid grant" })),
+      );
+
+      const eligible =
+        grant.principalType === "user"
+          ? yield* database.query("Projects.grantMember", (db) =>
+              db
+                .select()
+                .from(schema.member)
+                .where(
+                  and(
+                    eq(schema.member.organizationId, row.orgId),
+                    eq(schema.member.userId, grant.principalId),
+                  ),
+                ),
+            )
+          : yield* database.query("Projects.grantTeam", (db) =>
+              db
+                .select()
+                .from(schema.team)
+                .where(
+                  and(
+                    eq(schema.team.organizationId, row.orgId),
+                    eq(schema.team.id, grant.principalId),
+                  ),
+                ),
+            );
+
+      if (eligible.length === 0)
+        return yield* new BadRequest({
+          message: "Grant principal must belong to the project's organization",
+        });
+      const value = {
+        ...grant,
+        projectId: id,
+        grantedBy: actor.userId,
+        createdAt: yield* Clock.currentTimeMillis,
+      };
+      yield* audit.commit(
+        {
+          ...event(actor, row.orgId, "grant.add", id),
+          metadata: {
+            principalType: grant.principalType,
+            principalId: grant.principalId,
+            role: grant.role,
+          },
+        },
+        (db) => [
+          db
+            .insert(schema.projectGrant)
+            .values(value)
+            .onConflictDoUpdate({
+              target: [
+                schema.projectGrant.projectId,
+                schema.projectGrant.principalType,
+                schema.projectGrant.principalId,
+              ],
+              set: { role: value.role, grantedBy: value.grantedBy, createdAt: value.createdAt },
+            }),
+        ],
+      );
+
+      return { ...value, createdAt: new Date(value.createdAt).toISOString() };
+    }),
+    removeGrant: Effect.fn("Projects.removeGrant")(function* (
+      actor: ProjectActor,
+      id: string,
+      principalType: "user" | "team",
+      principalId: string,
+    ) {
+      const row = yield* locate(id);
+      yield* requirePermission(actor, "grant", row.orgId, id);
+      yield* mutationPolicy(actor, row.orgId);
+      yield* audit.commit(
+        {
+          ...event(actor, row.orgId, "grant.remove", id),
+          metadata: { principalType, principalId },
+        },
+        (db) => [
+          db
+            .delete(schema.projectGrant)
+            .where(
+              and(
+                eq(schema.projectGrant.projectId, id),
+                eq(schema.projectGrant.principalType, principalType),
+                eq(schema.projectGrant.principalId, principalId),
+              ),
+            ),
+        ],
+      );
+    }),
     create: Effect.fn("Projects.create")(function* (
       actor: ProjectActor,
       orgId: string,

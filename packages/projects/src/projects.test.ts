@@ -327,3 +327,90 @@ test("an audit insert failure rolls the project mutation back", () =>
       );
     }),
   ));
+
+test("grants combine direct and live same-org teams; member and team removal apply immediately", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const db = yield* Database;
+      const project = yield* projects.create(actor, "a", { slug: "cache", name: "Cache" });
+      const now = new Date("2026-01-01T00:00:00Z");
+      yield* db.batch((db) => [
+        db.insert(schema.user).values({
+          id: "dev",
+          name: "Dev",
+          email: "dev@example.com",
+          createdAt: now,
+          updatedAt: now,
+        }),
+        db.insert(schema.session).values({
+          id: "dev-s",
+          userId: "dev",
+          token: "dev-token",
+          expiresAt: new Date("2099-01-01T00:00:00Z"),
+          createdAt: now,
+          updatedAt: now,
+        }),
+        db.insert(schema.member).values({
+          id: "dev-m",
+          userId: "dev",
+          organizationId: "a",
+          role: "member",
+          createdAt: now,
+        }),
+        db.insert(schema.team).values([
+          { id: "team", name: "Team", organizationId: "a", createdAt: now },
+          { id: "foreign", name: "Foreign", organizationId: "b", createdAt: now },
+        ]),
+        db
+          .insert(schema.teamMember)
+          .values({ id: "tm", userId: "dev", teamId: "team", createdAt: now }),
+      ]);
+      const developer = { ...actor, userId: "dev", sessionId: "dev-s" };
+      yield* projects.addGrant(actor, project.id, {
+        principalType: "user",
+        principalId: "dev",
+        role: "cache:read",
+      });
+      expect((yield* projects.get(developer, project.id)).id).toBe(project.id);
+      const denied = yield* Effect.result(
+        projects.update(developer, project.id, { name: "Blocked" }),
+      );
+      expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
+      yield* projects.addGrant(actor, project.id, {
+        principalType: "team",
+        principalId: "team",
+        role: "project:admin",
+      });
+      expect((yield* projects.update(developer, project.id, { name: "Allowed" })).name).toBe(
+        "Allowed",
+      );
+      expect(yield* projects.listGrants(developer, project.id)).toHaveLength(2);
+      const foreign = yield* Effect.result(
+        projects.addGrant(actor, project.id, {
+          principalType: "team",
+          principalId: "foreign",
+          role: "project:admin",
+        }),
+      );
+      expect(Result.isFailure(foreign) && foreign.failure._tag).toBe("BadRequest");
+      yield* db.query("test.removeTeam", (db) =>
+        db.delete(schema.teamMember).where(eq(schema.teamMember.id, "tm")),
+      );
+      const lostAdmin = yield* Effect.result(projects.listGrants(developer, project.id));
+      expect(Result.isFailure(lostAdmin) && lostAdmin.failure._tag).toBe("Forbidden");
+      yield* projects.removeGrant(actor, project.id, "user", "dev");
+      const lostRead = yield* Effect.result(projects.get(developer, project.id));
+      expect(Result.isFailure(lostRead) && lostRead.failure._tag).toBe("Forbidden");
+      yield* projects.addGrant(actor, project.id, {
+        principalType: "user",
+        principalId: "dev",
+        role: "project:admin",
+      });
+      yield* db.query("test.removeOrgMember", (db) =>
+        db.delete(schema.member).where(eq(schema.member.id, "dev-m")),
+      );
+      const lostMember = yield* Effect.result(projects.get(developer, project.id));
+      expect(Result.isFailure(lostMember) && lostMember.failure._tag).toBe("Forbidden");
+    }),
+  ));
