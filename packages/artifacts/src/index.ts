@@ -25,3 +25,17 @@ export {
 export type { ArtifactCache } from "./edge-cache.ts";
 
 export { ArtifactPurger, ArtifactPurgerLive } from "./purge.ts";
+
+export { uploadProvenance } from "./provenance.ts";
+export {
+  IncidentPurge,
+  IncidentPurgeLive,
+  PurgeJobs,
+  PurgeInventory,
+  PurgeJob,
+  PurgeFilter,
+  PurgeError,
+  purgeSummary,
+  matchesPurge,
+} from "./incident.ts";
+export type { PurgeObject } from "./incident.ts";

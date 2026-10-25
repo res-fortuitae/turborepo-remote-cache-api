@@ -2,6 +2,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import {
+  uploadProvenance,
   ArtifactStore,
   ArtifactStoreLive,
   R2Bucket,
@@ -277,6 +278,7 @@ export const artifactApi = <R>({
     hash: string,
     uploadLimit: number,
     generation = 0,
+    provenance: Record<string, string> = {},
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const h = request.headers;
@@ -299,7 +301,7 @@ export const artifactApi = <R>({
       return yield* badRequest("Invalid x-artifact-duration header");
     }
 
-    const meta: ArtifactMetadata = {};
+    const meta: ArtifactMetadata = { ...provenance };
 
     if (duration) meta.duration = duration;
 
@@ -318,6 +320,17 @@ export const artifactApi = <R>({
 
     // A deletion or archive racing an upload must not leave a newly written artifact.
     yield* authenticate.pipe(
+      Effect.flatMap((current) =>
+        (current.cacheGeneration ?? 0) === generation
+          ? Effect.void
+          : Effect.fail(
+              new ApiError({
+                status: 409,
+                code: "purge_race",
+                message: "Project cache was purged during upload; retry",
+              }),
+            ),
+      ),
       Effect.catch((error) => store.remove(team, hash).pipe(Effect.andThen(Effect.fail(error)))),
     );
 
@@ -393,6 +406,7 @@ export const artifactApi = <R>({
 
     const scope = yield* authenticate;
     const team = scope.prefix;
+    const provenance = uploadProvenance(scope.credential);
     const segment = match[1];
     const method = request.method;
 
@@ -415,7 +429,13 @@ export const artifactApi = <R>({
         if (method === "GET") return yield* download(team, segment, scope.cacheGeneration);
 
         if (method === "PUT")
-          return yield* upload(team, segment, scope.maxUploadBytes, scope.cacheGeneration);
+          return yield* upload(
+            team,
+            segment,
+            scope.maxUploadBytes,
+            scope.cacheGeneration,
+            provenance,
+          );
       }
 
       return yield* new ApiError({
@@ -436,12 +456,13 @@ export const artifactApi = <R>({
       }),
     );
 
-    const operation: { method: string; hash?: string; status: number } = {
+    const operation: ArtifactOperation = {
       method,
       status: response.status,
+      ...(segment && HASH.test(segment) ? { hash: segment } : {}),
+      ...(method === "PUT" && response.status === 202 ? { provenance } : {}),
     };
 
-    if (segment && HASH.test(segment)) operation.hash = segment;
     yield* waitUntil(emitArtifactOp(scope, operation));
 
     return scope.credential?.credentialType === "apiKey"

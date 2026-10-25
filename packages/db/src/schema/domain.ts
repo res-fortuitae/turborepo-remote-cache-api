@@ -232,3 +232,22 @@ export const cacheApiKey = sqliteTable("cache_api_key", {
   projectEpoch: integer("project_epoch").notNull(),
   lastUsedAt: integer("last_used_at"),
 });
+
+/** Durable incident-response scans and bounded deletion checkpoints. */
+export const artifactPurgeJob = sqliteTable("artifact_purge_job", {
+  id: text().primaryKey(),
+  projectId: text("project_id").notNull(),
+  state: text().notNull(),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  data: text().notNull(),
+});
+
+/** Upload provenance stays queryable before the full M7 analytics sink is enabled. */
+export const artifactOperation = sqliteTable("artifact_operation", {
+  id: text().primaryKey(),
+  orgId: text("org_id").notNull(),
+  projectId: text("project_id").notNull(),
+  hash: text().notNull(),
+  createdAt: integer("created_at").notNull(),
+  provenance: text({ mode: "json" }).$type<Readonly<Record<string, string>>>().notNull(),
+});

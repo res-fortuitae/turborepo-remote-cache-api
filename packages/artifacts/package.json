@@ -15,7 +15,9 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
+    "@repo/api-spec": "workspace:*",
     "@repo/coordinator": "workspace:*",
+    "@repo/credentials": "workspace:*",
     "effect": "^4.0.6"
   },
   "devDependencies": {

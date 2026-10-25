@@ -101,6 +101,7 @@ export const AnalyticsEmitterLite = Layer.effect(
 export interface ArtifactOperation {
   readonly method: string;
   readonly hash?: string;
+  readonly provenance?: Readonly<Record<string, string>>;
   readonly status: number;
 }
 
@@ -118,3 +119,33 @@ export class ArtifactOpEmitter extends Context.Service<
 export const ArtifactOpEmitterDisabled = Layer.succeed(ArtifactOpEmitter, {
   emit: () => Effect.void,
 });
+
+/** Persist successful server-observed uploads; M7 can export this same provenance. */
+export const ArtifactOpEmitterD1Uploads = Layer.effect(
+  ArtifactOpEmitter,
+  Effect.gen(function* () {
+    const database = yield* Database;
+    return {
+      emit: (scope, operation) =>
+        operation.method === "PUT" &&
+        operation.status === 202 &&
+        operation.hash &&
+        operation.provenance
+          ? database
+              .query("ArtifactOpEmitter.upload", (db) =>
+                db.insert(schema.artifactOperation).values({
+                  id: crypto.randomUUID(),
+                  ...scope,
+                  hash: operation.hash!,
+                  createdAt: Date.now(),
+                  provenance: operation.provenance!,
+                }),
+              )
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError((cause) => new AnalyticsError({ cause })),
+              )
+          : Effect.void,
+    } satisfies typeof ArtifactOpEmitter.Service;
+  }),
+);

@@ -113,7 +113,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     return {
       prefix: `${principal.org}/${principal.project}`,
       cacheGeneration: yield* CoordinatorClient.use((client) =>
-        client.cacheGeneration(principal.project),
+        client.cacheGeneration(principal.project, action === "cache:write"),
       ),
       credential,
       maxQueryHashes: policy.maxQueryHashes ?? 100,

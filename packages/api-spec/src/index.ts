@@ -30,3 +30,5 @@ export const Api = HttpApi.make("RemoteCache").add(
 );
 
 export * from "./capabilities.ts";
+
+export { PurgeFilter, PurgeReport } from "./purge.ts";
