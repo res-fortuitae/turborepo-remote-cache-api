@@ -106,7 +106,7 @@ test("project routes match the shared contract and serialize project lifecycle r
     Effect.gen(function* () {
       expect(isProjectsPath("/orgs/org/projects")).toBe(true);
       expect(isProjectsPath("/projects/p")).toBe(true);
-      expect(isProjectsPath("/projects/p/grants")).toBe(false);
+      expect(isProjectsPath("/projects/p/grants")).toBe(true);
 
       const createdResponse = yield* serve("/orgs/org/projects", {
         method: "POST",
@@ -164,5 +164,31 @@ test("HTTP boundary rejects missing sessions, CSRF, malformed JSON, invalid limi
       expect((yield* serve("/orgs/org/projects", { method: "PUT", body: {} })).status).toBe(405);
       const page = yield* serve("/orgs/org/projects");
       expect(decodePage(yield* Effect.promise(() => page.json())).items).toEqual([]);
+    }),
+  ));
+
+test("grant HTTP routes add, list and remove audited same-org grants", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const response = yield* serve("/orgs/org/projects", {
+        method: "POST",
+        body: { slug: "grants", name: "Grants" },
+      });
+      const project = decodeProject(yield* Effect.promise(() => response.json()));
+      const path = `/projects/${project.id}/grants`;
+      expect(
+        (yield* serve(path, {
+          method: "POST",
+          body: { principalType: "user", principalId: "u", role: "cache:write" },
+        })).status,
+      ).toBe(201);
+      const list = yield* serve(path);
+      const grants = yield* Effect.promise(() => list.json());
+      expect(grants).toMatchObject([
+        { projectId: project.id, principalId: "u", role: "cache:write" },
+      ]);
+      expect((yield* serve(`${path}/user/u`, { method: "DELETE" })).status).toBe(204);
+      const empty = yield* serve(path);
+      expect(yield* Effect.promise(() => empty.json())).toEqual([]);
     }),
   ));

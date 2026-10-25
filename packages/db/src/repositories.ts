@@ -1,7 +1,15 @@
-import { and, eq, gt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { Database } from "./database.ts";
-import { oidcJti, project, projectGrant, trustPolicy } from "./schema/index.ts";
+import {
+  member,
+  team,
+  teamMember,
+  oidcJti,
+  project,
+  projectGrant,
+  trustPolicy,
+} from "./schema/index.ts";
 
 export type Project = typeof project.$inferSelect;
 
@@ -67,6 +75,61 @@ const grantRepo = Effect.gen(function* () {
   const database = yield* Database;
 
   return {
+    resolve: (orgId: string, projectId: string, userId: string) =>
+      Effect.gen(function* () {
+        const [membership] = yield* database.query("GrantRepo.membership", (db) =>
+          db
+            .select()
+            .from(member)
+            .where(and(eq(member.organizationId, orgId), eq(member.userId, userId))),
+        );
+
+        if (!membership) return null;
+
+        const [owned] = yield* database.query("GrantRepo.project", (db) =>
+          db
+            .select()
+            .from(project)
+            .where(and(eq(project.orgId, orgId), eq(project.id, projectId))),
+        );
+
+        if (!owned) return null;
+
+        if (membership.role.split(",").some((role) => ["owner", "admin"].includes(role.trim())))
+          return "project:admin" as const;
+
+        const roles = yield* database.query("GrantRepo.resolve", (db) =>
+          db
+            .select({ role: projectGrant.role })
+            .from(projectGrant)
+            .where(
+              and(
+                eq(projectGrant.projectId, projectId),
+                or(
+                  and(eq(projectGrant.principalType, "user"), eq(projectGrant.principalId, userId)),
+                  and(
+                    eq(projectGrant.principalType, "team"),
+                    inArray(
+                      projectGrant.principalId,
+                      db
+                        .select({ id: team.id })
+                        .from(team)
+                        .innerJoin(teamMember, eq(teamMember.teamId, team.id))
+                        .where(and(eq(team.organizationId, orgId), eq(teamMember.userId, userId))),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        );
+
+        const rank = { "cache:read": 1, "cache:write": 2, "project:admin": 3 };
+
+        return roles.reduce<Grant["role"] | null>(
+          (best, row) => (best === null || rank[row.role] > rank[best] ? row.role : best),
+          null,
+        );
+      }),
     list: (projectId: string) =>
       database.query("GrantRepo.list", (db) =>
         db

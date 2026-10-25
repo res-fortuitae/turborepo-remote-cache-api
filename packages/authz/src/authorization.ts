@@ -1,6 +1,6 @@
 import { Forbidden } from "@repo/api-spec";
 import { hasOrganizationPermission } from "@repo/auth";
-import { Database, schema } from "@repo/db";
+import { Database, GrantRepoLive, GrantRepo, schema } from "@repo/db";
 import { and, eq, gt } from "drizzle-orm";
 import { Clock, Context, Effect, Layer } from "effect";
 
@@ -9,16 +9,17 @@ export interface SessionPrincipal {
   readonly sessionId: string;
 }
 
-export type ProjectAction = "create" | "read" | "update" | "delete";
+export type ProjectAction = "create" | "read" | "update" | "delete" | "grant";
 
 /** Session/org decisions for project management. Project grants follow in STV-439/440. */
 const authorization = Effect.gen(function* () {
   const database = yield* Database;
+  const grants = yield* GrantRepo;
 
   const can = Effect.fn("Authorization.can")(function* (
     principal: SessionPrincipal,
     action: ProjectAction,
-    resource: { readonly orgId: string },
+    resource: { readonly orgId: string; readonly projectId?: string },
   ) {
     const now = yield* Clock.currentTimeMillis;
 
@@ -49,6 +50,14 @@ const authorization = Effect.gen(function* () {
     );
 
     if (action !== "read" && lifecycle?.archivedAt != null) return false;
+
+    if (resource.projectId !== undefined) {
+      const role = yield* grants.resolve(resource.orgId, resource.projectId, principal.userId);
+
+      if (role === "project:admin" && action !== "create") return true;
+
+      if (role !== null && action === "read") return true;
+    }
 
     if (live.user.role === "owner" || live.user.role === "admin") {
       const [elevation] = yield* database.query("Authorization.elevation", (db) =>
@@ -84,7 +93,7 @@ const authorization = Effect.gen(function* () {
     require: Effect.fn("Authorization.require")(function* (
       principal: SessionPrincipal,
       action: ProjectAction,
-      resource: { readonly orgId: string },
+      resource: { readonly orgId: string; readonly projectId?: string },
     ) {
       if (!(yield* can(principal, action, resource)))
         return yield* new Forbidden({ message: "Project permission denied" });
@@ -97,4 +106,6 @@ export class Authorization extends Context.Service<
   Effect.Success<typeof authorization>
 >()("@repo/authz/Authorization") {}
 
-export const AuthorizationLive = Layer.effect(Authorization, authorization);
+export const AuthorizationLive = Layer.effect(Authorization, authorization).pipe(
+  Layer.provide(GrantRepoLive),
+);

@@ -1,4 +1,10 @@
-import { BadRequest, CreateProjectRequest, Forbidden, UpdateProjectRequest } from "@repo/api-spec";
+import {
+  BadRequest,
+  CreateProjectRequest,
+  Forbidden,
+  GrantRequest,
+  UpdateProjectRequest,
+} from "@repo/api-spec";
 import { Auth } from "@repo/auth";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { Projects, type ProjectActor } from "@repo/projects";
@@ -8,10 +14,12 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const collection = /^\/orgs\/([^/]+)\/projects\/?$/;
 const item = /^\/projects\/([^/]+)\/?$/;
+const grantsPath = /^\/projects\/([^/]+)\/grants(?:\/(user|team)\/([^/]+))?\/?$/;
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 const decodeCreate = Schema.decodeUnknownEffect(CreateProjectRequest);
 const decodeUpdate = Schema.decodeUnknownEffect(UpdateProjectRequest);
+const decodeGrant = Schema.decodeUnknownEffect(GrantRequest);
 
 /** Web Request's text/json accessors do not honor Effect's MaxBodySize reference. */
 const readJson = Effect.fn("Projects.readJson")(function* (
@@ -37,7 +45,8 @@ const readJson = Effect.fn("Projects.readJson")(function* (
   );
 });
 
-export const isProjectsPath = (path: string) => collection.test(path) || item.test(path);
+export const isProjectsPath = (path: string) =>
+  collection.test(path) || item.test(path) || grantsPath.test(path);
 
 const errorResponse = (status: number, code: string, message: string) =>
   HttpServerResponse.json({ code, message }, { status });
@@ -68,12 +77,42 @@ export const projectsApi = Effect.gen(function* () {
   const projects = yield* Projects;
   const orgMatch = collection.exec(url.pathname);
   const projectMatch = item.exec(url.pathname);
+  const grantMatch = grantsPath.exec(url.pathname);
 
   const decodeId = (value: string) =>
     Effect.try({
       try: () => decodeURIComponent(value),
       catch: () => new BadRequest({ message: "Invalid identifier" }),
     });
+
+  if (grantMatch?.[1]) {
+    const id = yield* decodeId(grantMatch[1]);
+
+    if (!grantMatch[2] && request.method === "GET")
+      return yield* HttpServerResponse.json(yield* projects.listGrants(actor, id));
+
+    if (!grantMatch[2] && request.method === "POST") {
+      const body = yield* decodeGrant(yield* readJson(request)).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Invalid grant" })),
+      );
+
+      return yield* HttpServerResponse.json(yield* projects.addGrant(actor, id, body), {
+        status: 201,
+      });
+    }
+
+    if (
+      (grantMatch[2] === "user" || grantMatch[2] === "team") &&
+      grantMatch[3] &&
+      request.method === "DELETE"
+    ) {
+      yield* projects.removeGrant(actor, id, grantMatch[2], yield* decodeId(grantMatch[3]));
+
+      return HttpServerResponse.empty({ status: 204 });
+    }
+
+    return HttpServerResponse.empty({ status: 405 });
+  }
 
   if (orgMatch?.[1]) {
     const orgId = yield* decodeId(orgMatch[1]);
