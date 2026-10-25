@@ -1,5 +1,6 @@
 import { IdentityCeilings } from "./identity-policy.ts";
 import * as Schema from "effect/Schema";
+import { CustomOidcIssuers } from "./oidc-issuers.ts";
 import { OidcAudiences } from "./origin.ts";
 
 const Hostname = Schema.String.check(
@@ -14,6 +15,7 @@ export const DeployConfigSchema = Schema.Struct({
   stagingDomain: Schema.optional(Hostname),
   /** Omit to accept this stage's canonical origin. Pin during domain migrations. */
   oidcAudiences: Schema.optional(OidcAudiences),
+  oidcCustomIssuers: Schema.optional(CustomOidcIssuers),
   email: Schema.optional(
     Schema.Struct({ from: Schema.String.check(Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) }),
   ),

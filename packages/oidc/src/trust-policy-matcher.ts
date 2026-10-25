@@ -20,6 +20,7 @@ export type TrustPolicyDecision =
 
 const validBody = Schema.is(TrustPolicyBody);
 const isString = Schema.is(Schema.String);
+const isBoolean = Schema.is(Schema.Boolean);
 
 /** Only * and ? are special. Identity claims never pass through this matcher. */
 const glob = (pattern: string, value: string): boolean => {
@@ -74,14 +75,26 @@ export const matcher = {
           const actual = Object.hasOwn(claims, claim) ? claims[claim] : undefined;
           const values = Array.isArray(actual) ? actual : [actual];
 
-          if (!values.some((value) => isString(value) && expected.includes(value)))
+          if (
+            !values.some(
+              (value) =>
+                (isString(value) && expected.includes(value)) ||
+                (isBoolean(value) && expected.includes(String(value))),
+            )
+          )
             failedClaims.push(claim);
         }
 
         if (
           body.refPatterns !== undefined &&
           !body.refPatterns.some((pattern) =>
-            [claims.ref, claims.branch].some((ref) => isString(ref) && glob(pattern, ref)),
+            [
+              claims.ref,
+              claims.branch,
+              claims.build_branch,
+              claims.branchName,
+              claims["oidc.circleci.com/vcs-ref"],
+            ].some((ref) => isString(ref) && glob(pattern, ref)),
           )
         )
           failedClaims.push("refPatterns");

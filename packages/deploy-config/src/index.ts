@@ -23,3 +23,5 @@ export {
   clampPolicy,
 } from "./identity-policy.ts";
 export { tightenPolicy } from "./identity-policy.ts";
+
+export { PublicOidcIssuer, CustomOidcIssuers } from "./oidc-issuers.ts";

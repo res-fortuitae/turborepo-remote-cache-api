@@ -46,6 +46,7 @@ export {
   PolicyGuardrailsLive,
   PolicyGuardrailsTest,
 } from "./policy-guardrails.ts";
+
 export type { PolicyGuardrailSettings } from "./policy-guardrails.ts";
 
 export {
@@ -56,4 +57,21 @@ export {
   ExchangeError,
   OIDC_EXCHANGE_MARGIN_SECONDS,
 } from "./exchange.ts";
+
 export type { ExchangeContext } from "./exchange.ts";
+
+export {
+  GitLabClaims,
+  CircleCiClaims,
+  BuildkiteClaims,
+  BitbucketClaims,
+  KubernetesClaims,
+  GoogleClaims,
+  AzureClaims,
+} from "./provider-profiles.ts";
+
+export {
+  CustomIssuerConfig,
+  CustomIssuerDefaults,
+  ConfiguredIssuerRegistry,
+} from "./issuer-registry.ts";

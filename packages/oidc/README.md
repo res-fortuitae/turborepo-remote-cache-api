@@ -15,16 +15,18 @@ verification. Additional providers, including self-hosted GitHub Enterprise,
 need an explicit registry implementation with trusted key origins and algorithms.
 Unregistered token issuers never cause outbound requests.
 
-The verifier requires `sub`, `jti`, `iat`, `nbf`, and `exp`, an exact issuer, and
+The verifier requires `sub`, `iat` and `exp`, an exact issuer, and
 at least one exact match with the configured CI audiences. These are independent
 of the audience on cache tokens issued by this service. The result preserves
 provider claims and reports the exact matched audience for policy matching and
-audit provenance. GitHub signatures must use RS256. Unsigned and symmetric
+audit provenance. GitHub additionally requires `jti` and `nbf`; provider-specific absence handling is
+documented below. Built-in signatures must use RS256. Unsigned and symmetric
 algorithms, token-supplied key URLs, and embedded keys cannot select trusted keys.
 
 Defaults are a maximum age of 600 seconds and 30 seconds of clock tolerance.
-Tokens must also have `exp > iat`, `nbf < exp`, integer temporal claims, and a
-declared lifetime no greater than the configured maximum age. Configuration caps
+Tokens must also have `exp > iat`, `nbf < exp` when present, integer temporal claims, and a
+declared lifetime no greater than the provider ceiling (the configured maximum age
+for GitHub and custom profiles). The maximum age remains an independent check. Configuration caps
 maximum age at one hour and tolerance at 60 seconds. Inputs over 16 KiB and key
 IDs/replay IDs over 256 characters are rejected. Failures contain a reason, never
 the raw token. Database failures remain typed `DatabaseError` failures and must
@@ -52,8 +54,9 @@ expected; replay protection never depends on KV.
 ## Replay protection and cleanup
 
 After all signature and claim checks, `ReplayGuardLive` atomically claims the
-existing D1 `(issuer, jti)` unique key. Independent verifier instances sharing D1
-cannot both accept the same ID. The key is deliberately independent of audience
+existing D1 `(issuer, replay ID)` unique key. The replay ID is `jti` when present;
+registered profiles that omit it use the signed-content digest described below. Independent verifier instances sharing D1
+cannot both accept the same ID. For issuer-supplied `jti`, the key is deliberately independent of audience
 or token expiry, so changing those claims cannot reuse an unexpired ID. No schema
 migration is needed. A successful verification consumes the token even if later
 authorization or token issuance fails; CI must request a fresh ID token to retry.
@@ -110,9 +113,8 @@ Saves require immutable GitHub `repository_id` + `repository_owner_id`, Vercel
 `owner_id` + `project_id`, or GitLab `project_id` + `namespace_id`. GitHub/GitLab IDs
 must be numeric. Every audience must be in the deployment's accepted audience list,
 and issuers must be in the effective allowlist. All claim values are exact: `*` and
-`?` are rejected outside `refPatterns`. Other providers fail closed until STV-451
-adds their immutable identity profiles; registering a verifier alone cannot bypass
-these checks.
+`?` are rejected outside `refPatterns`. Additional provider profiles and required immutable identities are listed below;
+registering a verifier alone cannot bypass these checks.
 
 GitHub write policies must restrict `event_name` to `push`, `workflow_dispatch`, or
 `schedule`; Vercel writes require exactly `environment=production`; GitLab writes
@@ -206,3 +208,123 @@ When STV-485 supplies the CLI wrapper, configure the build command as
 hosts can compose `ClientCoreLive` as documented in `@repo/client-core`; the CLI
 command is not implemented by this issuer change. Refresh rereads the source and
 requests a new assertion; expiry of a fixed source cannot be repaired by reusing it.
+
+## Additional provider profiles
+
+`BuiltinIssuerRegistry` also registers the following providers. Registration never
+adds an issuer or audience to instance policy. Operators must allow each **exact**
+issuer, configure an accepted audience, and save a project policy with all required
+immutable rules. Policy labels/slugs alone never establish identity. Missing or
+ill-typed identity claims fail verification before consuming a replay ID.
+
+| Provider   | Exact issuer shape                                                                    | Required policy identity                                                       | Declared lifetime ceiling |
+| ---------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------- |
+| GitLab.com | `https://gitlab.com`                                                                  | numeric `project_id`, `namespace_id`                                           | 24 hours                  |
+| CircleCI   | `https://oidc.circleci.com/org/<UUID>`                                                | `oidc.circleci.com/project-id` UUID; org pinned by issuer and verified subject | 1 hour                    |
+| Buildkite  | `https://agent.buildkite.com`                                                         | UUID `organization_id`, `pipeline_id`                                          | 2 hours                   |
+| Bitbucket  | `https://api.bitbucket.org/2.0/workspaces/<workspace>/pipelines-config/identity/oidc` | brace-wrapped UUID `workspaceUuid`, `repositoryUuid`                           | 6 hours                   |
+| AWS EKS    | `https://oidc.eks.<region>.amazonaws.com/id/<32-hex-cluster>`                         | exact `sub=system:serviceaccount:<namespace>:<account>`                        | 24 hours                  |
+| Google     | `https://accounts.google.com`                                                         | numeric service-account `sub`; email/hd optional extra restrictions            | 1 hour                    |
+| Entra v2   | `https://login.microsoftonline.com/<tenant-UUID>/v2.0`                                | `tid` plus `oid` or exact `sub`                                                | 2 hours                   |
+| Azure AKS  | `https://<region>.oic.prod-aks.azure.com/<tenant-UUID>/<cluster-UUID>/`               | exact service-account `sub`                                                    | 24 hours                  |
+| Custom     | configured public HTTPS issuer and pinned public keys                                 | exact stable `sub`, plus administrator-selected conditions                     | configured maximum age    |
+
+These lifetime ceilings are verifier limits, not promises of provider lifetime.
+The independent maximum age stays 600 seconds in the Worker, regardless of a
+provider's declared lifetime. Expired, stale, future and wrong-audience tokens
+remain rejected. Cache JWTs still obey live policy/instance/signer ceilings.
+Never reuse the cache JWT audience as proof that a different CI audience is safe.
+
+CircleCI, Bitbucket, EKS, Google, Entra/AKS and custom profiles can omit `jti`;
+CircleCI, Bitbucket, Google, Entra and custom can omit `nbf`. Present optional
+claims still have to satisfy the usual bounded/integer checks. For an absent
+`jti`, the replay ID is `sha256:<hex SHA-256 of protected-header.payload>`, computed
+**after** signature and claim verification. Hashing signed content rather than
+signature bytes also rejects alternative signatures of the same assertion. Atomic
+D1 claiming and expiry/skew retention are unchanged. GitHub, GitLab, Buildkite
+and Vercel retain mandatory `jti` and `nbf`. A failed exchange consumes a verified
+assertion; the client must obtain a new one to retry.
+
+Provider key discovery stays on fixed vendor origins. Google explicitly allows
+its published `https://www.googleapis.com` JWKS origin. Token header URLs and
+redirects are never followed. Cluster issuers include their exact cluster path;
+Entra's verified `tid` must also equal the issuer tenant. CircleCI's verified
+subject must bind its issuer organization and project claim. National-cloud,
+legacy Entra v1 and self-hosted provider URLs are not guessed: use the pinned
+custom profile described below.
+
+### Policy and runner setup
+
+- GitLab: configure `id_tokens: { CACHE_ID_TOKEN: { aud: "<cache-audience>" } }`.
+  Conditions can additionally restrict `ref`, `ref_protected`, environment and
+  `pipeline_source`. Use `push`, `web` or `schedule` for writes; merge requests
+  require the explicit unsafe-write override. Both source identity IDs are required.
+- CircleCI: the client runs `circleci run oidc get --claims ... --v2` through the
+  host command adapter for a fresh API-specific token. Default org-audience tokens
+  are not reused. Writes require exact `oidc.circleci.com/vcs-origin`, `vcs-ref`
+  and `ssh-rerun=false`; protected branch and context restrictions belong in CI.
+  The matcher accepts booleans as exact `"true"`/`"false"` policy values.
+- Buildkite: the client runs `buildkite-agent oidc request-token --audience ...`.
+  ID rules use the documented UUID claims, not mutable slugs. Since standard
+  claims do not prove absence of a fork PR, writes require the explicit
+  `allowUntrustedWrites` acknowledgement and produce an audit-visible warning.
+- Bitbucket: enable step `oidc: true`; the client reads `BITBUCKET_STEP_OIDC_TOKEN`.
+  Its fixed audience must be explicitly configured in `oidcAudiences` and the
+  policy. That cross-service audience is an operator trust decision; it is never
+  enabled automatically. Writes require exact `deploymentEnvironment` and
+  `branchName` restrictions, with deployment access protection configured in CI.
+- EKS/AKS: project a **cache-audience** service-account token and point
+  `AWS_WEB_IDENTITY_TOKEN_FILE` / `AZURE_FEDERATED_TOKEN_FILE` at it. The usual
+  STS/`api://AzureADTokenExchange` audience is rejected unless explicitly accepted.
+  AKS projected assertions are cluster-issued; they do not contain Entra `tid`/`oid`.
+  To use a pre-minted Entra token, select `TCACHE_CI_PROVIDER=azure` and supply
+  `TCACHE_ID_TOKEN` without a projected file. This library does not mint Entra tokens.
+- Google: the client requests the configured audience from the fixed metadata
+  identity endpoint with its required metadata header. No arbitrary metadata-host
+  override is followed. Policies pin the numeric service-account ID rather than email.
+
+`refPatterns` additionally understands Buildkite `build_branch`, Bitbucket
+`branchName` and CircleCI `oidc.circleci.com/vcs-ref`. Exact claim rules still AND
+with ref patterns. Audit snapshots include an explicit allowlist of the new
+verified identity/context claims; unknown custom claims and raw tokens stay excluded.
+
+### Custom and self-hosted issuers
+
+Set root `deploy.config.ts` `oidcCustomIssuers` to entries of this form (public
+values only):
+
+```ts
+oidcCustomIssuers: [
+  {
+    issuer: "https://identity.your-company.com/tenant",
+    keys: [{ kty: "RSA", alg: "RS256", kid: "current", n: "<base64url-modulus>", e: "AQAB" }],
+  },
+];
+```
+
+Also add the exact issuer to effective `allowedOidcIssuers`, accept its intended
+audience, and save a `provider: "custom"` policy with a stable exact `sub` and any
+extra required claims. This also supports self-hosted GitLab or Kubernetes whose
+issuer hostname is outside the built-in profiles. Built-in providers cannot be
+relabeled custom to bypass their immutable-ID requirements.
+
+`ConfiguredIssuerRegistry` requires `CustomIssuerConfig`; the Worker supplies the
+decoded root configuration, and `CustomIssuerDefaults` supplies an empty list for
+other hosts. Pins cannot replace built-in vendor profiles. Custom issuer names
+must be canonical HTTPS DNS names without userinfo, ports, query, fragment, local
+suffixes or IP literals. Key sets are bounded, public RSA/RS256 only; private key
+parameters and symmetric keys are rejected. **No custom discovery, JWKS fetch, DNS
+lookup or KV key loading occurs**, so even a DNS name pointing at a private
+address cannot trigger SSRF. Rotate pins through a reviewed config update and
+normal root deployment, retaining overlapping public keys during rotation. This
+trades automatic key discovery for an explicit, reviewable egress boundary.
+
+Primary provider references: [GitLab](https://docs.gitlab.com/ci/secrets/id_token_authentication/),
+[CircleCI claims](https://circleci.com/docs/guides/permissions-authentication/openid-connect-tokens/)
+and [custom audience CLI](https://circleci.com/docs/guides/permissions-authentication/oidc-tokens-with-custom-claims/),
+[Buildkite](https://buildkite.com/docs/agent/cli/reference/oidc),
+[Bitbucket](https://support.atlassian.com/bitbucket-cloud/docs/deploy-on-aws-using-bitbucket-pipelines-openid-connect/),
+[EKS](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html),
+[Google](https://docs.cloud.google.com/compute/docs/instances/verifying-instance-identity),
+[Entra claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)
+and [AKS federation](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview).

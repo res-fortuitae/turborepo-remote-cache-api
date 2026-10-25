@@ -25,7 +25,8 @@ export const ClientCommandUnavailable = Layer.succeed(ClientCommand, {
     Effect.fail(
       new ClientAuthError({
         reason: "provider",
-        message: "Buildkite requires an injected buildkite-agent command adapter.",
+        message:
+          "This CI provider requires an injected command adapter (buildkite-agent or circleci).",
       }),
     ),
 });
@@ -173,7 +174,15 @@ const make = Effect.gen(function* () {
 
     if (provider === "gitlab") return env.get("CACHE_ID_TOKEN");
 
-    if (provider === "circleci") return env.get("CIRCLE_OIDC_TOKEN_V2");
+    if (provider === "circleci")
+      return yield* command.run("circleci", [
+        "run",
+        "oidc",
+        "get",
+        "--claims",
+        JSON.stringify({ aud: config.audience }),
+        "--v2",
+      ]);
 
     if (provider === "bitbucket") return env.get("BITBUCKET_STEP_OIDC_TOKEN");
 

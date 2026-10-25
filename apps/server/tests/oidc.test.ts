@@ -19,7 +19,7 @@ import {
   ExchangeConfigLive,
   OidcVerifierLive,
   OidcVerifierConfig,
-  GitHubIssuerRegistry,
+  BuiltinIssuerRegistry,
   JwksCacheTest,
   TrustPolicyMatcherLive,
   PolicyGuardrailsLive,
@@ -40,6 +40,7 @@ const issuer = GITHUB_ACTIONS_ISSUER;
 const api = "https://cache.test";
 const keys = await generateKeyPair("RS256");
 const jwk = { ...(await exportJWK(keys.publicKey)), kid: "ci", alg: "RS256" };
+
 const token = (extra: JWTPayload = {}, expires = 1120) =>
   Effect.promise(() =>
     new SignJWT({
@@ -66,62 +67,75 @@ const policy = {
   scope: "read write" as const,
   ttlSeconds: 600,
 };
-const network = Layer.succeed(
-  HttpClient.HttpClient,
-  HttpClient.make((request) =>
-    Effect.succeed(
-      HttpClientResponse.fromWeb(
-        request,
-        Response.json(
-          request.url.endsWith("openid-configuration")
-            ? { issuer, jwks_uri: `${issuer}/keys` }
-            : { keys: [jwk] },
+
+const network = (issuer: string) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            request.url.endsWith("openid-configuration")
+              ? {
+                  issuer,
+                  jwks_uri: `${issuer === "https://accounts.google.com" ? "https://www.googleapis.com" : issuer}/keys`,
+                }
+              : { keys: [jwk] },
+          ),
         ),
       ),
     ),
-  ),
-);
-const deps = Layer.mergeAll(
-  CacheTokensTest,
-  AuditLogD1Only,
-  ProjectRepoLive,
-  TrustPolicyRepoLive,
-  InstanceSettingsRepoLive,
-  ExchangeConfigLive,
-  TrustPolicyMatcherLive,
-  PolicyGuardrailsLive,
-  OidcVerifierLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        network,
-        GitHubIssuerRegistry,
-        JwksCacheTest,
-        ReplayGuardLive,
-        Layer.succeed(OidcVerifierConfig, {
-          allowedIssuers: [issuer],
-          maxTokenAgeSeconds: 600,
-          clockSkewSeconds: 30,
-        }),
+  );
+
+const deps = (issuer: string) =>
+  Layer.mergeAll(
+    CacheTokensTest,
+    AuditLogD1Only,
+    ProjectRepoLive,
+    TrustPolicyRepoLive,
+    InstanceSettingsRepoLive,
+    ExchangeConfigLive,
+    TrustPolicyMatcherLive,
+    PolicyGuardrailsLive,
+    OidcVerifierLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          network(issuer),
+          BuiltinIssuerRegistry,
+          JwksCacheTest,
+          ReplayGuardLive,
+          Layer.succeed(OidcVerifierConfig, {
+            allowedIssuers: [issuer],
+            maxTokenAgeSeconds: 600,
+            clockSkewSeconds: 30,
+          }),
+        ),
       ),
     ),
-  ),
-  Layer.succeed(CanonicalOrigin, api),
-  Layer.succeed(OidcAudience, [api]),
-);
+    Layer.succeed(CanonicalOrigin, api),
+    Layer.succeed(OidcAudience, [api]),
+  );
+
 type Env = Database | CacheTokenVerifier | OidcExchange;
+
 type Serve = (
   body: unknown,
   options?: { raw?: string; dpop?: string; method?: string },
 ) => Effect.Effect<Response, unknown, OidcExchange>;
+
 const scenario = (
   task: (serve: Serve, limit: (key: string) => void) => Effect.Effect<void, unknown, Env>,
+  activeIssuer = issuer,
 ) => {
   let blocked = "";
+
   const rate = Layer.succeed(RateLimiter, {
     allow: (key: string) => Effect.succeed(key !== blocked),
   });
+
   const layer = OidcExchangeLive.pipe(
-    Layer.provideMerge(deps),
+    Layer.provideMerge(deps(activeIssuer)),
     Layer.provide(rate),
     Layer.provideMerge(DatabaseTest),
     Layer.provideMerge(TestClock.layer()),
@@ -129,6 +143,7 @@ const scenario = (
       Layer.mergeAll(Layer.succeed(CanonicalOrigin, api), Layer.succeed(OidcAudience, [api])),
     ),
   );
+
   return Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.adjust(1_000_000);
@@ -152,6 +167,7 @@ const scenario = (
           createdAt: 0,
         }),
       ]);
+
       const serve: Serve = (body, options = {}) =>
         oidcApi.pipe(
           Effect.provideService(
@@ -169,15 +185,19 @@ const scenario = (
           ),
           Effect.map(HttpServerResponse.toWeb),
         );
+
       yield* task(serve, (key) => {
         blocked = key;
       });
     }).pipe(Effect.provide(layer)),
   );
 };
+
 const body = (token: string, project = "p") => ({ token, team: "org", project });
+
 const auditRows = Effect.gen(function* () {
   const db = yield* Database;
+
   return yield* db.query("test.audit", (db) => db.select().from(schema.auditEvent));
 });
 
@@ -188,9 +208,11 @@ test("exchange verifies CI signature/replay, issues epoch JWT with bounded TTL a
       const response = yield* serve(body(ci));
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
+
       const result = Schema.decodeUnknownSync(ExchangeResponse)(
         yield* Effect.promise(() => response.json()),
       );
+
       expect(result).toMatchObject({
         api,
         team: "org",
@@ -296,11 +318,13 @@ test("IP/org limits, invalid or oversized JSON and methods have safe no-store re
       expect(org.status).toBe(429);
       expect(org.headers.get("retry-after")).toBe("60");
       limit("");
+
       for (const raw of ["{broken", "x".repeat(30_000)]) {
         const response = yield* serve({}, { raw });
         expect(response.status).toBe(403);
         expect(response.headers.get("cache-control")).toBe("no-store");
       }
+
       expect((yield* serve({}, { method: "GET" })).status).toBe(405);
     }),
   ));
@@ -320,9 +344,11 @@ test("overlapping policies choose minimum TTL/read scope; changed write restrict
         }),
       ]);
       const response = yield* serve(body(yield* token()));
+
       const result = Schema.decodeUnknownSync(ExchangeResponse)(
         yield* Effect.promise(() => response.json()),
       );
+
       expect(result.scope).toBe("read");
       expect(result.expiresAt).toBe("1970-01-01T00:16:50.000Z");
       yield* db.batch((db) => [
@@ -380,9 +406,72 @@ test("a lower live instance TTL clamps existing policy grants", () =>
       ]);
       const response = yield* serve(body(yield* token({}, 1600)));
       expect(response.status).toBe(200);
+
       const result = Schema.decodeUnknownSync(ExchangeResponse)(
         yield* Effect.promise(() => response.json()),
       );
+
       expect(result.expiresAt).toBe("1970-01-01T00:21:40.000Z");
     }),
   ));
+
+test("Google assertion without jti/nbf exchanges through real policy, signer and redacted audit", () => {
+  const google = "https://accounts.google.com";
+
+  return scenario(
+    (serve) =>
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.batch((db) => [
+          db.insert(schema.instanceSettings).values({
+            id: 1,
+            schemaVersion: 1,
+            updatedAt: 0,
+            settings: {
+              ...defaultInstancePolicy,
+              allowedEmailDomains: [],
+              allowedGithubOrgs: [],
+              allowedOidcIssuers: [google],
+            },
+          }),
+          db.update(schema.trustPolicy).set({
+            provider: "google",
+            body: {
+              issuer: google,
+              claims: { aud: [api], sub: ["123456789"] },
+              scope: "read",
+              ttlSeconds: 600,
+            },
+          }),
+        ]);
+        const ci = yield* Effect.promise(() =>
+          new SignJWT({
+            iss: google,
+            aud: api,
+            sub: "123456789",
+            iat: 1000,
+            exp: 4600,
+            custom_secret: "never-persist",
+          })
+            .setProtectedHeader({ alg: "RS256", kid: "ci" })
+            .sign(keys.privateKey),
+        );
+        const response = yield* serve(body(ci));
+        expect(response.status).toBe(200);
+        const result = Schema.decodeUnknownSync(ExchangeResponse)(
+          yield* Effect.promise(() => response.json()),
+        );
+        expect(
+          yield* (yield* CacheTokenVerifier).verify(Redacted.value(result.token)),
+        ).toMatchObject({ org: "org", project: "p", scope: "read" });
+        expect((yield* serve(body(ci))).status).toBe(403);
+        const rows = yield* auditRows;
+        expect(rows[0]?.payload.metadata).toMatchObject({
+          claims: { iss: google, sub: "123456789" },
+        });
+        expect(JSON.stringify(rows)).not.toContain("never-persist");
+        expect(JSON.stringify(rows)).not.toContain(ci);
+      }),
+    google,
+  );
+});

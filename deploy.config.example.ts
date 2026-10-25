@@ -6,6 +6,8 @@ export default defineDeployConfig({
   // stagingDomain: "cache-staging.example.com",
   // Defaults to this stage's origin. Pin old/new values when migrating a domain.
   // oidcAudiences: ["https://cache.example.com"],
+  // Custom/self-hosted OIDC uses pinned public RSA keys; see packages/oidc/README.md.
+  // oidcCustomIssuers: [{ issuer: "https://identity.your-company.com", keys: [...] }],
   jurisdiction: "default",
   // Public identifiers only. Credentials belong in the root .env or a secret store.
   // githubApp: { appId: 123, clientId: "Iv1.example", slug: "my-cache" },

@@ -3,6 +3,9 @@ import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { CustomOidcIssuers } from "@repo/deploy-config";
+import { providerProfile } from "./provider-profiles.ts";
+import type { Jwks } from "./jwks-cache.ts";
 import type { JWTPayload } from "jose";
 
 export const GITHUB_ACTIONS_ISSUER = "https://token.actions.githubusercontent.com";
@@ -14,6 +17,9 @@ export interface OidcIssuer {
   readonly jwksOrigins: readonly string[];
   /** Provider lifetime ceiling, independent of the configured maximum token age. */
   readonly maxTokenLifetimeSeconds?: number;
+  readonly pinnedKeys?: Jwks;
+  readonly optionalTokenId?: boolean;
+  readonly optionalNotBefore?: boolean;
   readonly validateClaims?: (claims: JWTPayload) => boolean;
 }
 
@@ -51,15 +57,57 @@ const isVercelClaims = Schema.is(VercelClaims);
 export const BuiltinIssuerRegistry = Layer.effect(
   IssuerRegistry,
   Effect.map(IssuerRegistry, (github) => ({
-    find: (issuer: string): Option.Option<OidcIssuer> =>
-      /^https:\/\/oidc\.vercel\.com(?:\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$/.test(issuer)
-        ? Option.some({
-            issuer,
-            algorithms: ["RS256"],
-            jwksOrigins: [VERCEL_ISSUER],
-            maxTokenLifetimeSeconds: 7200,
-            validateClaims: isVercelClaims,
-          })
-        : github.find(issuer),
+    find: (issuer: string): Option.Option<OidcIssuer> => {
+      if (/^https:\/\/oidc\.vercel\.com(?:\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$/.test(issuer))
+        return Option.some({
+          issuer,
+          algorithms: ["RS256"],
+          jwksOrigins: [VERCEL_ISSUER],
+          maxTokenLifetimeSeconds: 7200,
+          validateClaims: isVercelClaims,
+        });
+      const profile = providerProfile(issuer);
+
+      return profile === undefined
+        ? github.find(issuer)
+        : Option.some({ issuer, algorithms: ["RS256"], ...profile });
+    },
   })),
 ).pipe(Layer.provide(GitHubIssuerRegistry));
+
+export class CustomIssuerConfig extends Context.Service<
+  CustomIssuerConfig,
+  typeof CustomOidcIssuers.Type
+>()("@repo/oidc/CustomIssuerConfig") {}
+
+export const CustomIssuerDefaults = Layer.succeed(CustomIssuerConfig, []);
+
+const decodeCustomIssuers = Schema.decodeUnknownEffect(CustomOidcIssuers);
+
+export const ConfiguredIssuerRegistry = Layer.effect(
+  IssuerRegistry,
+  Effect.gen(function* () {
+    const builtin = yield* IssuerRegistry;
+    const entries = yield* Effect.orDie(decodeCustomIssuers(yield* CustomIssuerConfig));
+
+    return {
+      find: (issuer: string): Option.Option<OidcIssuer> => {
+        const found = builtin.find(issuer);
+
+        if (Option.isSome(found)) return found;
+        const entry = entries.find((entry) => entry.issuer === issuer);
+
+        return entry === undefined
+          ? Option.none()
+          : Option.some({
+              issuer,
+              algorithms: ["RS256"],
+              jwksOrigins: [],
+              pinnedKeys: { keys: entry.keys },
+              optionalTokenId: true,
+              optionalNotBefore: true,
+            });
+      },
+    };
+  }),
+).pipe(Layer.provide(BuiltinIssuerRegistry));

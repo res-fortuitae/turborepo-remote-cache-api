@@ -12,6 +12,8 @@ import {
   GITHUB_ACTIONS_ISSUER as issuer,
   BuiltinIssuerRegistry,
   IssuerRegistry,
+  ConfiguredIssuerRegistry,
+  CustomIssuerConfig,
   JwksCache,
   JwksCacheTest,
   type Jwks,
@@ -113,10 +115,11 @@ const run = <A, E>(
   program: Effect.Effect<A, E, Env>,
   network = http(),
   allowedIssuers = [issuer],
+  registry = BuiltinIssuerRegistry,
 ) => {
   const dependencies = Layer.mergeAll(
     network.layer,
-    BuiltinIssuerRegistry,
+    registry,
     JwksCacheTest,
     ReplayGuardLive.pipe(Layer.provide(DatabaseTest)),
     TestClock.layer(),
@@ -533,4 +536,183 @@ describe("Vercel issuer profile", () => {
       [iss],
     );
   });
+});
+
+const providerUuid = "11111111-1111-4111-8111-111111111111";
+
+const additionalProfiles: readonly {
+  iss: string;
+  origin: string;
+  fields: JWTPayload;
+  missing: string;
+  optional?: boolean;
+  nbf?: number;
+}[] = [
+  {
+    iss: "https://gitlab.com",
+    origin: "https://gitlab.com",
+    fields: { project_id: "1", namespace_id: "2" },
+    missing: "project_id",
+  },
+  {
+    iss: `https://oidc.circleci.com/org/${providerUuid}`,
+    origin: "https://oidc.circleci.com",
+    fields: {
+      "oidc.circleci.com/project-id": providerUuid,
+      sub: `org/${providerUuid}/project/${providerUuid}/user/${providerUuid}`,
+    },
+    missing: "oidc.circleci.com/project-id",
+    optional: true,
+  },
+  {
+    iss: "https://agent.buildkite.com",
+    origin: "https://agent.buildkite.com",
+    fields: { organization_id: providerUuid, pipeline_id: providerUuid },
+    missing: "pipeline_id",
+  },
+  {
+    iss: "https://api.bitbucket.org/2.0/workspaces/acme/pipelines-config/identity/oidc",
+    origin: "https://api.bitbucket.org",
+    fields: { workspaceUuid: `{${providerUuid}}`, repositoryUuid: `{${providerUuid}}` },
+    missing: "repositoryUuid",
+    optional: true,
+  },
+  {
+    iss: "https://oidc.eks.us-east-1.amazonaws.com/id/0123456789ABCDEF0123456789ABCDEF",
+    origin: "https://oidc.eks.us-east-1.amazonaws.com",
+    fields: { sub: "system:serviceaccount:ci:builder" },
+    missing: "sub",
+    optional: true,
+    nbf: 1000,
+  },
+  {
+    iss: "https://accounts.google.com",
+    origin: "https://www.googleapis.com",
+    fields: { sub: "123456789" },
+    missing: "sub",
+    optional: true,
+  },
+  {
+    iss: `https://login.microsoftonline.com/${providerUuid}/v2.0`,
+    origin: "https://login.microsoftonline.com",
+    fields: { tid: providerUuid, oid: providerUuid },
+    missing: "tid",
+    optional: true,
+  },
+  {
+    iss: `https://eastus.oic.prod-aks.azure.com/${providerUuid}/${providerUuid}/`,
+    origin: "https://eastus.oic.prod-aks.azure.com",
+    fields: { sub: "system:serviceaccount:ci:builder" },
+    missing: "sub",
+    optional: true,
+    nbf: 1000,
+  },
+];
+
+test.each(additionalProfiles)(
+  "provider signature, claims, lifetime, replay and audience: $iss",
+  async (profile) => {
+    const network = http();
+    network.discovery({ issuer: profile.iss, jwks_uri: `${profile.origin}/keys` });
+    await run(
+      Effect.gen(function* () {
+        const payload = {
+          ...profile.fields,
+          iss: profile.iss,
+          exp: 4600,
+          ...(profile.optional ? { jti: undefined, nbf: profile.nbf } : {}),
+        };
+        const token = yield* sign(payload);
+        const verified = yield* verify(token);
+        expect(verified.issuer).toBe(profile.iss);
+        expect(verified.claims).toMatchObject(profile.fields);
+        expect(verified.tokenId).toMatch(profile.optional ? /^sha256:[a-f0-9]{64}$/ : /^run-1$/);
+        expect(yield* reason(verify(token))).toBe("replay");
+        expect(
+          yield* reason(
+            verify(yield* sign({ ...payload, [profile.missing]: undefined, jti: "invalid" })),
+          ),
+        ).toBe("claims");
+        expect(
+          yield* reason(verify(yield* sign({ ...payload, aud: "wrong", jti: "audience" }))),
+        ).toBe("audience");
+        expect(yield* reason(verify(yield* sign({ ...payload, iat: 369, jti: "old" })))).toBe(
+          "expired",
+        );
+        expect(yield* reason(verify(yield* sign({ ...payload, nbf: 1031, jti: "future" })))).toBe(
+          "claims",
+        );
+      }),
+      network,
+      [profile.iss],
+    );
+    const blocked = http();
+    await run(
+      Effect.gen(function* () {
+        expect(yield* reason(verify(yield* sign({ ...profile.fields, iss: profile.iss })))).toBe(
+          "issuer",
+        );
+        expect(blocked.urls).toEqual([]);
+      }),
+      blocked,
+    );
+  },
+);
+
+test("custom pinned keys never use discovery or KV, reject unpinned and rotated keys", async () => {
+  const iss = "https://identity.acme.com";
+  const registry = ConfiguredIssuerRegistry.pipe(
+    Layer.provide(
+      Layer.succeed(CustomIssuerConfig, [
+        {
+          issuer: iss,
+          keys: [{ kty: "RSA", alg: "RS256", kid: "first", n: firstJwk.n!, e: firstJwk.e! }],
+        },
+      ]),
+    ),
+  );
+  const network = http();
+  await run(
+    Effect.gen(function* () {
+      // A stale shared KV value must not replace the deployment-pinned key.
+      yield* (yield* JwksCache).refresh(iss, Effect.succeed(secondKeys));
+      const token = yield* sign({ iss, jti: undefined, nbf: undefined });
+      expect((yield* verify(token)).tokenId).toMatch(/^sha256:/);
+      expect(yield* reason(verify(token))).toBe("replay");
+      expect(yield* reason(verify(yield* sign({ iss, jti: "rotated" }, true)))).toBe("unknown_kid");
+      expect(yield* reason(verify(yield* sign({ iss: "https://other.acme.com" })))).toBe("issuer");
+      expect(network.urls).toEqual([]);
+    }),
+    network,
+    [iss, "https://other.acme.com"],
+    registry,
+  );
+});
+
+test("issuer-scoped identities reject CircleCI cross-org subjects and Entra cross-tenant claims", async () => {
+  for (const [iss, fields, origin] of [
+    [
+      `https://oidc.circleci.com/org/${providerUuid}`,
+      {
+        "oidc.circleci.com/project-id": providerUuid,
+        sub: `org/other/project/${providerUuid}/user/user`,
+      },
+      "https://oidc.circleci.com",
+    ],
+    [
+      `https://login.microsoftonline.com/${providerUuid}/v2.0`,
+      { tid: "22222222-2222-4222-8222-222222222222" },
+      "https://login.microsoftonline.com",
+    ],
+  ] as const) {
+    const network = http();
+    network.discovery({ issuer: iss, jwks_uri: `${origin}/keys` });
+    await run(
+      Effect.gen(function* () {
+        expect(yield* reason(verify(yield* sign({ iss, ...fields })))).toBe("claims");
+      }),
+      network,
+      [iss],
+    );
+  }
 });
