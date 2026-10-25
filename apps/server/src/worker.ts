@@ -1,11 +1,13 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+import { AlchemyContext } from "alchemy";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import {
   AuditIntegrityLive,
+  AuditRetention,
   AuditLogLive,
-  AuditSinkUnconfigured,
+  AuditLogD1Only,
   CheckpointStore,
   dailyAuditJob,
   drainOutboxJob,
@@ -23,12 +25,14 @@ import {
   OidcAudiences,
   resolveOriginSettings,
 } from "@repo/deploy-config";
-import { MailerNoop } from "@repo/mailer";
+import { AnalyticsEmitter } from "@repo/analytics";
+import { Capabilities, DeploymentCapabilities, capabilityLayers } from "./capabilities.ts";
+import { capabilitiesRoute } from "./capabilities-route.ts";
+import { CapabilityReport } from "@repo/shared";
 import {
   ArtifactBucket,
   AuditBasin,
   AuditCheckpointBucket,
-  auditBasinEnabled,
   BasinSqlToken,
   BetterAuthSecret,
   CacheNamespace,
@@ -42,6 +46,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { artifactApi } from "./api.ts";
 import { authRoute, isAuthPath } from "./auth.ts";
@@ -53,13 +58,13 @@ import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
-  AUDIT_STREAM_ENABLED: Schema.optional(Schema.Literals(["true", "false"])),
+  CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
   GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
 });
 
 interface DeploymentEnvironment {
   EDGE_CACHE_ENABLED: string;
-  AUDIT_STREAM_ENABLED: "true" | "false";
+  CAPABILITIES: string;
   OIDC_AUDIENCES?: string;
   GITHUB_CLIENT_ID?: string;
 }
@@ -73,12 +78,16 @@ export default class Api extends Cloudflare.Worker<Api>()(
     if (globalThis.__ALCHEMY_RUNTIME__) return { main: import.meta.url };
 
     const config = yield* Effect.promise(() => loadDeployConfig());
+    const { dev } = yield* AlchemyContext;
     const stage = yield* Stage;
-    const domain = workerDomain(config, stage);
+    const domain = dev ? undefined : workerDomain(config, stage);
 
-    const catalogToken = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(
-      Effect.orDie,
-    );
+    const capabilities = yield* DeploymentCapabilities;
+
+    if (capabilities === undefined)
+      return yield* Effect.die(
+        new Error("Deployment capabilities must be resolved by alchemy.run.ts"),
+      );
 
     const githubOAuthSecret = yield* Config.option(
       Config.Redacted("GITHUB_OAUTH_CLIENT_SECRET"),
@@ -91,13 +100,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const env: DeploymentEnvironment = {
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
-      // Must agree with @repo/infra's AuditBasin, which creates the stream.
-      AUDIT_STREAM_ENABLED: auditBasinEnabled({
-        jurisdiction: config.jurisdiction,
-        catalogToken: Option.isSome(catalogToken),
-      })
-        ? "true"
-        : "false",
+      CAPABILITIES: JSON.stringify(capabilities),
     };
 
     if (config.oidcAudiences !== undefined)
@@ -111,7 +114,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
       domain,
       // Better Auth uses AsyncLocalStorage from node:async_hooks.
       compatibility: { flags: ["nodejs_compat"] },
-      limits: config.limits.cpuMs === undefined ? undefined : { cpuMs: config.limits.cpuMs },
+      limits:
+        config.limits.cpuMs === undefined || capabilities.workersPlan !== "paid"
+          ? undefined
+          : { cpuMs: config.limits.cpuMs },
       env,
     };
   }),
@@ -189,21 +195,33 @@ export default class Api extends Cloudflare.Worker<Api>()(
     // D1 and KV bindings resolve per request (see @repo/db's README).
     const databaseLayer = DatabaseLive.pipe(Layer.provide(Layer.effect(D1Client, d1.raw)));
 
-    const auditStreamEnabled =
-      authEnvironment.AUDIT_STREAM_ENABLED === "true" && Option.isSome(auditWriter);
+    const capabilities = authEnvironment.CAPABILITIES ?? (yield* DeploymentCapabilities);
+
+    if (capabilities === undefined)
+      return yield* Effect.die(new Error("Missing deployment capabilities"));
+
+    const selectedLayers = capabilityLayers.pipe(
+      Layer.provide(Layer.succeed(Capabilities, capabilities)),
+      Layer.provide(databaseLayer),
+    );
+
+    const auditStreamEnabled = capabilities.auditHistory.enabled && Option.isSome(auditWriter);
 
     // Without Basin, audit rows stay in D1 (see docs/data-residency.md).
-    const auditLayer = AuditLogLive.pipe(
-      Layer.provide(
-        auditStreamEnabled
-          ? makeAuditSink(
-              (events) =>
-                // SAFETY: the binding client reads the env captured at init; its
-                // RuntimeContext requirement is declared but never read.
-                auditWriter.value.send([...events]) as Effect.Effect<void, unknown>,
-            )
-          : AuditSinkUnconfigured,
-      ),
+    const auditLayer = (
+      auditStreamEnabled
+        ? AuditLogLive.pipe(
+            Layer.provide(
+              makeAuditSink(
+                (events) =>
+                  // SAFETY: the binding client captures its env at init and never reads RuntimeContext.
+                  auditWriter.value.send([...events]) as Effect.Effect<void, unknown>,
+              ),
+            ),
+          )
+        : AuditLogD1Only
+    ).pipe(
+      Layer.provide(Layer.succeed(AuditRetention, capabilities.auditRetentionDays * 86_400_000)),
     );
 
     const auditJobsLayer = AuditIntegrityLive.pipe(
@@ -236,7 +254,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           auditLayer,
           SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
           authConfig,
-          MailerNoop,
+          selectedLayers,
         ),
       ),
       Layer.provide(databaseLayer),
@@ -248,14 +266,37 @@ export default class Api extends Cloudflare.Worker<Api>()(
       edgeCacheEnabled,
       cache: EdgeCache.createArtifactCache(edgeCacheEnabled),
       waitUntil: execution.waitUntil,
+      maxUploadBytes: capabilities.directUploads.enabled ? 200_000_000 : 100_000_000,
+      emitEvents: Effect.fn("Server.emitCacheEvents")(
+        function* (team, events) {
+          const emitter = yield* AnalyticsEmitter;
+          // Until project routing lands, Turbo's team namespace is the legacy project scope.
+          yield* emitter.emit({ orgId: team, projectId: team }, events);
+        },
+        Effect.provide(selectedLayers),
+        Effect.tapCause(Effect.logError),
+        Effect.catch(() => Effect.void),
+      ),
     });
 
     const auth = authRoute(authLayer);
+
+    const report = capabilitiesRoute(capabilities, token).pipe(
+      Effect.provide(authLayer),
+      Effect.catch(() =>
+        HttpServerResponse.json(
+          { code: "internal_error" },
+          { status: 500, headers: { "cache-control": "no-store" } },
+        ),
+      ),
+    );
 
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const { pathname } = new URL(request.url, "http://localhost");
+
+        if (pathname === "/api/instance/capabilities") return yield* report;
 
         return yield* isAuthPath(pathname) ? auth : artifacts;
       }).pipe(withSecurityHeaders, Effect.provide(originLayer)),

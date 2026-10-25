@@ -25,7 +25,15 @@ export const DeployConfigSchema = Schema.Struct({
     artifactRetentionDays: PositiveInteger,
     cpuMs: Schema.optional(PositiveInteger),
   }),
-  features: Schema.Struct({ edgeCache: Schema.Boolean }),
+  features: Schema.Struct({
+    edgeCache: Schema.Boolean,
+    emailSending: Schema.optional(Schema.Boolean),
+    analytics: Schema.optional(Schema.Boolean),
+    auditHistory: Schema.optional(Schema.Boolean),
+    directUploads: Schema.optional(Schema.Boolean),
+  }),
+  /** Explicit operator assertion when billing permissions are unavailable. Never inferred from zone tier. */
+  workersPlan: Schema.optional(Schema.Literals(["free", "paid"])),
   stages: Schema.Struct({ production: StageName, staging: StageName }),
 });
 

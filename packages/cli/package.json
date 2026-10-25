@@ -2,6 +2,9 @@
   "name": "@repo/cli",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "tcache": "./src/bin.ts"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -11,10 +14,12 @@
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "test": "bun test src"
   },
   "dependencies": {
-    "@repo/shared": "workspace:*"
+    "@repo/shared": "workspace:*",
+    "effect": "^4.0.6"
   },
   "devDependencies": {
     "@repo/config": "workspace:*",

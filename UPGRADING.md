@@ -6,6 +6,32 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Plan capabilities (STV-500)
+
+- Existing deploy config is valid. Optional flags `features.emailSending`,
+  `features.analytics`, `features.auditHistory`, and `features.directUploads`
+  default to requested; `false` selects each fallback.
+- Audit export now requires detected Workers Paid as well as the existing Basin
+  token and jurisdiction checks. Read-only subscription/zone probes use the
+  deploying account. If a token cannot read billing, paid capabilities are
+  disabled and the report explains why. Grant billing read access, or assert the
+  actual `workersPlan: "paid"` in config before an authorized redeploy. The
+  assertion never upgrades Cloudflare billing. Existing audit resources remain
+  retained under the stateful-resource policy; unexported D1 rows are not pruned.
+- Custom CPU limits are omitted unless Workers Paid is detected/asserted. Uploads
+  use a 100 MB ceiling unless the custom domain's serving zone is detected as
+  Business/Enterprise (200 MB conservative ceiling). Grant Zone Read permission
+  for detection. Cloudflare's actual zone upload setting may be lower.
+- Lite D1 hourly counters are enabled by default. Disable with
+  `features.analytics: false`. The current team namespace is the legacy project
+  scope until project credential routing is implemented. Full Basin analytics,
+  Email Sending/invite-link delivery, and multipart uploads remain in their
+  respective implementation tickets; plan eligibility does not enable them.
+- The console's Capabilities page and authenticated
+  `/api/instance/capabilities` report the selected fallbacks and upgrade paths.
+  Run `bun packages/cli/src/bin.ts doctor --server` with `TURBO_API` and
+  `TURBO_TOKEN` to read the same report. No cloud resources are changed by doctor.
+
 ### Stateful resource retention (STV-502)
 
 - The next authorized deployment persists deletion protection even when Alchemy
