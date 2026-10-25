@@ -25,7 +25,7 @@ import {
   PolicyGuardrailsLive,
   GITHUB_ACTIONS_ISSUER,
 } from "@repo/oidc";
-import { RateLimiter } from "@repo/ratelimit";
+import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
 import { sql } from "drizzle-orm";
 import { Effect, Layer, Redacted, Schema } from "effect";
 import * as TestClock from "effect/testing/TestClock";

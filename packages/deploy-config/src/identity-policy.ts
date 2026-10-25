@@ -1,8 +1,11 @@
 import * as Schema from "effect/Schema";
 
+const CacheRate = Schema.Literals([10, 30, 60, 100, 300, 600]);
 const Positive = Schema.Int.check(Schema.isGreaterThan(0));
 
 export const IdentityCeilings = Schema.Struct({
+  maxCacheRequestsPerMinute: Schema.optional(CacheRate),
+  maxQueryHashes: Schema.optional(Positive),
   maxTokenTtlSeconds: Schema.optional(Positive),
   maxApiKeyLifetimeDays: Schema.optional(Positive),
   maxRetentionDays: Schema.optional(Positive),
@@ -13,6 +16,8 @@ export const IdentityCeilings = Schema.Struct({
 export type IdentityCeilings = typeof IdentityCeilings.Type;
 
 export const InstancePolicy = Schema.Struct({
+  cacheRequestsPerMinute: Schema.optional(CacheRate),
+  maxQueryHashes: Schema.optional(Positive),
   orgCreation: Schema.Literals(["anyone", "admins"]),
   allowedEmailDomains: Schema.Array(Schema.NonEmptyString),
   allowedGithubOrgs: Schema.Array(Schema.NonEmptyString),
@@ -32,6 +37,8 @@ export const InstancePolicy = Schema.Struct({
 export type InstancePolicy = typeof InstancePolicy.Type;
 
 export const defaultInstancePolicy: InstancePolicy = {
+  cacheRequestsPerMinute: 600,
+  maxQueryHashes: 100,
   orgCreation: "admins",
   allowedEmailDomains: [],
   allowedGithubOrgs: [],
@@ -52,6 +59,11 @@ export const clampPolicy = (
   ceilings: IdentityCeilings,
 ): InstancePolicy => ({
   ...policy,
+  cacheRequestsPerMinute:
+    (policy.cacheRequestsPerMinute ?? 600) < (ceilings.maxCacheRequestsPerMinute ?? 600)
+      ? (policy.cacheRequestsPerMinute ?? 600)
+      : (ceilings.maxCacheRequestsPerMinute ?? 600),
+  maxQueryHashes: Math.min(policy.maxQueryHashes ?? 100, ceilings.maxQueryHashes ?? 1000, 1000),
   maxTokenTtlSeconds: Math.min(policy.maxTokenTtlSeconds, ceilings.maxTokenTtlSeconds ?? 900),
   maxApiKeyLifetimeDays: Math.min(
     policy.maxApiKeyLifetimeDays,
@@ -73,15 +85,22 @@ export const tightenPolicy = (
 ): InstancePolicy => {
   const intersect = (ceiling: readonly string[], child: readonly string[]) => {
     if (ceiling.length === 0) return child;
+
     if (child.length === 0) return ceiling;
     const result = child.filter((value) => ceiling.includes(value));
+
     if (!result.length)
       throw new Error("Organization allowlist must overlap its instance allowlist");
+
     return result;
   };
+
   const apiKeyRank = { allowed: 0, warn: 1, disallowed: 2 };
+
   return {
     ...clampPolicy(requested, {
+      maxCacheRequestsPerMinute: parent.cacheRequestsPerMinute ?? 600,
+      maxQueryHashes: parent.maxQueryHashes ?? 100,
       maxTokenTtlSeconds: parent.maxTokenTtlSeconds,
       maxApiKeyLifetimeDays: parent.maxApiKeyLifetimeDays,
       maxRetentionDays: parent.retentionDays,

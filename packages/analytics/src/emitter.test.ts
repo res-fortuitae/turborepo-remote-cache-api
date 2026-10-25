@@ -67,3 +67,31 @@ test("disabled analytics needs no database and lite empty batches write nothing"
 
   expect(rows).toEqual([]);
 });
+
+test("upload operation persistence retains provenance for uploads and 413 rejections, and ignores reads", async () => {
+  const { ArtifactOpEmitter, ArtifactOpEmitterD1Uploads } = await import("./emitter.ts");
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const emitter = yield* ArtifactOpEmitter;
+      const db = yield* Database;
+      const scope = { orgId: "o", projectId: "p" };
+      const provenance = {
+        credentialType: "apiKey",
+        credentialId: "key",
+        uploadedAt: "2026-10-25T12:00:00Z",
+      };
+      yield* emitter.emit(scope, { method: "PUT", status: 202, hash: "abc", provenance });
+      yield* emitter.emit(scope, { method: "PUT", status: 413, hash: "abc", provenance });
+      yield* emitter.emit(scope, { method: "GET", status: 200, hash: "abc" });
+      const rows = yield* db.query("test.uploads", (q) =>
+        q.select().from(schema.artifactOperation),
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ ...scope, hash: "abc", provenance, status: 202 });
+      expect(rows[1]?.status).toBe(413);
+    }).pipe(
+      Effect.provide(ArtifactOpEmitterD1Uploads.pipe(Layer.provideMerge(DatabaseTest))),
+      Effect.scoped,
+    ),
+  );
+});

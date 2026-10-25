@@ -3,7 +3,7 @@ import { AuditLog } from "@repo/audit";
 import { CacheTokenSigner } from "@repo/credentials";
 import { InstanceSettingsRepo, ProjectRepo, TrustPolicyRepo } from "@repo/db";
 import { CanonicalOrigin, OidcAudience, type IdentityCeilings } from "@repo/deploy-config";
-import { RateLimiter } from "@repo/ratelimit";
+import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
 import { Clock, Context, Effect, Layer, Redacted, Schema } from "effect";
 import { OidcVerifier, type VerifiedOidcToken } from "./verifier.ts";
 import { TrustPolicyMatcher } from "./trust-policy-matcher.ts";

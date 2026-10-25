@@ -1,3 +1,4 @@
+import { apiKey } from "@better-auth/api-key";
 import { schema, type DatabaseDrizzle } from "@repo/db";
 import type { AuthSettings } from "@repo/deploy-config";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
@@ -17,6 +18,9 @@ export type BetterAuthSecondaryStorage = NonNullable<BetterAuthOptions["secondar
 
 export interface BetterAuthInput {
   readonly config: AuthSettings;
+  readonly rateLimitStorage: NonNullable<
+    NonNullable<BetterAuthOptions["rateLimit"]>["customStorage"]
+  >;
   readonly db: DatabaseDrizzle;
   readonly secondaryStorage: BetterAuthSecondaryStorage | undefined;
   readonly sendInvitation?: (email: string, org: string, url: string) => Promise<boolean>;
@@ -30,6 +34,7 @@ export interface BetterAuthInput {
  */
 export const makeBetterAuth = ({
   config,
+  rateLimitStorage,
   db,
   secondaryStorage,
   sendMagicLink,
@@ -61,6 +66,7 @@ export const makeBetterAuth = ({
     emailAndPassword: { enabled: false },
     advanced: {
       // Better Auth otherwise disables these checks in NODE_ENV=test.
+      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
       disableCSRFCheck: false,
       disableOriginCheck: false,
       useSecureCookies: config.baseURL?.startsWith("https://"),
@@ -142,6 +148,13 @@ export const makeBetterAuth = ({
       },
     },
     plugins: [
+      apiKey({
+        references: "organization",
+        defaultPrefix: "tcache_",
+        rateLimit: { enabled: false },
+        keyExpiration: { defaultExpiresIn: 30 * 86400, minExpiresIn: 1 / 86400, maxExpiresIn: 90 },
+        enableSessionForAPIKeys: false,
+      }),
       instanceAdmin(),
       ...passkeyPlugins(db, config, audit),
       ...organizationPlugins(db, config, audit, sendInvitation),
@@ -172,8 +185,15 @@ export const makeBetterAuth = ({
     },
     // Single-use tokens and device codes need D1's atomic consume.
     verification: { storeInDatabase: true },
-    // KV counters aren't atomic. STV-446 may swap in the Rate Limiting binding.
-    rateLimit: { enabled: true, storage: "database" },
+    // Atomic binding checks; session secondary storage never stores counters.
+    rateLimit: { enabled: true, customStorage: rateLimitStorage },
+    disabledPaths: [
+      "/api-key/create",
+      "/api-key/update",
+      "/api-key/delete",
+      "/api-key/list",
+      "/api-key/get",
+    ],
     telemetry: { enabled: false },
   });
 };
