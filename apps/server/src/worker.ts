@@ -21,6 +21,7 @@ import {
   EmailSend,
   MailerLive,
   MailerDisabled,
+  MailerConsole,
 } from "@repo/mailer";
 import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
@@ -281,22 +282,25 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const mailerLayer =
-      capabilities.emailSending.enabled && authEnvironment.EMAIL_FROM
-        ? MailerLive.pipe(
-            Layer.provide(
-              Layer.effect(
-                EmailSend,
-                Effect.gen(function* () {
-                  const binding = yield* email.raw;
-                  return {
-                    from: authEnvironment.EMAIL_FROM ?? "",
-                    send: (message) => Effect.tryPromise(() => binding.send(message)),
-                  };
-                }),
+      capabilities.workersPlan === "local"
+        ? MailerConsole
+        : capabilities.emailSending.enabled && authEnvironment.EMAIL_FROM
+          ? MailerLive.pipe(
+              Layer.provide(
+                Layer.effect(
+                  EmailSend,
+                  Effect.gen(function* () {
+                    const binding = yield* email.raw;
+
+                    return {
+                      from: authEnvironment.EMAIL_FROM ?? "",
+                      send: (message) => Effect.tryPromise(() => binding.send(message)),
+                    };
+                  }),
+                ),
               ),
-            ),
-          )
-        : MailerDisabled;
+            )
+          : MailerDisabled;
 
     const notificationsLayer = AlertsLive.pipe(
       Layer.provide(mailerLayer),
@@ -305,6 +309,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           NotificationSink,
           Effect.gen(function* () {
             const database = yield* DatabaseService;
+
             return {
               persist: (alert: import("@repo/mailer").Alert) =>
                 database

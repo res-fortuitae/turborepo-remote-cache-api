@@ -23,6 +23,7 @@
     "effect": "^4.0.6"
   },
   "devDependencies": {
+    "@better-auth/passkey": "1.7.12",
     "@cloudflare/workers-types": "^5.20261023.1",
     "@repo/config": "workspace:*",
     "@types/bun": "latest",

@@ -97,3 +97,30 @@ are clamped to the instance policy, API-key restrictions and security requiremen
 can only tighten, and signup allowlists cannot broaden. Disjoint signup lists
 are rejected rather than interpreted as unrestricted. Cache access is never
 conferred by these role statements; that is the M2 authorization service's job.
+
+## Administrator passkey step-up
+
+Passkeys are a second factor for instance owners/admins. Sign in with GitHub
+first, then use `passkeyClient()` from `@better-auth/passkey/client`. Enroll with
+`authClient.passkey.addPasskey()` and check the factor with
+`authClient.signIn.passkey()`. The server requires user verification, pins the RP
+ID/origin to the canonical host, rejects first-factor passkey login, and checks
+that the assertion credential belongs to the signed-in administrator.
+
+First enrollment requires a session created within ten minutes. Further
+registration/management requires fresh proof. Enroll administrators before
+turning `requirePasskeyForAdmins` on in instance policy; enabling it requires
+fresh proof from the operator. With the policy on, instance mutation and
+elevation endpoints (including native admin mutations) require a D1 proof no
+older than five minutes. Read-only views remain available without step-up.
+Verification rotates the session and revokes the prior D1 session; proof never
+comes from KV, a body parameter, or cookie claims. Changing domains changes the
+RP ID, so enroll replacement credentials before such a migration.
+
+GitHub 2FA inspection is not enabled; passkey user verification supplies the
+second factor. STV-503's recovery CLI was canceled. If all administrators lose
+their factors, an operator with the deployment's Cloudflare credentials must
+set `requirePasskeyForAdmins` to false in the singleton D1 instance policy row,
+retaining its other settings, re-enroll keys after a new GitHub sign-in, and
+re-enable the requirement. Preserve the audit history and record the recovery
+reason. There is no unauthenticated recovery endpoint.
