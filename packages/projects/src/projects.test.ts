@@ -8,7 +8,7 @@ import { Clock, Effect, Layer, Result, Schema } from "effect";
 import { Project as ProjectResponse } from "@repo/api-spec";
 import { Projects, ProjectsLive, ProjectLimits, type ProjectActor } from "./index.ts";
 import { ProjectsTest } from "./testing.ts";
-import { AuthorizationLive } from "@repo/authz";
+import { AuthorizationDatabaseLive } from "@repo/authz";
 import { AuthConfigTest } from "@repo/auth/testing";
 import { ProjectRepoLive } from "@repo/db";
 
@@ -275,7 +275,7 @@ test("an audit insert failure rolls the project mutation back", () =>
 
       // Duplicate audit ids force a real batch failure after the project insert.
       const broken = Layer.fresh(ProjectsLive).pipe(
-        Layer.provide(Layer.mergeAll(ProjectRepoLive, AuthorizationLive)),
+        Layer.provide(Layer.mergeAll(ProjectRepoLive, AuthorizationDatabaseLive)),
         Layer.provide(
           Layer.succeed(AuditLog, {
             record: () =>

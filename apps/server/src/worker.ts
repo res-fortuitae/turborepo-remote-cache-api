@@ -33,8 +33,8 @@ import {
   ReplayGuardLive,
   ProjectRepoLive,
 } from "@repo/db";
-import { AuthorizationLive } from "@repo/authz";
-import { ProjectLimits, ProjectsLive } from "@repo/projects";
+import { AuthorizationDatabaseLive, AuthorizationCeilings } from "@repo/authz";
+import { ProjectLimits, ProjectsLive, AuthorizationAuditLive } from "@repo/projects";
 import { isProjectsPath, projectsRoute } from "./projects-route.ts";
 import { pruneOidcReplayIds } from "@repo/oidc";
 import {
@@ -382,7 +382,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(
         Layer.mergeAll(
           ProjectRepoLive,
-          AuthorizationLive,
+          AuthorizationDatabaseLive.pipe(
+            Layer.provide(AuthorizationAuditLive.pipe(Layer.provide(auditLayer))),
+            Layer.provide(
+              Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
+            ),
+          ),
           auditLayer,
           authConfig,
           Layer.succeed(ProjectLimits, {

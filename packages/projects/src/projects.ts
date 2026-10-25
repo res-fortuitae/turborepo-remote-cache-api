@@ -80,15 +80,15 @@ const projects = Effect.gen(function* () {
     orgId: string,
     projectId?: string,
   ) {
-    yield* authorization
-      .require(actor, action, { orgId, projectId })
-      .pipe(
-        Effect.catchTag("Forbidden", (error) =>
-          audit
-            .commit({ ...event(actor, orgId, action, projectId), outcome: "deny" }, () => [])
-            .pipe(Effect.andThen(Effect.fail(error))),
-        ),
-      );
+    yield* authorization.require(actor, action, { orgId, projectId }).pipe(
+      Effect.catchTag("AuthzError", (error) =>
+        Effect.gen(function* () {
+          if (error.reason === "unavailable") return yield* error;
+
+          return yield* new Forbidden({ message: error.message });
+        }),
+      ),
+    );
   });
 
   const policyFor = Effect.fn("Projects.policy")(function* (orgId: string) {
@@ -208,6 +208,7 @@ const projects = Effect.gen(function* () {
       const row = yield* locate(id);
       yield* requirePermission(actor, "grant", row.orgId, id);
       yield* mutationPolicy(actor, row.orgId);
+
       const grant = yield* decodeGrant(input).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid grant" })),
       );
@@ -241,12 +242,14 @@ const projects = Effect.gen(function* () {
         return yield* new BadRequest({
           message: "Grant principal must belong to the project's organization",
         });
+
       const value = {
         ...grant,
         projectId: id,
         grantedBy: actor.userId,
         createdAt: yield* Clock.currentTimeMillis,
       };
+
       yield* audit.commit(
         {
           ...event(actor, row.orgId, "grant.add", id),

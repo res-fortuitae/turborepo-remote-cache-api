@@ -29,3 +29,10 @@ export type {
 } from "./repositories.ts";
 
 export * as schema from "./schema/index.ts";
+
+export {
+  MembershipRepo,
+  MembershipRepoLive,
+  InstanceSettingsRepo,
+  InstanceSettingsRepoLive,
+} from "./authorization-repositories.ts";
