@@ -74,7 +74,8 @@ not generate them or deploy infrastructure. The first newly registered user
 claims instance ownership, so control initial OAuth access before publishing
 the instance. See [identity, organizations and passkeys](docs/identity.md).
 The setup script's optional bootstrap handoff remains unavailable; use the
-token-based setup above.
+scoped API-key management API after signing in. Shared-token cache access
+requires `features.legacyToken: true`; see [cache credentials](docs/cache-credentials.md).
 
 See `deploy.config.example.ts` for the typed settings: production and staging
 domains, R2 jurisdiction, public GitHub App identifiers, retention and Worker CPU
@@ -114,7 +115,8 @@ See [origin, audiences and upload limits](docs/origin-and-audiences.md) for migr
 steps, security headers and Cloudflare plan limits.
 
 Organization-owned API keys and their management API are documented in
-[API-key fallback](docs/api-keys.md). Bearer cache routing follows in STV-445.
+[API-key fallback](docs/api-keys.md). See [cache credentials](docs/cache-credentials.md)
+for JWT/API-key routing, project isolation, and the opt-in legacy migration flag.
 
 The CI ID-token verifier and its replay/cache guarantees are documented in
 [`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.
@@ -134,8 +136,8 @@ notes, and run `bun run check`, `bun run test`, and `bun run plan` before deploy
 
 ```sh
 export TURBO_API=https://<your-worker>.workers.dev
-export TURBO_TOKEN=<same token>
-export TURBO_TEAM=my-team   # artifacts are namespaced per team
+export TURBO_TOKEN=<cache JWT or tcache_ API key>
+export TURBO_TEAM=my-org-slug   # must match the credential's organization
 turbo run build
 ```
 
@@ -150,7 +152,7 @@ turbo run build
 | POST   | `/v8/artifacts`        | Query metadata for many hashes          |
 | POST   | `/v8/artifacts/events` | Record cache events (validated, logged) |
 
-Legacy shared-token artifacts use `<teamId|slug|default>/<hash>`; verified JWTs use
+Opt-in legacy shared-token artifacts use `<teamId|slug|default>/<hash>`; verified JWTs and API keys use
 `{orgId}/{projectId}/{hash}`. The `x-artifact-*` headers are kept as R2 custom metadata.
 
 ## Cloudflare resources
@@ -187,7 +189,7 @@ changing residency of existing data needs a separate migration.
 
 ## Edge caching
 
-Downloads are stored in the datacenter's Workers Cache (`apps/server/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by team + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
+Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
 Set `features.edgeCache=false` to bypass the cache for downloads and uploads.
 
 When a jurisdiction is set, artifact edge caching is disabled regardless of the
@@ -254,9 +256,8 @@ valid. `edgeCache` keeps its existing behavior. Custom Worker CPU limits are
 only sent for a detected/asserted Workers Paid account.
 
 - **Analytics:** lite mode batches remote hit/miss/request/time-saved counters in
-  D1's existing hourly rollup table. Local hits are excluded. The current Turbo
-  API uses its team namespace as both org and legacy project scope until project
-  credential routing is implemented. Counter writes run under `waitUntil`, and
+  D1's existing hourly rollup table. Local hits are excluded. The Turbo API uses the credential’s organization and project; opt-in legacy
+  requests use their team namespace for both. Counter writes run under `waitUntil`, and
   failures are logged without failing cache traffic. Counters are at least once;
   retransmitted event batches can count twice. `analytics: false` selects a no-op
   emitter. Basin analytics/history/drill-downs remain pending STV-462–465, even

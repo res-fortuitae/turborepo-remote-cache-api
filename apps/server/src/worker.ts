@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import {
   AuditIntegrityLive,
   AuditRetention,
+  AuditLog,
   AuditLogLive,
   AuditLogD1Only,
   CheckpointStore,
@@ -68,7 +69,7 @@ import {
   OidcAudiences,
   resolveOriginSettings,
 } from "@repo/deploy-config";
-import { AnalyticsEmitter } from "@repo/analytics";
+import { ArtifactOpEmitter, ArtifactOpEmitterDisabled, AnalyticsEmitter } from "@repo/analytics";
 import { Capabilities, DeploymentCapabilities, capabilityLayers } from "./capabilities.ts";
 import { capabilitiesRoute } from "./capabilities-route.ts";
 import { CapabilityReport } from "@repo/shared";
@@ -96,12 +97,15 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { makeRetentionRules } from "./retention-rules.ts";
 import { authorizeProjectCache } from "./project-cache.ts";
 import {
+  ApiKeyVerifierLive,
+  CredentialResolverLive,
+  LegacyCredentialConfig,
   CacheTokenVerifierLive,
   CacheTokenConfigLive,
   KeyStoreLive,
   SigningKeySecret,
 } from "@repo/credentials";
-import { artifactApi } from "./api.ts";
+import { ApiError, artifactApi } from "./api.ts";
 import { authRoute, isAuthPath } from "./auth.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
@@ -110,6 +114,7 @@ import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
+  LEGACY_TOKEN_ENABLED: Schema.optional(Schema.String),
   R2_LIFECYCLE_ACCOUNT_ID: Schema.optional(Schema.String),
   R2_LIFECYCLE_BUCKET: Schema.optional(Schema.String),
   R2_LIFECYCLE_JURISDICTION: Schema.optional(Schema.String),
@@ -125,6 +130,7 @@ const AuthEnvironment = Schema.Struct({
 });
 
 interface DeploymentEnvironment {
+  LEGACY_TOKEN_ENABLED: string;
   R2_LIFECYCLE_ACCOUNT_ID?: string;
   R2_LIFECYCLE_BUCKET?: string;
   R2_LIFECYCLE_JURISDICTION?: string;
@@ -168,6 +174,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      LEGACY_TOKEN_ENABLED: String(config.features.legacyToken === true),
       PROJECT_RETENTION_DAYS: String(config.limits.artifactRetentionDays),
       IDENTITY_CEILINGS: JSON.stringify(config.identityCeilings ?? {}),
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
@@ -177,9 +184,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const lifecycleAccount = yield* Config.option(Config.String("R2_LIFECYCLE_ACCOUNT_ID")).pipe(
       Effect.orDie,
     );
+
     const lifecycleBucket = yield* Config.option(Config.String("R2_LIFECYCLE_BUCKET")).pipe(
       Effect.orDie,
     );
+
     if (Option.isSome(lifecycleAccount) && Option.isSome(lifecycleBucket)) {
       env.R2_LIFECYCLE_ACCOUNT_ID = lifecycleAccount.value;
       env.R2_LIFECYCLE_BUCKET = lifecycleBucket.value;
@@ -224,9 +233,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const signingSecret = yield* Cloudflare.SecretsStore.ReadSecret(yield* SigningKey);
     const lifecycleSecret = yield* R2LifecycleToken;
+
     const lifecycleToken = Option.isSome(lifecycleSecret)
       ? Option.some(yield* Cloudflare.SecretsStore.ReadSecret(lifecycleSecret.value))
       : Option.none();
+
     const authSecret = yield* Cloudflare.SecretsStore.ReadSecret(yield* BetterAuthSecret);
 
     const githubOAuthSecret = yield* GitHubOAuthSecret;
@@ -410,14 +421,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
         Layer.succeed(CoordinatorNamespace, makeCoordinatorNamespace(coordinatorNamespace)),
       ),
     );
+
     const limitsLayer = Layer.succeed(ProjectLimits, {
       retentionDays: authEnvironment.PROJECT_RETENTION_DAYS ?? 30,
       maxArtifactBytes: capabilities.directUploads.enabled ? 200_000_000 : 100_000_000,
     });
+
     const authorizationLayer = AuthorizationDatabaseLive.pipe(
       Layer.provide(AuthorizationAuditLive.pipe(Layer.provide(auditLayer))),
       Layer.provide(Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {})),
     );
+
     const verifierLayer = CacheTokenVerifierLive.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -427,14 +441,6 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
     );
-    const cacheAuthorizationLayer = Layer.mergeAll(
-      authorizationLayer,
-      AuthorizationAuditLive.pipe(Layer.provide(auditLayer)),
-      verifierLayer,
-      InstanceSettingsRepoLive,
-      limitsLayer,
-      Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
-    ).pipe(Layer.provideMerge(databaseLayer));
 
     const authLayer = AuthLive.pipe(
       Layer.provide(
@@ -460,6 +466,26 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
       Layer.provide(databaseLayer),
     );
+
+    const cacheAuthorizationLayer = Layer.mergeAll(
+      authorizationLayer,
+      AuthorizationAuditLive.pipe(Layer.provide(auditLayer)),
+      CredentialResolverLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            verifierLayer,
+            ApiKeyVerifierLive.pipe(Layer.provide(authLayer)),
+            Layer.succeed(LegacyCredentialConfig, {
+              enabled: authEnvironment.LEGACY_TOKEN_ENABLED === "true",
+              token,
+            }),
+          ),
+        ),
+      ),
+      InstanceSettingsRepoLive,
+      limitsLayer,
+      Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
+    ).pipe(Layer.provideMerge(databaseLayer));
 
     const retentionRulesLayer =
       Option.isSome(lifecycleToken) &&
@@ -492,10 +518,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
             Effect.gen(function* () {
               const raw = yield* bucket.raw;
               const coordinator = yield* CoordinatorClient;
+
               return {
                 list: (prefix: string, cursor?: string) =>
                   Effect.tryPromise(async () => {
                     const page = await raw.list({ prefix, cursor, limit: 1000 });
+
                     return {
                       objects: page.objects.map(({ key, uploaded }) => ({ key, uploaded })),
                       cursor: page.truncated ? page.cursor : undefined,
@@ -510,6 +538,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
       Layer.provide(databaseLayer),
     );
+
     yield* Cloudflare.Workers.cron("*/2 * * * *", () =>
       Effect.gen(function* () {
         const maintenance = yield* ProjectMaintenance;
@@ -521,6 +550,64 @@ export default class Api extends Cloudflare.Worker<Api>()(
       authorize: (credential, url, action) =>
         authorizeProjectCache(credential, url, action).pipe(
           Effect.provide(cacheAuthorizationLayer),
+          Effect.mapError((error) =>
+            error instanceof ApiError
+              ? error
+              : new ApiError({
+                  status: 500,
+                  code: "unavailable",
+                  message: "Cache authorization unavailable",
+                }),
+          ),
+        ),
+      emitArtifactOp: (scope, operation) =>
+        Effect.flatMap(ArtifactOpEmitter, (emitter) =>
+          emitter.emit(
+            {
+              orgId:
+                scope.credential?.credentialType === "legacy"
+                  ? scope.prefix
+                  : (scope.credential?.orgId ?? scope.prefix),
+              projectId:
+                scope.credential?.credentialType === "legacy"
+                  ? scope.prefix
+                  : (scope.credential?.projectId ?? scope.prefix),
+            },
+            operation,
+          ),
+        ).pipe(
+          Effect.provide(ArtifactOpEmitterDisabled),
+          Effect.catch(() => Effect.void),
+        ),
+      auditDenial: (error) =>
+        Effect.gen(function* () {
+          const audit = yield* AuditLog;
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* audit.commit(
+            {
+              scope: "instance",
+              actor: { type: "system", id: "cache-api", display: "Cache API" },
+              action: "cache.authentication",
+              target: { type: "cache", id: "cache-api" },
+              outcome: "deny",
+              reason: error.code,
+              ip: request.headers["cf-connecting-ip"] ?? "",
+              userAgent: request.headers["user-agent"] ?? "",
+              requestId: crypto.randomUUID(),
+              metadata: { method: request.method, status: error.status },
+            },
+            () => [],
+          );
+        }).pipe(
+          Effect.provide(auditLayer.pipe(Layer.provide(databaseLayer))),
+          Effect.mapError(
+            () =>
+              new ApiError({
+                status: 500,
+                code: "unavailable",
+                message: "Cache audit unavailable",
+              }),
+          ),
         ),
       bucket,
       token,

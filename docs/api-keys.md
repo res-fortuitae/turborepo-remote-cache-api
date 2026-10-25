@@ -2,8 +2,8 @@
 
 Static keys are a **less secure fallback** for CI systems that cannot use OIDC.
 Prefer short-lived cache JWTs obtained through trusted CI. This implements
-STV-443; the Bearer credential resolver and cache-route integration follow in
-STV-445, and the credentials dashboard follows in STV-470.
+STV-443; [cache credential routing](cache-credentials.md) implements STV-445.
+The credentials dashboard follows in STV-470.
 
 Keys belong to an organization, survive the creating user's departure, and grant
 access to exactly one project in that organization. Org owners/admins and custom
@@ -29,8 +29,8 @@ The plugin handles generation and hashing in D1. A separate audited companion ro
 holds project/organization epoch stamps and sampled usage. Creation/revocation
 records contain IDs, never key material. The application exposes `ApiKeyLookup`
 from auth; credentials adapts it to `ApiKeyVerifier` without importing Better Auth.
-Cache responses should use the exported `API_KEY_WARNING` when STV-445 integrates
-this verifier. The instance/org `apiKeys` policy is enforced both at issuance and
+Authorized API-key cache responses use the exported `API_KEY_WARNING`, including
+responses served from the edge cache. The instance/org `apiKeys` policy is enforced both at issuance and
 verification; org policy can only tighten the instance policy.
 
 Verification uses 60-second KV projections for key metadata and policy. Cache

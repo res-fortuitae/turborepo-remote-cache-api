@@ -13,6 +13,7 @@ export default defineDeployConfig({
   // Optional workersPlan: "free" | "paid" asserts billing when the deploy token cannot read it.
   // Optional feature flags emailSending, analytics, auditHistory, directUploads default to requested.
   // False always selects the fallback; plan eligibility alone never enables a pending integration.
+  // Add legacyToken: true only while migrating shared-token cache clients.
   features: { edgeCache: true },
   stages: { production: "production", staging: "staging" },
 });

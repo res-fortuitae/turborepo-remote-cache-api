@@ -96,3 +96,25 @@ export const AnalyticsEmitterLite = Layer.effect(
     } satisfies AnalyticsEmitterService;
   }),
 );
+
+/** Server-observed operations; deliberately separate from client-reported Turbo events. */
+export interface ArtifactOperation {
+  readonly method: string;
+  readonly hash?: string;
+  readonly status: number;
+}
+
+export class ArtifactOpEmitter extends Context.Service<
+  ArtifactOpEmitter,
+  {
+    readonly emit: (
+      scope: AnalyticsScope,
+      operation: ArtifactOperation,
+    ) => Effect.Effect<void, AnalyticsError>;
+  }
+>()("@repo/analytics/ArtifactOpEmitter") {}
+
+/** M7 supplies persistence without changing cache route behavior. */
+export const ArtifactOpEmitterDisabled = Layer.succeed(ArtifactOpEmitter, {
+  emit: () => Effect.void,
+});

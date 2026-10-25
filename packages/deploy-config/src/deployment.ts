@@ -35,6 +35,8 @@ export const DeployConfigSchema = Schema.Struct({
   }),
   features: Schema.Struct({
     edgeCache: Schema.Boolean,
+    /** Opt-in only: accepts TURBO_TOKEN with legacy team namespaces. */
+    legacyToken: Schema.optional(Schema.Boolean),
     emailSending: Schema.optional(Schema.Boolean),
     analytics: Schema.optional(Schema.Boolean),
     auditHistory: Schema.optional(Schema.Boolean),
@@ -62,6 +64,7 @@ export const defineDeployConfig = (input: DeployConfig): DeployConfig => {
 
   if (config.email !== undefined) {
     const senderDomain = config.email.from.split("@")[1] ?? "";
+
     if (
       !config.domain ||
       !(config.domain === senderDomain || config.domain.endsWith(`.${senderDomain}`))

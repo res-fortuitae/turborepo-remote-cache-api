@@ -6,6 +6,21 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Scoped cache credentials (STV-445)
+
+- Cache requests now resolve JWTs and organization-owned `tcache_` keys into a
+  project principal. Invalid credentials return 401; scope/policy/tenant denials
+  return 403. `TURBO_TEAM` must match the organization slug. Artifacts and edge
+  entries use `{orgId}/{projectId}/{hash}` for both scoped credential types.
+- Shared-token cache access defaults to disabled. To retain old clients and
+  `<team>/<hash>` objects during migration, explicitly set
+  `features.legacyToken: true` in root `deploy.config.ts` before an authorized
+  deployment. Disable it after migrating clients. Existing artifacts are not
+  moved. Doctor's instance bearer remains unchanged.
+- API-key requests carry a less-secure Warning header. See
+  [cache credentials](docs/cache-credentials.md) for services, tests and migration
+  details. No infrastructure deployment is performed by this code change.
+
 ### Plan capabilities (STV-500)
 
 - Existing deploy config is valid. Optional flags `features.emailSending`,

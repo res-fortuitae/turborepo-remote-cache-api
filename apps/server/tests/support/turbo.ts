@@ -11,10 +11,10 @@ const turbo = NodePath.resolve(import.meta.dir, "../../../../node_modules/.bin/t
  * build is a remote miss that uploads; after wiping local outputs and the
  * local cache, a read-only remote run must hit and restore the outputs.
  */
-export const turboRoundTrip = async (api: string, token: string) => {
+export const turboRoundTrip = async (api: string, token: string, selectedTeam?: string) => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cache-turbo-e2e-"));
-  const team = uniqueTeam("e2e");
-  const expected = `remote cache round trip ${team}\n`;
+  const team = selectedTeam ?? uniqueTeam("e2e");
+  const expected = `remote cache round trip ${team} ${uniqueTeam("run")}\n`;
   const env = { ...process.env, TURBO_API: api, TURBO_TOKEN: token, TURBO_TEAM: team };
 
   const run = async (command: string[]) => {
