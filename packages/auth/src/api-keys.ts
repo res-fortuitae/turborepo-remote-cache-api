@@ -11,7 +11,8 @@ import { hasOrganizationPermission } from "./organization-access.ts";
 import type { SecondaryStorageService } from "./secondary-storage.ts";
 import { z } from "zod";
 
-export const API_KEY_WARNING = '299 - "Static API key is less secure; prefer OIDC credentials"';
+import { API_KEY_WARNING } from "./api-key-warning.ts";
+export { API_KEY_WARNING } from "./api-key-warning.ts";
 
 /** Application supplies Coordinator operations without making auth depend on coordinator. */
 export class ApiKeyEpochs extends Context.Service<
