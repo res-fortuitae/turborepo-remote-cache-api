@@ -189,7 +189,7 @@ changing residency of existing data needs a separate migration.
 
 ## Edge caching
 
-Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + hash. Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
+Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + cache generation + hash. Project purges invalidate copies across locations within five seconds; see [purge semantics](docs/cache-credentials.md#purging-edge-copies). Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
 Set `features.edgeCache=false` to bypass the cache for downloads and uploads.
 
 When a jurisdiction is set, artifact edge caching is disabled regardless of the

@@ -115,6 +115,7 @@
       "name": "@repo/artifacts",
       "version": "0.0.0",
       "dependencies": {
+        "@repo/coordinator": "workspace:*",
         "effect": "^4.0.6",
       },
       "devDependencies": {

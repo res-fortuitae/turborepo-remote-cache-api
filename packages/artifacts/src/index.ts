@@ -23,3 +23,5 @@ export {
 } from "./edge-cache.ts";
 
 export type { ArtifactCache } from "./edge-cache.ts";
+
+export { ArtifactPurger, ArtifactPurgerLive } from "./purge.ts";

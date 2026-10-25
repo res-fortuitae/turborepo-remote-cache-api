@@ -44,8 +44,8 @@ describe("artifact cache residency", () => {
     expect(await Effect.runPromise(cache.match("team one", "abc"))).toBe(response);
     await Effect.runPromise(cache.put("team two", "abc", response));
     await Effect.runPromise(cache.remove("team one", "abc"));
-    expect(match).toHaveBeenCalledWith("https://artifact-cache.internal/team%20one/abc");
-    expect(put).toHaveBeenCalledWith("https://artifact-cache.internal/team%20two/abc", response);
-    expect(remove).toHaveBeenCalledWith("https://artifact-cache.internal/team%20one/abc");
+    expect(match).toHaveBeenCalledWith("https://artifact-cache.internal/team%20one/g0/abc");
+    expect(put).toHaveBeenCalledWith("https://artifact-cache.internal/team%20two/g0/abc", response);
+    expect(remove).toHaveBeenCalledWith("https://artifact-cache.internal/team%20one/g0/abc");
   });
 });

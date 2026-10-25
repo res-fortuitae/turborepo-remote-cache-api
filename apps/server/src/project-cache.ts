@@ -1,3 +1,4 @@
+import { CoordinatorClient } from "@repo/coordinator";
 import { Authorization, AuthorizationAudit, AuthorizationCeilings } from "@repo/authz";
 import { CredentialResolver } from "@repo/credentials";
 import { Database, InstanceSettingsRepo, schema } from "@repo/db";
@@ -111,6 +112,9 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
 
     return {
       prefix: `${principal.org}/${principal.project}`,
+      cacheGeneration: yield* CoordinatorClient.use((client) =>
+        client.cacheGeneration(principal.project),
+      ),
       credential,
       maxUploadBytes: Math.min(
         row.project.maxArtifactBytes ?? limits.maxArtifactBytes,

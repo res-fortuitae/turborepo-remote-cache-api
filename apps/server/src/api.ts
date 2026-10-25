@@ -62,6 +62,7 @@ interface ArtifactQueryMetadata {
 
 export interface ArtifactScope {
   readonly prefix: string;
+  readonly cacheGeneration?: number;
   readonly credential?: ResolvedCredential;
   readonly maxUploadBytes: number;
 }
@@ -209,8 +210,12 @@ export const artifactApi = <R>({
     });
   });
 
-  const download = Effect.fn("Api.download")(function* (team: string, hash: string) {
-    const cached = edgeCacheEnabled ? yield* cache.match(team, hash) : undefined;
+  const download = Effect.fn("Api.download")(function* (
+    team: string,
+    hash: string,
+    generation = 0,
+  ) {
+    const cached = edgeCacheEnabled ? yield* cache.match(team, hash, generation) : undefined;
 
     if (cached?.body) {
       return HttpServerResponse.raw(cached.body, {
@@ -251,7 +256,7 @@ export const artifactApi = <R>({
 
     // Serve one branch to the client and store the other at the edge in the background.
     const [client, copy] = object.readable.tee();
-    yield* waitUntil(cache.put(team, hash, new Response(copy, { headers })));
+    yield* waitUntil(cache.put(team, hash, new Response(copy, { headers }), generation));
 
     return HttpServerResponse.raw(client, options);
   });
@@ -260,6 +265,7 @@ export const artifactApi = <R>({
     team: string,
     hash: string,
     uploadLimit: number,
+    generation = 0,
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const h = request.headers;
@@ -305,7 +311,7 @@ export const artifactApi = <R>({
     );
 
     // Drop any stale copy cached in this datacenter.
-    if (edgeCacheEnabled) yield* cache.remove(team, hash);
+    if (edgeCacheEnabled) yield* cache.remove(team, hash, generation);
     const origin = yield* CanonicalOrigin;
 
     return yield* HttpServerResponse.json(
@@ -390,9 +396,10 @@ export const artifactApi = <R>({
 
         if (method === "HEAD") return yield* head(team, segment);
 
-        if (method === "GET") return yield* download(team, segment);
+        if (method === "GET") return yield* download(team, segment, scope.cacheGeneration);
 
-        if (method === "PUT") return yield* upload(team, segment, scope.maxUploadBytes);
+        if (method === "PUT")
+          return yield* upload(team, segment, scope.maxUploadBytes, scope.cacheGeneration);
       }
 
       return yield* new ApiError({

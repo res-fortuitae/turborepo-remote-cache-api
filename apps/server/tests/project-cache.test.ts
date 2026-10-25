@@ -18,10 +18,16 @@ import { DatabaseTest } from "@repo/db/testing";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { AuthorizationAuditLive, ProjectLimits } from "@repo/projects";
 import { eq } from "drizzle-orm";
-import { Clock, Effect, Layer, Redacted } from "effect";
+import { Clock, Context, Effect, Layer, Redacted, Stream } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { artifactApi } from "../src/api.ts";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  CoordinatorClient,
+  CoordinatorClientLive,
+  CoordinatorNamespaceTest,
+} from "@repo/coordinator";
+import { ApiError, artifactApi } from "../src/api.ts";
 import { authorizeProjectCache } from "../src/project-cache.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
 import { memoryBucket } from "./support/in-process.ts";
@@ -363,4 +369,84 @@ test("v2 credential matrix, warm edge-cache isolation, events and real Turbo for
       );
       expect((yield* request("tcache_reader", "/v8/artifacts/abc123")).status).toBe(403);
     }).pipe(Effect.provide(v2Layer), Effect.scoped),
+  ));
+
+test("purging one location makes another location miss or return 404 after the generation TTL", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const reader = yield* Layer.build(CoordinatorClientLive).pipe(
+        Effect.map(Context.get(CoordinatorClient)),
+      );
+      const writer = yield* Layer.build(CoordinatorClientLive).pipe(
+        Effect.map(Context.get(CoordinatorClient)),
+      );
+      const cache = yield* EdgeCache;
+      const bucket = memoryBucket();
+      yield* bucket.put("org/a/abc", Stream.make(new TextEncoder().encode("old")), {
+        contentLength: 3,
+        httpMetadata: { contentType: "application/octet-stream" },
+        customMetadata: {},
+      });
+
+      const api = artifactApi({
+        bucket,
+        token: Redacted.make("unused"),
+        edgeCacheEnabled: true,
+        cache,
+        waitUntil: (effect) => effect.pipe(Effect.asVoid),
+        authorize: () =>
+          reader.cacheGeneration("a").pipe(
+            Effect.map((cacheGeneration) => ({
+              prefix: "org/a",
+              maxUploadBytes: 100,
+              cacheGeneration,
+            })),
+            Effect.mapError(
+              () =>
+                new ApiError({
+                  status: 500,
+                  code: "unavailable",
+                  message: "Coordinator unavailable",
+                }),
+            ),
+          ),
+      });
+
+      const get = () =>
+        api.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request("https://cache.test/v8/artifacts/abc", {
+                headers: { authorization: "Bearer test" },
+              }),
+            ),
+          ),
+          Effect.provideService(CanonicalOrigin, "https://cache.test"),
+          Effect.map(HttpServerResponse.toWeb),
+        );
+
+      const first = yield* get();
+      expect(first.headers.get("x-edge-cache")).toBe("MISS");
+      expect(yield* Effect.promise(() => first.text())).toBe("old");
+      const warm = yield* get();
+      expect(warm.headers.get("x-edge-cache")).toBe("HIT");
+      yield* Effect.promise(() => warm.text());
+      // The purging isolate cannot delete the reader location's Cache API entries.
+      yield* bucket.delete(["org/a/abc"]);
+      yield* writer.invalidateCache("a");
+      yield* TestClock.adjust(5_000);
+      expect((yield* get()).status).toBe(404);
+      yield* bucket.put("org/a/abc", Stream.make(new TextEncoder().encode("new")), {
+        contentLength: 3,
+        httpMetadata: { contentType: "application/octet-stream" },
+        customMetadata: {},
+      });
+      const fresh = yield* get();
+      expect(fresh.headers.get("x-edge-cache")).toBe("MISS");
+      expect(yield* Effect.promise(() => fresh.text())).toBe("new");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(CoordinatorNamespaceTest, EdgeCacheTest, TestClock.layer())),
+    ),
   ));
