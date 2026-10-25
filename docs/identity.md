@@ -62,3 +62,14 @@ to `/organization/accept-signed-invitation`. The recipient must have a verified,
 matching email and a live session, and still satisfy instance signup rules.
 Acceptance and a unique consume record commit together in a D1 batch. Native
 unsigned acceptance and direct member addition are disabled.
+
+## Groups
+
+Better Auth teams are called **groups** in the product; they are optional sets
+of organization members and have no independent role. No default group is
+created, and the last group can be removed. `deploy.config.ts.groups` configures
+`maxGroups` (default 50) and `maxMembersPerGroup` (default 1,000).
+Native `/organization/create-team`, `update-team`, `remove-team`,
+`add-team-member`, `remove-team-member`, and list endpoints back the group UI.
+Group membership is constrained to organization membership. A group's ID is the
+`team` grant principal for M2 project RBAC, never another Turbo team slug.

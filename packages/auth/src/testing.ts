@@ -1,6 +1,6 @@
 import { AuditLogTest } from "@repo/audit/testing";
 import { DatabaseTest } from "@repo/db/testing";
-import { AuthConfig } from "@repo/deploy-config";
+import { AuthConfig, type AuthSettings } from "@repo/deploy-config";
 import { MailerNoop } from "@repo/mailer";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -21,3 +21,21 @@ export const AuthTest = AuthLive.pipe(
   Layer.provide(Layer.mergeAll(AuthConfigTest, MailerNoop, AuditLogTest)),
   Layer.provideMerge(DatabaseTest),
 );
+
+/** Configurable auth fixture over the same migrated database and test services. */
+export const authTestWithSettings = (settings: Partial<AuthSettings>) =>
+  AuthLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(AuthConfig, {
+          secret: Redacted.make("auth-test-secret-0123456789abcdef0123456789"),
+          baseURL: "http://localhost",
+          trustedOrigins: [],
+          ...settings,
+        }),
+        MailerNoop,
+        AuditLogTest,
+      ),
+    ),
+    Layer.provideMerge(DatabaseTest),
+  );

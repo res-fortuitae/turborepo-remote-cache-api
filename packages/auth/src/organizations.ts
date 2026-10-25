@@ -139,9 +139,72 @@ export const organizationPlugins = (
           (policy.orgCreation === "anyone" || live.role === "owner" || live.role === "admin")
         );
       },
+      teams: {
+        enabled: true,
+        defaultTeam: { enabled: false },
+        allowRemovingAllTeams: true,
+        maximumTeams: config.groups?.maxGroups ?? 50,
+        maximumMembersPerTeam: config.groups?.maxMembersPerGroup ?? 1000,
+      },
       creatorRole: "owner",
       requireEmailVerificationOnInvitation: true,
       organizationHooks: {
+        beforeCreateTeam: async ({ organization: org }) => {
+          await activeOrg(org.id);
+        },
+        beforeUpdateTeam: async ({ organization: org }) => {
+          await activeOrg(org.id);
+        },
+        beforeDeleteTeam: async ({ organization: org }) => {
+          await activeOrg(org.id);
+        },
+        beforeAddTeamMember: async ({ teamMember, organization: org }) => {
+          await activeOrg(org.id);
+          const [member] = await db
+            .select()
+            .from(schema.member)
+            .where(
+              and(
+                eq(schema.member.organizationId, org.id),
+                eq(schema.member.userId, teamMember.userId),
+              ),
+            );
+          if (!member)
+            throw new APIError("FORBIDDEN", {
+              message: "Groups contain organization members only",
+            });
+        },
+        afterCreateTeam: async ({ team, organization: org, user }) => {
+          if (user) await record(event(user, org.id, "org.group.created", team.id));
+        },
+        afterUpdateTeam: async ({ team, organization: org, user }) => {
+          if (team) await record(event(user, org.id, "org.group.updated", team.id));
+        },
+        afterDeleteTeam: async ({ team, organization: org, user }) => {
+          if (user) await record(event(user, org.id, "org.group.deleted", team.id));
+        },
+        afterAddTeamMember: async ({ teamMember, organization: org }) => {
+          await record({
+            ...event(
+              { id: "better-auth", name: "Better Auth" },
+              org.id,
+              "org.group.member.added",
+              teamMember.id,
+            ),
+            actor: { type: "system", id: "better-auth", display: "Better Auth" },
+          });
+        },
+        afterRemoveTeamMember: async ({ teamMember, organization: org }) => {
+          await record({
+            ...event(
+              { id: "better-auth", name: "Better Auth" },
+              org.id,
+              "org.group.member.removed",
+              teamMember.id,
+            ),
+            actor: { type: "system", id: "better-auth", display: "Better Auth" },
+          });
+        },
         beforeCreateOrganization: async ({ organization: org }) => {
           if (!org.slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(org.slug) || org.slug.length > 64)
             throw new APIError("BAD_REQUEST", { message: "Invalid TURBO_TEAM slug" });
@@ -164,13 +227,12 @@ export const organizationPlugins = (
             message: "Use elevated instance org lifecycle operations",
           });
         },
-        beforeRemoveMember: async ({ member, organization: org, user }) => {
+        beforeRemoveMember: async ({ member, organization: org }) => {
           if (member.role.split(",").includes("owner"))
             throw new APIError("FORBIDDEN", {
               message: "Transfer ownership before removing an owner",
             });
           await activeOrg(org.id);
-          await record(event(user, org.id, "org.member.remove.requested", member.id));
         },
         beforeUpdateMemberRole: async ({ member, organization: org }) => {
           if (member.role.split(",").includes("owner"))
@@ -412,11 +474,28 @@ export const organizationPlugins = (
               if (!live || live.user.banned || live.session.impersonatedBy)
                 throw new APIError("FORBIDDEN");
               const body = z
-                .object({ organizationId: z.string().optional() })
+                .object({ organizationId: z.string().optional(), teamId: z.string().optional() })
                 .passthrough()
                 .parse(ctx.body ?? ctx.query ?? {});
-              const orgId = body.organizationId ?? live.session.activeOrganizationId;
-              if (orgId) await activeOrg(orgId);
+              const [targetTeam] = body.teamId
+                ? await db.select().from(schema.team).where(eq(schema.team.id, body.teamId))
+                : [];
+              const orgId =
+                targetTeam?.organizationId ??
+                body.organizationId ??
+                live.session.activeOrganizationId;
+              if (orgId) {
+                await activeOrg(orgId);
+                if (ctx.request?.method === "POST")
+                  await record(
+                    event(
+                      live.user,
+                      orgId,
+                      `org${ctx.path.replaceAll("/organization", "").replaceAll("/", ".")}.requested`,
+                      body.teamId ?? orgId,
+                    ),
+                  );
+              }
             }),
           },
         ],
