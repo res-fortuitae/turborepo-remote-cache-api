@@ -1,3 +1,4 @@
+import { apiKey } from "@better-auth/api-key";
 import { passkey } from "@better-auth/passkey";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -22,6 +23,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    apiKey({ references: "organization" }),
     passkey(),
     organization({ dynamicAccessControl: { enabled: true }, teams: { enabled: true } }),
     admin(),

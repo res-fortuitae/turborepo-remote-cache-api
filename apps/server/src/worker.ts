@@ -23,7 +23,14 @@ import {
   MailerDisabled,
   MailerConsole,
 } from "@repo/mailer";
-import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
+import {
+  apiKeyDigestJob,
+  ApiKeyEpochs,
+  ApiKeyBackground,
+  AuthKvNamespace,
+  AuthLive,
+  SecondaryStorageLive,
+} from "@repo/auth";
 import {
   CoordinatorClient,
   CoordinatorClientLive,
@@ -390,18 +397,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(databaseLayer),
     );
 
-    const authLayer = AuthLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          auditLayer,
-          SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
-          authConfig,
-          selectedLayers,
-          mailerLayer,
-          notificationsLayer,
-        ),
+    yield* Cloudflare.Workers.cron("43 4 * * *", () =>
+      apiKeyDigestJob.pipe(
+        Effect.provide(Layer.mergeAll(databaseLayer, authConfig, notificationsLayer)),
+        Effect.provide(originLayer),
+        Effect.tapCause(Effect.logError),
       ),
-      Layer.provide(databaseLayer),
     );
 
     const coordinatorLayer = CoordinatorClientLive.pipe(
@@ -434,6 +435,31 @@ export default class Api extends Cloudflare.Worker<Api>()(
       limitsLayer,
       Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
     ).pipe(Layer.provideMerge(databaseLayer));
+
+    const authLayer = AuthLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            ApiKeyEpochs,
+            Effect.map(CoordinatorClient, (client) => ({
+              read: (scope) =>
+                makeCoordinatorNamespace(coordinatorNamespace)
+                  .getByName(`epoch:${scope}`)
+                  .revocationEpoch(),
+              bump: client.revokeAll,
+            })),
+          ).pipe(Layer.provide(coordinatorLayer)),
+          Layer.succeed(ApiKeyBackground, { run: (task) => execution.raw.waitUntil(task) }),
+          auditLayer,
+          SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
+          authConfig,
+          selectedLayers,
+          mailerLayer,
+          notificationsLayer,
+        ),
+      ),
+      Layer.provide(databaseLayer),
+    );
 
     const retentionRulesLayer =
       Option.isSome(lifecycleToken) &&

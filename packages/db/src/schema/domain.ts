@@ -222,3 +222,13 @@ export const projectRetention = sqliteTable("project_retention", {
   cursor: text(),
   scannedAt: integer("scanned_at").notNull().default(0),
 });
+
+/** API-key epoch stamps and usage are separate from the plugin's mutable counters. */
+export const cacheApiKey = sqliteTable("cache_api_key", {
+  id: text().primaryKey(),
+  orgId: text("org_id").notNull(),
+  projectId: text("project_id").notNull(),
+  orgEpoch: integer("org_epoch").notNull(),
+  projectEpoch: integer("project_epoch").notNull(),
+  lastUsedAt: integer("last_used_at"),
+});

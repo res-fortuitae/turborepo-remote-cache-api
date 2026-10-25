@@ -38,3 +38,5 @@ export {
 export type { KeyStoreService, KeyStoreTestControlService } from "./key-store.ts";
 
 export { CacheScope, Principal } from "./principal.ts";
+
+export { ApiKeyVerifier, ApiKeyVerifierLive, ApiKeyVerifierTest } from "./api-key.ts";

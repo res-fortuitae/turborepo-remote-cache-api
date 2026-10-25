@@ -1,3 +1,4 @@
+import { apiKey } from "@better-auth/api-key";
 import { schema, type DatabaseDrizzle } from "@repo/db";
 import type { AuthSettings } from "@repo/deploy-config";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
@@ -142,6 +143,13 @@ export const makeBetterAuth = ({
       },
     },
     plugins: [
+      apiKey({
+        references: "organization",
+        defaultPrefix: "tcache_",
+        rateLimit: { enabled: false },
+        keyExpiration: { defaultExpiresIn: 30 * 86400, minExpiresIn: 1 / 86400, maxExpiresIn: 90 },
+        enableSessionForAPIKeys: false,
+      }),
       instanceAdmin(),
       ...passkeyPlugins(db, config, audit),
       ...organizationPlugins(db, config, audit, sendInvitation),
@@ -174,6 +182,13 @@ export const makeBetterAuth = ({
     verification: { storeInDatabase: true },
     // KV counters aren't atomic. STV-446 may swap in the Rate Limiting binding.
     rateLimit: { enabled: true, storage: "database" },
+    disabledPaths: [
+      "/api-key/create",
+      "/api-key/update",
+      "/api-key/delete",
+      "/api-key/list",
+      "/api-key/get",
+    ],
     telemetry: { enabled: false },
   });
 };
