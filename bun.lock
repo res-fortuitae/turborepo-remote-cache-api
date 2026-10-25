@@ -49,12 +49,14 @@
         "@repo/api-spec": "workspace:*",
         "@repo/audit": "workspace:*",
         "@repo/auth": "workspace:*",
+        "@repo/authz": "workspace:*",
         "@repo/coordinator": "workspace:*",
         "@repo/db": "workspace:*",
         "@repo/deploy-config": "workspace:*",
         "@repo/infra": "workspace:*",
         "@repo/mailer": "workspace:*",
         "@repo/oidc": "workspace:*",
+        "@repo/projects": "workspace:*",
         "@repo/shared": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "effect": "^4.0.6",
@@ -155,6 +157,13 @@
     "packages/authz": {
       "name": "@repo/authz",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "@repo/auth": "workspace:*",
+        "@repo/db": "workspace:*",
+        "drizzle-orm": "1.0.0-rc.5",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -299,6 +308,25 @@
         "@repo/deploy-config": "workspace:*",
         "effect": "^4.0.6",
         "jose": "^6.2.13",
+      },
+      "devDependencies": {
+        "@repo/config": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^7",
+      },
+    },
+    "packages/projects": {
+      "name": "@repo/projects",
+      "version": "0.0.0",
+      "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "@repo/audit": "workspace:*",
+        "@repo/auth": "workspace:*",
+        "@repo/authz": "workspace:*",
+        "@repo/db": "workspace:*",
+        "@repo/deploy-config": "workspace:*",
+        "drizzle-orm": "1.0.0-rc.5",
+        "effect": "^4.0.6",
       },
       "devDependencies": {
         "@repo/config": "workspace:*",
@@ -948,6 +976,8 @@
     "@repo/mailer": ["@repo/mailer@workspace:packages/mailer"],
 
     "@repo/oidc": ["@repo/oidc@workspace:packages/oidc"],
+
+    "@repo/projects": ["@repo/projects@workspace:packages/projects"],
 
     "@repo/ratelimit": ["@repo/ratelimit@workspace:packages/ratelimit"],
 

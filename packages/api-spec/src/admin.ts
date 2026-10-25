@@ -12,20 +12,28 @@ import {
 import { ApiErrors } from "./http-errors.ts";
 import { ApiAuthorization } from "./authorization.ts";
 
+export const ProjectSlug = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  Schema.isMaxLength(64),
+);
+const ProjectName = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(100));
+const ProjectDescription = Schema.String.check(Schema.isMaxLength(2000));
+const ProjectLimit = PositiveInteger.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER));
+
 export const CreateProjectRequest = Schema.Struct({
-  slug: Schema.NonEmptyString,
-  name: Schema.NonEmptyString,
-  description: Schema.optional(Schema.String),
-  retentionDays: Schema.optional(PositiveInteger),
-  maxArtifactBytes: Schema.optional(PositiveInteger),
+  slug: ProjectSlug,
+  name: ProjectName,
+  description: Schema.optional(ProjectDescription),
+  retentionDays: Schema.optional(ProjectLimit),
+  maxArtifactBytes: Schema.optional(ProjectLimit),
 });
 
 export const UpdateProjectRequest = Schema.Struct({
-  slug: Schema.optional(Schema.NonEmptyString),
-  name: Schema.optional(Schema.NonEmptyString),
-  description: Schema.optional(Schema.String),
-  retentionDays: Schema.optional(PositiveInteger),
-  maxArtifactBytes: Schema.optional(PositiveInteger),
+  slug: Schema.optional(ProjectSlug),
+  name: Schema.optional(ProjectName),
+  description: Schema.optional(Schema.NullOr(ProjectDescription)),
+  retentionDays: Schema.optional(ProjectLimit),
+  maxArtifactBytes: Schema.optional(ProjectLimit),
   archived: Schema.optional(Schema.Boolean),
 });
 

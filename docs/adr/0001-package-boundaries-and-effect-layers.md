@@ -60,6 +60,7 @@ packages may use external libraries explicitly declared in their manifests.
 | `@repo/audit`                  | AuditLog, outbox, reconciler, hash chain; AuditSink tag                          | api-spec, db                                                                | STV-457–459, STV-482                   |
 | `@repo/auth`                   | Auth, identity and role definitions                                              | api-spec, deploy-config, db, mailer, audit                                  | STV-432 and sub-issues                 |
 | `@repo/authz`                  | Authorization: single policy decision point                                      | api-spec, db, auth                                                          | STV-439–441                            |
+| `@repo/projects`               | Project management, effective limits and audited mutations                       | api-spec, db, auth, authz, audit, deploy-config                             | STV-438                                |
 | `@repo/credentials`            | CacheTokenSigner/Verifier, CredentialResolver, DPoP, KeyStore                    | api-spec, deploy-config, db, auth, coordinator                              | STV-442, STV-443, STV-445, STV-486     |
 | `@repo/oidc`                   | OidcVerifier, issuer registry, TrustPolicyMatcher, JwksCache                     | api-spec, deploy-config, db                                                 | STV-447–449, STV-451, STV-487, STV-491 |
 | `@repo/artifacts`              | ArtifactStore, EdgeCache, quotas, generation; R2Bucket and ExecutionContext tags | api-spec, deploy-config, db, authz, credentials, coordinator                | STV-476, STV-492, STV-504, STV-505     |
@@ -116,6 +117,16 @@ Rate Limiting, and audit/analytics own their sink/stream tags. A future KV adapt
 KvNamespace where it is first needed. The app wraps Alchemy-provided bindings in these
 tags and supplies them to Live layers; domain code never looks bindings up globally.
 ExecutionContext is similarly provided as a narrow service for background tasks.
+
+Project management has its own domain package because it combines authorization,
+policy ceilings and transactional audit. Putting these use cases in persistence
+would introduce an audit/db cycle; putting them in authz would couple permission
+decisions to project mutations. `ProjectRepo` stays in db, `Authorization` stays
+in authz, and the server owns HTTP decoding and layer composition. Projects never
+imports credentials or artifacts; lifecycle integration will use explicit ports
+when those services are implemented. The initial authorization implementation
+covers session/org project management; grants and credential decisions remain
+STV-439/440.
 
 Every implemented domain must run with `bun test` using Test layers alone, without
 Wrangler, Cloudflare credentials, a Worker runtime, or network access. SDK adapters

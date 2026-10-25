@@ -1,0 +1,168 @@
+/* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- HTTP integration tests at the Bun boundary. */
+import { expect, test } from "bun:test";
+import { Auth } from "@repo/auth";
+import { AuthTest } from "@repo/auth/testing";
+import { Database, schema } from "@repo/db";
+import { CanonicalOrigin } from "@repo/deploy-config";
+import { Project, ProjectList } from "@repo/api-spec";
+import { Projects } from "@repo/projects";
+import { ProjectsTest } from "@repo/projects/testing";
+import { Effect, Layer, Schema } from "effect";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { isProjectsPath, projectsRoute } from "../src/projects-route.ts";
+
+const decodeProject = Schema.decodeUnknownSync(Project);
+const decodePage = Schema.decodeUnknownSync(ProjectList);
+
+const cookie = async () => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode("auth-test-secret-0123456789abcdef0123456789"),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("token"));
+
+  return `better-auth.session_token=${encodeURIComponent(`token.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`)}`;
+};
+
+type Serve = (
+  path: string,
+  options?: {
+    method?: string;
+    body?: object;
+    rawBody?: string;
+    anonymous?: boolean;
+    origin?: string;
+  },
+) => Effect.Effect<Response, unknown>;
+
+const scenario = (task: (serve: Serve) => Effect.Effect<void, unknown>) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const auth = yield* Auth;
+      const projects = yield* Projects;
+      const now = new Date("2026-01-01T00:00:00Z");
+      yield* db.batch((db) => [
+        db.insert(schema.user).values({
+          id: "u",
+          name: "User",
+          email: "u@example.com",
+          role: "member",
+          createdAt: now,
+          updatedAt: now,
+        }),
+        db.insert(schema.session).values({
+          id: "s",
+          userId: "u",
+          token: "token",
+          expiresAt: new Date("2099-01-01T00:00:00Z"),
+          createdAt: now,
+          updatedAt: now,
+        }),
+        db
+          .insert(schema.organization)
+          .values({ id: "org", slug: "org", name: "Org", createdAt: now }),
+        db
+          .insert(schema.member)
+          .values({ id: "m", userId: "u", organizationId: "org", role: "owner", createdAt: now }),
+      ]);
+      const signed = yield* Effect.promise(cookie);
+
+      const handler = projectsRoute(
+        Layer.mergeAll(Layer.succeed(Auth, auth), Layer.succeed(Projects, projects)),
+      );
+
+      const serve: Serve = (path, options = {}) =>
+        handler.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request(`http://localhost${path}`, {
+                method: options.method ?? "GET",
+                headers: {
+                  cookie: options.anonymous ? "" : signed,
+                  origin: options.origin ?? "http://localhost",
+                  "content-type": "application/json",
+                },
+                body: options.rawBody ?? (options.body ? JSON.stringify(options.body) : undefined),
+              }),
+            ),
+          ),
+          Effect.provideService(CanonicalOrigin, "http://localhost"),
+          Effect.map(HttpServerResponse.toWeb),
+        );
+
+      yield* task(serve);
+    }).pipe(Effect.provide(Layer.mergeAll(AuthTest, ProjectsTest))),
+  );
+
+test("project routes match the shared contract and serialize project lifecycle responses", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      expect(isProjectsPath("/orgs/org/projects")).toBe(true);
+      expect(isProjectsPath("/projects/p")).toBe(true);
+      expect(isProjectsPath("/projects/p/grants")).toBe(false);
+
+      const createdResponse = yield* serve("/orgs/org/projects", {
+        method: "POST",
+        body: { slug: "cache", name: "Cache" },
+      });
+
+      expect(createdResponse.status).toBe(201);
+      expect(createdResponse.headers.get("cache-control")).toBe("no-store");
+      const created = decodeProject(yield* Effect.promise(() => createdResponse.json()));
+      const pageResponse = yield* serve("/orgs/org/projects?limit=1");
+      expect(decodePage(yield* Effect.promise(() => pageResponse.json())).items[0]?.id).toBe(
+        created.id,
+      );
+
+      const archived = yield* serve(`/projects/${created.id}`, {
+        method: "PATCH",
+        body: { archived: true },
+      });
+
+      expect(archived.status).toBe(200);
+      expect(decodeProject(yield* Effect.promise(() => archived.json())).archivedAt).not.toBeNull();
+      expect((yield* serve(`/projects/${created.id}`, { method: "DELETE" })).status).toBe(503);
+      expect((yield* serve(`/projects/${created.id}`)).status).toBe(200);
+    }),
+  ));
+
+test("HTTP boundary rejects missing sessions, CSRF, malformed JSON, invalid limits and oversized bodies", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      expect((yield* serve("/orgs/org/projects", { anonymous: true })).status).toBe(401);
+      expect(
+        (yield* serve("/orgs/org/projects", {
+          method: "POST",
+          origin: "https://attacker.example",
+          body: { slug: "cache", name: "Cache" },
+        })).status,
+      ).toBe(403);
+      expect((yield* serve("/orgs/org/projects", { method: "POST", rawBody: "{" })).status).toBe(
+        400,
+      );
+      expect(
+        (yield* serve("/orgs/org/projects", {
+          method: "POST",
+          body: { slug: "../escape", name: "Cache" },
+        })).status,
+      ).toBe(400);
+      expect((yield* serve("/orgs/org/projects?limit=101")).status).toBe(400);
+      expect((yield* serve("/orgs/org/projects?limit=0")).status).toBe(400);
+      expect(
+        (yield* serve("/orgs/org/projects", {
+          method: "POST",
+          body: { slug: "cache", name: "Cache", padding: "x".repeat(20_000) },
+        })).status,
+      ).toBe(400);
+      expect((yield* serve("/orgs/org/projects", { method: "PUT", body: {} })).status).toBe(405);
+      const page = yield* serve("/orgs/org/projects");
+      expect(decodePage(yield* Effect.promise(() => page.json())).items).toEqual([]);
+    }),
+  ));
