@@ -11,7 +11,12 @@ const turbo = NodePath.resolve(import.meta.dir, "../../../../node_modules/.bin/t
  * build is a remote miss that uploads; after wiping local outputs and the
  * local cache, a read-only remote run must hit and restore the outputs.
  */
-export const turboRoundTrip = async (api: string, token: string, selectedTeam?: string) => {
+export const turboRoundTrip = async (
+  api: string,
+  token: string,
+  selectedTeam?: string,
+  artifactBytes = 0,
+) => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cache-turbo-e2e-"));
   const team = selectedTeam ?? uniqueTeam("e2e");
   const expected = `remote cache round trip ${team} ${uniqueTeam("run")}\n`;
@@ -48,20 +53,42 @@ export const turboRoundTrip = async (api: string, token: string, selectedTeam?: 
     );
     await Bun.write(
       NodePath.join(directory, "build.ts"),
-      `await Bun.write("dist/artifact.txt", ${JSON.stringify(expected)});\n`,
+      `await Bun.write("dist/artifact.txt", ${JSON.stringify(expected)});\n` +
+        (artifactBytes
+          ? `
+import { openSync, writeSync, closeSync } from "node:fs";
+import { randomFillSync } from "node:crypto";
+const fd = openSync("dist/large.bin", "w");
+const chunk = new Uint8Array(1024 * 1024);
+for (let left = ${artifactBytes}; left > 0; left -= chunk.length) {
+  randomFillSync(chunk);
+  writeSync(fd, chunk.subarray(0, Math.min(left, chunk.length)));
+}
+closeSync(fd);
+`
+          : ""),
     );
     await run([process.execPath, "install"]);
 
+    const hashLarge = async () => {
+      const hasher = new Bun.CryptoHasher("sha256");
+      for await (const chunk of Bun.file(NodePath.join(directory, "dist/large.bin")).stream())
+        hasher.update(chunk);
+      return hasher.digest("hex");
+    };
     const output = NodePath.join(directory, "dist/artifact.txt");
 
     expect(await run([turbo, "run", "build", "--cache=remote:rw"])).toMatch(/cache miss/);
     expect(await Bun.file(output).text()).toBe(expected);
+
+    const binaryHash = artifactBytes ? await hashLarge() : undefined;
 
     await NodeFSP.rm(NodePath.join(directory, "dist"), { recursive: true });
     await NodeFSP.rm(NodePath.join(directory, ".turbo"), { recursive: true, force: true });
 
     expect(await run([turbo, "run", "build", "--cache=remote:r"])).toMatch(/cache hit/);
     expect(await Bun.file(output).text()).toBe(expected);
+    if (binaryHash) expect(await hashLarge()).toBe(binaryHash);
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }

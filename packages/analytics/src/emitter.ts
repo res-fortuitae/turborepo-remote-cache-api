@@ -120,7 +120,7 @@ export const ArtifactOpEmitterDisabled = Layer.succeed(ArtifactOpEmitter, {
   emit: () => Effect.void,
 });
 
-/** Persist successful server-observed uploads; M7 can export this same provenance. */
+/** Persist uploads and direct-size rejections; M7 can export the same provenance. */
 export const ArtifactOpEmitterD1Uploads = Layer.effect(
   ArtifactOpEmitter,
   Effect.gen(function* () {
@@ -128,7 +128,7 @@ export const ArtifactOpEmitterD1Uploads = Layer.effect(
     return {
       emit: (scope, operation) =>
         operation.method === "PUT" &&
-        operation.status === 202 &&
+        [202, 413].includes(operation.status) &&
         operation.hash &&
         operation.provenance
           ? database
@@ -137,6 +137,7 @@ export const ArtifactOpEmitterD1Uploads = Layer.effect(
                   id: crypto.randomUUID(),
                   ...scope,
                   hash: operation.hash!,
+                  status: operation.status,
                   createdAt: Date.now(),
                   provenance: operation.provenance!,
                 }),

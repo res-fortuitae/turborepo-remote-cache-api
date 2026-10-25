@@ -1,3 +1,4 @@
+import { MAX_EDGE_ARTIFACT_BYTES } from "@repo/api-spec";
 import { Context, Effect, Layer } from "effect";
 
 export interface ArtifactCache {
@@ -54,9 +55,13 @@ export const EdgeCacheLive = Layer.effect(
       match: (prefix, hash, generation) =>
         attempt((cache) => cache.match(cacheKey(prefix, hash, generation))),
       put: (prefix, hash, response, generation) =>
-        attempt((cache) => cache.put(cacheKey(prefix, hash, generation), response)).pipe(
-          Effect.asVoid,
-        ),
+        Number(response.headers.get("content-length")) > MAX_EDGE_ARTIFACT_BYTES
+          ? Effect.tryPromise(async () => {
+              await response.body?.cancel();
+            }).pipe(Effect.orElseSucceed(() => undefined))
+          : attempt((cache) => cache.put(cacheKey(prefix, hash, generation), response)).pipe(
+              Effect.asVoid,
+            ),
       remove: (prefix, hash, generation) =>
         attempt((cache) => cache.delete(cacheKey(prefix, hash, generation))).pipe(Effect.asVoid),
     } satisfies typeof EdgeCache.Service;

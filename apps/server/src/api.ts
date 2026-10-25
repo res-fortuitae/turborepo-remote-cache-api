@@ -14,6 +14,7 @@ import type { ArtifactOperation } from "@repo/analytics";
 import type { ResolvedCredential } from "@repo/credentials";
 import { API_KEY_WARNING } from "@repo/auth";
 import { ArtifactQueryRequest, CacheEvents, type CacheEvent } from "@repo/api-spec";
+import { MAX_EDGE_ARTIFACT_BYTES } from "@repo/api-spec";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -41,6 +42,9 @@ export class ApiError extends Data.TaggedError("ApiError")<{
 }> {}
 
 const badRequest = (message: string) => new ApiError({ status: 400, code: "bad_request", message });
+
+const isMultipartPath = (path: string) =>
+  path === "/v8/x/uploads" || path.startsWith("/v8/x/uploads/");
 
 const HASH = /^[a-fA-F0-9]+$/;
 const ROUTE = /^\/v8\/artifacts(?:\/([^/]+))?\/?$/;
@@ -72,6 +76,14 @@ export interface ArtifactScope {
 }
 
 export interface ApiDependencies<R> {
+  readonly multipart?: (
+    scope: ArtifactScope,
+    recheck: Effect.Effect<ArtifactScope, ApiError, R | HttpServerRequest.HttpServerRequest>,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    ApiError,
+    R | HttpServerRequest.HttpServerRequest
+  >;
   readonly guard?: (scope: ArtifactScope) => Effect.Effect<void, ApiError, R>;
   readonly guardAuthFailure?: Effect.Effect<
     void,
@@ -144,6 +156,7 @@ const artifactHeaders = (size: number, meta: ArtifactMetadata) => {
 
 export const artifactApi = <R>({
   bucket,
+  multipart,
   token,
   edgeCacheEnabled,
   cache,
@@ -193,7 +206,11 @@ export const artifactApi = <R>({
     const url = new URL(request.url, "http://localhost");
 
     if (authorize) {
-      return yield* authorize(value, url, request.method === "PUT" ? "cache:write" : "cache:read");
+      return yield* authorize(
+        value,
+        url,
+        request.method === "PUT" || isMultipartPath(url.pathname) ? "cache:write" : "cache:read",
+      );
     }
 
     if (!legacyTokenEnabled || !safeEqual(value, Redacted.value(token))) {
@@ -262,7 +279,7 @@ export const artifactApi = <R>({
       headers: { ...headers, "x-edge-cache": "MISS" },
     };
 
-    if (!object.readable || !edgeCacheEnabled) {
+    if (!object.readable || !edgeCacheEnabled || object.size > MAX_EDGE_ARTIFACT_BYTES) {
       return HttpServerResponse.stream(object.body, options);
     }
 
@@ -292,7 +309,7 @@ export const artifactApi = <R>({
       return yield* new ApiError({
         status: 413,
         code: "payload_too_large",
-        message: `Upload exceeds this instance's ${uploadLimit} byte request limit. Multipart upload support is pending STV-492.`,
+        message: `Artifact exceeds direct upload limit (${uploadLimit} bytes); use tcache exec`,
       });
 
     const duration = h["x-artifact-duration"];
@@ -396,7 +413,8 @@ export const artifactApi = <R>({
     const url = new URL(request.url, "http://localhost");
     const match = ROUTE.exec(url.pathname);
 
-    if (match === null) {
+    const multipartRequest = isMultipartPath(url.pathname);
+    if (match === null && !multipartRequest) {
       return yield* new ApiError({
         status: 404,
         code: "not_found",
@@ -407,11 +425,17 @@ export const artifactApi = <R>({
     const scope = yield* authenticate;
     const team = scope.prefix;
     const provenance = uploadProvenance(scope.credential);
-    const segment = match[1];
+    const segment = match?.[1];
     const method = request.method;
 
     const response = yield* Effect.gen(function* () {
       yield* guard(scope);
+      if (multipartRequest)
+        return multipart
+          ? yield* multipart(scope, authenticate)
+          : yield* Effect.fail(
+              new ApiError({ status: 404, code: "not_found", message: "Multipart is unavailable" }),
+            );
 
       if (segment === undefined) {
         if (method === "POST") return yield* query(team, scope.maxQueryHashes ?? 100);
@@ -432,7 +456,7 @@ export const artifactApi = <R>({
           return yield* upload(
             team,
             segment,
-            scope.maxUploadBytes,
+            Math.min(scope.maxUploadBytes, maxUploadBytes),
             scope.cacheGeneration,
             provenance,
           );
@@ -460,7 +484,7 @@ export const artifactApi = <R>({
       method,
       status: response.status,
       ...(segment && HASH.test(segment) ? { hash: segment } : {}),
-      ...(method === "PUT" && response.status === 202 ? { provenance } : {}),
+      ...(method === "PUT" && [202, 413].includes(response.status) ? { provenance } : {}),
     };
 
     yield* waitUntil(emitArtifactOp(scope, operation));

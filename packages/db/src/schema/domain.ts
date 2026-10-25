@@ -244,6 +244,7 @@ export const artifactPurgeJob = sqliteTable("artifact_purge_job", {
 
 /** Upload provenance stays queryable before the full M7 analytics sink is enabled. */
 export const artifactOperation = sqliteTable("artifact_operation", {
+  status: integer().notNull().default(202),
   id: text().primaryKey(),
   orgId: text("org_id").notNull(),
   projectId: text("project_id").notNull(),

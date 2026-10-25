@@ -193,7 +193,7 @@ changing residency of existing data needs a separate migration.
 
 ## Edge caching
 
-Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + cache generation + hash. Project purges invalidate copies across locations within five seconds; see [purge semantics](docs/cache-credentials.md#purging-edge-copies). Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
+Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + cache generation + hash. Artifacts over 512 MB bypass edge caching. Project purges invalidate copies across locations within five seconds; see [purge semantics](docs/cache-credentials.md#purging-edge-copies). Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
 Set `features.edgeCache=false` to bypass the cache for downloads and uploads.
 
 When a jurisdiction is set, artifact edge caching is disabled regardless of the
@@ -280,7 +280,8 @@ only sent for a detected/asserted Workers Paid account.
   100,000,000-byte request ceiling. A Business/Enterprise serving zone permits
   up to 200,000,000 bytes in this version; Cloudflare can impose a lower zone
   upload setting before the Worker runs. `directUploads: false` restores the
-  conservative ceiling. Multipart proxy support remains pending STV-492.
+  conservative ceiling. The [multipart API and shared proxy transport](docs/multipart-uploads.md) support
+  larger artifacts; the `tcache exec` command follows in STV-485.
 
 Plan prerequisites follow Cloudflare's [Email Service pricing](https://developers.cloudflare.com/email-service/platform/pricing/)
 and [Workers request limits](https://developers.cloudflare.com/workers/platform/limits/).
