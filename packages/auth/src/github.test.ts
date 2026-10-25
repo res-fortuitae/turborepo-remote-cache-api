@@ -1,3 +1,4 @@
+import { RateLimiterTest } from "@repo/ratelimit";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun drives the public Effect service at the test boundary. */
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
 import { AuditLogTest } from "@repo/audit/testing";
@@ -80,6 +81,7 @@ afterAll(async () => {
 const GithubAuthTest = AuthLive.pipe(
   Layer.provide(
     Layer.mergeAll(
+      RateLimiterTest,
       Layer.succeed(AuthConfig, {
         secret: Redacted.make("emulate-auth-secret-0123456789abcdef0123456789"),
         baseURL: ORIGIN,

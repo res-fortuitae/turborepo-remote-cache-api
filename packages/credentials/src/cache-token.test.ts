@@ -283,3 +283,22 @@ describe("revocation epochs", () => {
     );
   });
 });
+
+test("upload identity is signed, verified and bounded rather than read from artifact headers", () =>
+  run(
+    Effect.gen(function* () {
+      const uploadIdentity = {
+        provider: "github",
+        repositoryId: "42",
+        ref: "refs/heads/main",
+        jobWorkflowRef: "org/repo/.github/workflows/build.yml@refs/heads/main",
+        commitSha: "abcdef",
+        runId: "123",
+      };
+      const issued = yield* issue({ uploadIdentity });
+      expect((yield* verify(issued.token)).uploadIdentity).toEqual(uploadIdentity);
+      expect(yield* failure(issue({ uploadIdentity: { ref: "x".repeat(129) } }))).toBeInstanceOf(
+        CacheTokenRequestInvalid,
+      );
+    }),
+  ));
