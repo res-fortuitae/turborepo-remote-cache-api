@@ -50,7 +50,7 @@ test("Workers Paid does not imply a paid zone or an installed integration", () =
   expect(report.auditHistory.enabled).toBe(true);
   expect(report.auditRetentionDays).toBe(90);
   expect(report.directUploads.enabled).toBe(false);
-  expect(report.emailSending.reason).toContain("STV-495");
+  expect(report.emailSending.reason).toContain("No email sender configured");
   expect(report.analytics.reason).toContain("STV-462");
 });
 
@@ -118,3 +118,18 @@ local.test.provider("local detection never requests an account or cloud credenti
     expect(report.directUploads.enabled).toBe(false);
   }),
 );
+
+test("email sending requires both paid entitlement and explicit sender configuration", () => {
+  expect(
+    resolveCapabilities(
+      { ...input, emailConfigured: true },
+      { workersPlan: "paid", zonePlan: "free" },
+    ).emailSending.enabled,
+  ).toBe(true);
+  expect(
+    resolveCapabilities(
+      { ...input, emailConfigured: true },
+      { workersPlan: "free", zonePlan: "business" },
+    ).emailSending.enabled,
+  ).toBe(false);
+});

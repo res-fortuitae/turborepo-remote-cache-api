@@ -172,3 +172,12 @@ export const orgLifecycle = sqliteTable("org_lifecycle", {
   orgId: text("org_id").primaryKey(),
   archivedAt: integer("archived_at"),
 });
+
+/** Durable fallback for transactional alerts when mail delivery is unavailable. */
+export const notification = sqliteTable("notification", {
+  id: text().primaryKey(),
+  userId: text("user_id").notNull(),
+  kind: text().notNull(),
+  detail: text().notNull(),
+  createdAt: integer("created_at").notNull(),
+});

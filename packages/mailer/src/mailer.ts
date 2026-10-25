@@ -36,3 +36,39 @@ export const MailerDisabled: Layer.Layer<Mailer> = Layer.succeed(Mailer, {
       }),
     ),
 });
+
+/** The composition root adapts the platform binding to this Effect-only port. */
+export class EmailSend extends Context.Service<
+  EmailSend,
+  {
+    readonly from: string;
+    readonly send: (
+      message: MailMessage & { readonly from: string },
+    ) => Effect.Effect<unknown, unknown>;
+  }
+>()("@repo/mailer/EmailSend") {}
+
+export const MailerLive: Layer.Layer<Mailer, never, EmailSend> = Layer.effect(
+  Mailer,
+  Effect.gen(function* () {
+    const binding = yield* EmailSend;
+    return {
+      send: (message: MailMessage) =>
+        binding.send({ ...message, from: binding.from }).pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) => new MailerError({ cause })),
+          Effect.tap(() =>
+            Effect.logInfo("Transactional email accepted", { subject: message.subject }),
+          ),
+          Effect.tapError(() =>
+            Effect.logWarning("Transactional email failed", { subject: message.subject }),
+          ),
+        ),
+    };
+  }),
+);
+
+/** Local development only. Delivery links are deliberately visible to the developer. */
+export const MailerConsole: Layer.Layer<Mailer> = Layer.succeed(Mailer, {
+  send: (message) => Effect.logInfo("Local transactional email", message),
+});

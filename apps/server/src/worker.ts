@@ -14,9 +14,23 @@ import {
   makeAuditSink,
   makeCheckpointStore,
 } from "@repo/audit";
+import {
+  AlertsLive,
+  NotificationSink,
+  MailerError,
+  EmailSend,
+  MailerLive,
+  MailerDisabled,
+} from "@repo/mailer";
 import { AuthKvNamespace, AuthLive, SecondaryStorageLive } from "@repo/auth";
 import { Coordinator, CoordinatorLive } from "@repo/coordinator";
-import { D1Client, DatabaseLive, ReplayGuardLive } from "@repo/db";
+import {
+  D1Client,
+  Database as DatabaseService,
+  schema,
+  DatabaseLive,
+  ReplayGuardLive,
+} from "@repo/db";
 import { pruneOidcReplayIds } from "@repo/oidc";
 import {
   AuthConfig,
@@ -42,6 +56,7 @@ import {
   GitHubOAuthSecret,
   RateLimiter,
   SigningKey,
+  TransactionalEmail,
 } from "@repo/infra";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -61,6 +76,7 @@ const AuthEnvironment = Schema.Struct({
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
   CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
   GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
+  EMAIL_FROM: Schema.optional(Schema.String),
   IDENTITY_CEILINGS: Schema.optional(Schema.fromJsonString(IdentityCeilings)),
 });
 
@@ -70,6 +86,7 @@ interface DeploymentEnvironment {
   OIDC_AUDIENCES?: string;
   GITHUB_CLIENT_ID?: string;
   IDENTITY_CEILINGS?: string;
+  EMAIL_FROM?: string;
 }
 
 const decodeAuthEnvironment = Schema.decodeUnknownEffect(AuthEnvironment);
@@ -106,6 +123,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
       CAPABILITIES: JSON.stringify(capabilities),
     };
+
+    if (config.email !== undefined) env.EMAIL_FROM = config.email.from;
 
     if (config.oidcAudiences !== undefined)
       env.OIDC_AUDIENCES = JSON.stringify(config.oidcAudiences);
@@ -154,6 +173,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     // Bound to the Worker as a secret at deploy time.
     const token = yield* Config.Redacted("TURBO_TOKEN");
+    const email = yield* Cloudflare.Email.Send(yield* TransactionalEmail);
     const environment = yield* Cloudflare.Workers.WorkerEnvironment;
     // Alchemy resolves the custom domain, workers.dev URL, or local dev URL.
     // Deferred until request execution: the environment is absent at plan time.
@@ -253,6 +273,57 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const mailerLayer =
+      capabilities.emailSending.enabled && authEnvironment.EMAIL_FROM
+        ? MailerLive.pipe(
+            Layer.provide(
+              Layer.effect(
+                EmailSend,
+                Effect.gen(function* () {
+                  const binding = yield* email.raw;
+                  return {
+                    from: authEnvironment.EMAIL_FROM ?? "",
+                    send: (message) => Effect.tryPromise(() => binding.send(message)),
+                  };
+                }),
+              ),
+            ),
+          )
+        : MailerDisabled;
+
+    const notificationsLayer = AlertsLive.pipe(
+      Layer.provide(mailerLayer),
+      Layer.provide(
+        Layer.effect(
+          NotificationSink,
+          Effect.gen(function* () {
+            const database = yield* DatabaseService;
+            return {
+              persist: (alert: import("@repo/mailer").Alert) =>
+                database
+                  .query("Notifications.persist", (db) =>
+                    db
+                      .insert(schema.notification)
+                      .values({
+                        id: alert.id,
+                        userId: alert.userId,
+                        kind: alert.kind,
+                        detail: alert.detail,
+                        createdAt: Date.now(),
+                      })
+                      .onConflictDoNothing(),
+                  )
+                  .pipe(
+                    Effect.asVoid,
+                    Effect.mapError((cause) => new MailerError({ cause })),
+                  ),
+            };
+          }),
+        ),
+      ),
+      Layer.provide(databaseLayer),
+    );
+
     const authLayer = AuthLive.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -260,6 +331,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
           SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
           authConfig,
           selectedLayers,
+          mailerLayer,
+          notificationsLayer,
         ),
       ),
       Layer.provide(databaseLayer),
@@ -309,6 +382,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
+        Cloudflare.Email.SendBinding,
         Cloudflare.R2.ReadWriteBucketBinding,
         Cloudflare.D1.QueryDatabaseBinding,
         Cloudflare.KV.ReadWriteNamespaceBinding,
