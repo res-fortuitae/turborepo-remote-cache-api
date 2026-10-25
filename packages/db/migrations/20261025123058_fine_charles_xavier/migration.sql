@@ -1,0 +1,1 @@
+ALTER TABLE `artifact_operation` ADD `status` integer DEFAULT 202 NOT NULL;

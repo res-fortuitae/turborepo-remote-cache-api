@@ -60,7 +60,7 @@ const credentials: Record<Exclude<Principal, "admin">, string | undefined> = {
   invalid: "Bearer not-the-token",
 };
 
-const denied = { anonymous: 401, malformed: 401, invalid: 403 } as const;
+const denied = { anonymous: 401, malformed: 401, invalid: 401 } as const;
 
 /**
  * Expected status for every principal × operation. The single `admin` token

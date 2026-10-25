@@ -1,0 +1,73 @@
+name: Turbo compatibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      api:
+        description: Existing deployed preview HTTPS origin (empty uses local workerd + R2)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turbo-compatibility-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        turbo: [2.11.10, 2.10.13, 1.13.4]
+        mode: [direct, proxy]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      # PR #43 is a parallel stack. Pin the actual exec implementation, not a test proxy.
+      # Once merged, remove this checkout/install and point TCACHE_COMPAT_BIN at this checkout.
+      - if: matrix.mode == 'proxy'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 61ddd7e4ef4ef9c95479dc4a71fe0ce8e51451e5
+          path: .compat-proxy
+          persist-credentials: false
+      - if: matrix.mode == 'proxy'
+        run: bun install --frozen-lockfile --cwd .compat-proxy
+      - name: Verify release version selection
+        if: github.event_name == 'release'
+        run: bun scripts/turbo-compatibility-versions.ts --check-latest
+      - name: Round trip through workerd or the supplied deployed preview
+        run: bun test apps/server/tests/compatibility-matrix.test.ts
+        env:
+          TURBO_COMPAT_VERSION: ${{ matrix.turbo }}
+          TURBO_COMPAT_MODE: ${{ matrix.mode }}
+          TCACHE_COMPAT_BIN: ${{ github.workspace }}/.compat-proxy/packages/cli/src/bin.ts
+          TURBO_COMPAT_REPORT: compatibility-results.md
+          # Secrets are supplied only to explicit workflow_dispatch preview runs, never PR jobs.
+          TURBO_COMPAT_API: ${{ github.event_name == 'workflow_dispatch' && inputs.api || '' }}
+          TURBO_COMPAT_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.api != '' && secrets.TURBO_COMPAT_TOKEN || '' }}
+          TURBO_COMPAT_TEAM_ID: ${{ vars.TURBO_COMPAT_TEAM_ID }}
+          TURBO_COMPAT_TEAM_SLUG: ${{ vars.TURBO_COMPAT_TEAM_SLUG }}
+          TURBO_COMPAT_PROJECT: ${{ vars.TURBO_COMPAT_PROJECT }}
+      - name: Publish version and behavior table
+        if: always()
+        shell: bash
+        run: |
+          echo '| Turbo | OS | Transport | Selector | Signature | Preflight | Result |' >> "$GITHUB_STEP_SUMMARY"
+          echo '| --- | --- | --- | --- | --- | --- | --- |' >> "$GITHUB_STEP_SUMMARY"
+          if test -f compatibility-results.md; then
+            cat compatibility-results.md >> "$GITHUB_STEP_SUMMARY"
+          fi

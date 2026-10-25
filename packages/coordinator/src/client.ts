@@ -10,8 +10,15 @@ export interface ChainHead {
   readonly hash: string | null;
 }
 
+export interface ScopeState {
+  readonly epoch: number;
+  readonly generation: number;
+}
+
 /** One Coordinator instance. Failures are transport errors from the platform. */
 export interface CoordinatorInstance {
+  readonly scopeState: () => Effect.Effect<ScopeState, unknown>;
+  readonly bumpCacheGeneration: () => Effect.Effect<number, unknown>;
   readonly revocationEpoch: () => Effect.Effect<number, unknown>;
   readonly bumpRevocationEpoch: () => Effect.Effect<number, unknown>;
   readonly chainHead: () => Effect.Effect<ChainHead, unknown>;
@@ -40,6 +47,12 @@ export class CoordinatorError extends Schema.TaggedError<CoordinatorError>()("Co
 export const EPOCH_CACHE_MILLIS = 5_000;
 
 export interface CoordinatorClientService {
+  readonly cacheGeneration: (
+    projectId: string,
+    fresh?: boolean,
+  ) => Effect.Effect<number, CoordinatorError>;
+  /** Call after durable deletion/replacement, before acknowledging a purge. */
+  readonly invalidateCache: (projectId: string) => Effect.Effect<number, CoordinatorError>;
   /** Current epoch for a scope such as `org:<id>` or `project:<id>`. */
   readonly revocationEpoch: (scope: string) => Effect.Effect<number, CoordinatorError>;
   /** True when a credential stamped with `issuedEpoch` has been revoked. */
@@ -76,37 +89,66 @@ export const CoordinatorClientLive: Layer.Layer<CoordinatorClient, never, Coordi
     CoordinatorClient,
     Effect.gen(function* () {
       const namespace = yield* CoordinatorNamespace;
-      const epochs = new Map<string, { readonly epoch: number; readonly expiresAt: number }>();
-
+      const states = new Map<string, ScopeState & { readonly expiresAt: number }>();
       const epochInstance = (scope: string) => namespace.getByName(`epoch:${scope}`);
       const chainInstance = (chain: string) => namespace.getByName(`chain:${chain}`);
 
-      const remember = (scope: string, epoch: number) =>
-        Effect.map(Clock.currentTimeMillis, (now) => {
-          epochs.set(scope, { epoch, expiresAt: now + EPOCH_CACHE_MILLIS });
+      // Never let an older in-flight read roll back a locally observed bump.
+      const remember = (scope: string, state: ScopeState, expiresAt: number) => {
+        const previous = states.get(scope);
 
-          return epoch;
-        });
+        const next = {
+          epoch: Math.max(previous?.epoch ?? 0, state.epoch),
+          generation: Math.max(previous?.generation ?? 0, state.generation),
+          expiresAt,
+        };
 
-      const revocationEpoch = Effect.fn("CoordinatorClient.revocationEpoch")(function* (
+        states.set(scope, next);
+
+        return next;
+      };
+
+      const scopeState = Effect.fn("CoordinatorClient.scopeState")(function* (
         scope: string,
+        fresh = false,
       ) {
-        const cached = epochs.get(scope);
+        const now = yield* Clock.currentTimeMillis;
+        const cached = states.get(scope);
 
-        if (cached !== undefined && cached.expiresAt > (yield* Clock.currentTimeMillis)) {
-          return cached.epoch;
-        }
+        if (!fresh && cached && cached.expiresAt > now) return cached;
 
-        const epoch = yield* call(
-          "CoordinatorClient.revocationEpoch",
-          epochInstance(scope).revocationEpoch(),
+        const state = yield* call(
+          "CoordinatorClient.scopeState",
+          epochInstance(scope).scopeState(),
         );
 
-        return yield* remember(scope, epoch);
+        return remember(scope, state, now + EPOCH_CACHE_MILLIS);
       });
+
+      const revocationEpoch = (scope: string) =>
+        Effect.map(scopeState(scope), (state) => state.epoch);
 
       return {
         revocationEpoch,
+        cacheGeneration: (projectId, fresh) =>
+          Effect.map(scopeState(`project:${projectId}`, fresh), (state) => state.generation),
+        invalidateCache: Effect.fn("CoordinatorClient.invalidateCache")(function* (
+          projectId: string,
+        ) {
+          const scope = `project:${projectId}`;
+
+          const generation = yield* call(
+            "CoordinatorClient.invalidateCache",
+            epochInstance(scope).bumpCacheGeneration(),
+          );
+
+          const previous = states.get(scope);
+
+          // Do not extend an unrelated cached epoch's freshness.
+          remember(scope, { epoch: previous?.epoch ?? 0, generation }, previous?.expiresAt ?? 0);
+
+          return generation;
+        }),
         isRevoked: (scope, issuedEpoch) =>
           Effect.map(revocationEpoch(scope), (epoch) => issuedEpoch < epoch),
         revokeAll: Effect.fn("CoordinatorClient.revokeAll")(function* (scope: string) {
@@ -115,7 +157,15 @@ export const CoordinatorClientLive: Layer.Layer<CoordinatorClient, never, Coordi
             epochInstance(scope).bumpRevocationEpoch(),
           );
 
-          return yield* remember(scope, epoch);
+          const previous = states.get(scope);
+
+          remember(
+            scope,
+            { epoch, generation: previous?.generation ?? 0 },
+            previous?.expiresAt ?? 0,
+          );
+
+          return epoch;
         }),
         chainHead: (chain) => call("CoordinatorClient.chainHead", chainInstance(chain).chainHead()),
         advanceChain: (chain, expectedSequence, hash) =>
@@ -133,9 +183,12 @@ export const CoordinatorNamespaceTest = Layer.sync(CoordinatorNamespace, () => {
 
   const create = (): CoordinatorInstance => {
     let epoch = 0;
+    let generation = 0;
     let head: ChainHead = { sequence: 0, hash: null };
 
     return {
+      scopeState: () => Effect.sync(() => ({ epoch, generation })),
+      bumpCacheGeneration: () => Effect.sync(() => ++generation),
       revocationEpoch: () => Effect.sync(() => epoch),
       bumpRevocationEpoch: () => Effect.sync(() => ++epoch),
       chainHead: () => Effect.sync(() => head),

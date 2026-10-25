@@ -29,7 +29,7 @@ const decodeDelete = Schema.decodeUnknownEffect(DeleteProjectRequest);
 const decodeGrant = Schema.decodeUnknownEffect(GrantRequest);
 
 /** Web Request's text/json accessors do not honor Effect's MaxBodySize reference. */
-const readJson = Effect.fn("Projects.readJson")(function* (
+export const readManagementJson = Effect.fn("Projects.readJson")(function* (
   request: HttpServerRequest.HttpServerRequest,
 ) {
   const decoder = new TextDecoder();
@@ -115,7 +115,7 @@ export const projectsApi = Effect.gen(function* () {
       (policyId === undefined && request.method === "POST") ||
       (policyId !== undefined && request.method === "PUT")
     ) {
-      const body = yield* decodeTrustPolicy(yield* readJson(request)).pipe(
+      const body = yield* decodeTrustPolicy(yield* readManagementJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid trust policy" })),
       );
 
@@ -144,7 +144,7 @@ export const projectsApi = Effect.gen(function* () {
       return yield* HttpServerResponse.json(yield* projects.listGrants(actor, id));
 
     if (!grantMatch[2] && request.method === "POST") {
-      const body = yield* decodeGrant(yield* readJson(request)).pipe(
+      const body = yield* decodeGrant(yield* readManagementJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid grant" })),
       );
 
@@ -181,7 +181,7 @@ export const projectsApi = Effect.gen(function* () {
     }
 
     if (request.method === "POST") {
-      const body = yield* decodeCreate(yield* readJson(request)).pipe(
+      const body = yield* decodeCreate(yield* readManagementJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid project" })),
       );
 
@@ -200,7 +200,7 @@ export const projectsApi = Effect.gen(function* () {
       return yield* HttpServerResponse.json(yield* projects.get(actor, id));
 
     if (request.method === "PATCH") {
-      const body = yield* decodeUpdate(yield* readJson(request)).pipe(
+      const body = yield* decodeUpdate(yield* readManagementJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid project update" })),
       );
 
@@ -208,7 +208,7 @@ export const projectsApi = Effect.gen(function* () {
     }
 
     if (request.method === "DELETE") {
-      const body = yield* decodeDelete(yield* readJson(request)).pipe(
+      const body = yield* decodeDelete(yield* readManagementJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Confirm deletion with the project ID" })),
       );
 

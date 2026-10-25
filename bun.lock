@@ -47,6 +47,7 @@
       "dependencies": {
         "@repo/analytics": "workspace:*",
         "@repo/api-spec": "workspace:*",
+        "@repo/artifacts": "workspace:*",
         "@repo/audit": "workspace:*",
         "@repo/auth": "workspace:*",
         "@repo/authz": "workspace:*",
@@ -58,14 +59,18 @@
         "@repo/mailer": "workspace:*",
         "@repo/oidc": "workspace:*",
         "@repo/projects": "workspace:*",
+        "@repo/ratelimit": "workspace:*",
         "@repo/shared": "workspace:*",
         "alchemy": "2.0.0-beta.83",
         "drizzle-orm": "1.0.0-rc.5",
         "effect": "^4.0.6",
       },
       "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261023.1",
+        "@repo/client-core": "workspace:*",
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
+        "miniflare": "^4.20260730.0",
       },
       "peerDependencies": {
         "typescript": "^7",
@@ -113,6 +118,12 @@
     "packages/artifacts": {
       "name": "@repo/artifacts",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "@repo/coordinator": "workspace:*",
+        "@repo/credentials": "workspace:*",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -138,11 +149,13 @@
       "name": "@repo/auth",
       "version": "0.0.0",
       "dependencies": {
+        "@better-auth/api-key": "1.7.12",
         "@better-auth/passkey": "1.7.12",
         "@repo/audit": "workspace:*",
         "@repo/db": "workspace:*",
         "@repo/deploy-config": "workspace:*",
         "@repo/mailer": "workspace:*",
+        "@repo/ratelimit": "workspace:*",
         "better-auth": "^1.7.12",
         "drizzle-orm": "1.0.0-rc.5",
         "effect": "^4.0.6",
@@ -188,6 +201,10 @@
     "packages/client-core": {
       "name": "@repo/client-core",
       "version": "0.0.0",
+      "dependencies": {
+        "@repo/api-spec": "workspace:*",
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -233,6 +250,7 @@
       "name": "@repo/credentials",
       "version": "0.0.0",
       "dependencies": {
+        "@repo/auth": "workspace:*",
         "@repo/coordinator": "workspace:*",
         "@repo/deploy-config": "workspace:*",
         "effect": "^4.0.6",
@@ -253,6 +271,7 @@
         "effect": "^4.0.6",
       },
       "devDependencies": {
+        "@better-auth/api-key": "1.7.12",
         "@better-auth/passkey": "1.7.12",
         "@cloudflare/workers-types": "^5.20261023.1",
         "@repo/config": "workspace:*",
@@ -342,6 +361,9 @@
     "packages/ratelimit": {
       "name": "@repo/ratelimit",
       "version": "0.0.0",
+      "dependencies": {
+        "effect": "^4.0.6",
+      },
       "devDependencies": {
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
@@ -465,6 +487,8 @@
     "@base-ui/react": ["@base-ui/react@1.9.0", "", { "dependencies": { "@babel/runtime": "^7.29.7 || ^8.0.0", "@base-ui/utils": "0.5.0", "@floating-ui/react-dom": "^2.1.9", "@floating-ui/utils": "^0.2.12", "use-sync-external-store": "^1.7.0" }, "peerDependencies": { "@date-fns/tz": "^1.2.0", "@types/react": "^17 || ^18 || ^19", "date-fns": "^4.0.0", "react": "^17 || ^18 || ^19", "react-dom": "^17 || ^18 || ^19" }, "optionalPeers": ["@date-fns/tz", "@types/react", "date-fns"] }, "sha512-S8CSYosASBKtpL8SWUfS78rFElfLijiCgA7oHOK22jCJ95FULsYyKwBNFOgudt0RA+/7yNc7F81bOvQnRgbBiQ=="],
 
     "@base-ui/utils": ["@base-ui/utils@0.5.0", "", { "dependencies": { "@babel/runtime": "^7.29.7 || ^8.0.0", "@floating-ui/utils": "^0.2.12", "reselect": "^5.3.0", "use-sync-external-store": "^1.7.0" }, "peerDependencies": { "@types/react": "^17 || ^18 || ^19", "react": "^17 || ^18 || ^19", "react-dom": "^17 || ^18 || ^19" }, "optionalPeers": ["@types/react"] }, "sha512-dYGGcEttjkYiMoa5nHm8vLaJ2UcuTWxo3BFAwOYXeRg/q7UVVvA6cacEIXEs3FgBfK1CGtW1ptElqs7wsx+t9A=="],
+
+    "@better-auth/api-key": ["@better-auth/api-key@1.7.12", "", { "dependencies": { "zod": "^4.5.4" }, "peerDependencies": { "@better-auth/core": "^1.7.12", "@better-auth/utils": "^0.4.2 || ^0.5.0", "better-auth": "^1.7.12", "better-call": "1.4.4" } }, "sha512-qkEA9vGMgOpC5Gqia1tg/Y4up2Lov+QDLmu1fZJ4vhs805WIw4jtNhmD6hNQNd5A4Cc2quHklP0yqPUpicavlw=="],
 
     "@better-auth/core": ["@better-auth/core@1.7.12", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "zod": "^4.5.4" }, "peerDependencies": { "@better-auth/utils": "^0.4.2 || ^0.5.0", "@better-fetch/fetch": "1.3.2", "@opentelemetry/api": "^1.9.0", "better-call": "1.4.4", "jose": "^6.1.0", "kysely": "^0.28.5 || ^0.29.0", "nanostores": "^1.0.1" }, "optionalPeers": ["@opentelemetry/api"] }, "sha512-SUStBGHJ13KnSO6+7U/1DSlfuOtln4jtOrFZqzQtxZVHZIrAoMjwHNGitlF+s7hvKbuC3Z14xjnqfLLqIqGfxw=="],
 
