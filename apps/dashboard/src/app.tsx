@@ -1,3 +1,4 @@
+import { PurgePage } from "./PurgePage.tsx";
 import { CapabilitiesPage } from "./CapabilitiesPage.tsx";
 import { useEffect, useState } from "react";
 import {
@@ -105,12 +106,22 @@ function CommandPanel({ command }: { readonly command: string }) {
 
 export function App() {
   const [page, setPage] = useState(() =>
-    window.location.hash === "#capabilities" ? "capabilities" : "setup",
+    window.location.hash === "#purge"
+      ? "purge"
+      : window.location.hash === "#capabilities"
+        ? "capabilities"
+        : "setup",
   );
 
   useEffect(() => {
     const update = () =>
-      setPage(window.location.hash === "#capabilities" ? "capabilities" : "setup");
+      setPage(
+        window.location.hash === "#purge"
+          ? "purge"
+          : window.location.hash === "#capabilities"
+            ? "capabilities"
+            : "setup",
+      );
 
     window.addEventListener("hashchange", update);
 
@@ -161,6 +172,14 @@ export function App() {
             >
               Capabilities
             </Button>
+            <Button
+              variant={page === "purge" ? "secondary" : "ghost"}
+              className="justify-start"
+              render={<a href="#purge" />}
+              nativeButton={false}
+            >
+              Purge artifacts
+            </Button>
           </nav>
           <div className="hidden flex-1 md:block" />
           <div className="hidden flex-col gap-3 md:flex">
@@ -189,7 +208,11 @@ export function App() {
                 /
               </span>
               <span className="text-xs font-medium">
-                {page === "capabilities" ? "Capabilities" : "Setup"}
+                {page === "purge"
+                  ? "Purge artifacts"
+                  : page === "capabilities"
+                    ? "Capabilities"
+                    : "Setup"}
               </span>
             </div>
             <div className="flex items-center gap-3">
@@ -201,7 +224,9 @@ export function App() {
             id="main"
             className="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-10 lg:px-10 lg:py-16"
           >
-            {page === "capabilities" ? (
+            {page === "purge" ? (
+              <PurgePage />
+            ) : page === "capabilities" ? (
               <CapabilitiesPage />
             ) : (
               <>

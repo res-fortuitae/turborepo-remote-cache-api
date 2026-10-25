@@ -24,7 +24,7 @@ import {
   type OkpJwk,
   type SigningKeySet,
 } from "./key-store.ts";
-import { CacheScope, Principal } from "./principal.ts";
+import { CacheScope, UploadIdentity, Principal } from "./principal.ts";
 
 export const CACHE_TOKEN_ALGORITHM = "EdDSA";
 /** The issue-time default; instance policy and trust policies only lower it. */
@@ -58,6 +58,7 @@ export const CacheTokenClaims = Schema.Struct({
   iss: Schema.String,
   aud: Schema.Union([Schema.String, Schema.Array(Schema.String)]),
   sub: Schema.NonEmptyString,
+  uploadIdentity: Schema.optional(UploadIdentity),
   org: Schema.NonEmptyString,
   prj: Schema.NonEmptyString,
   scope: CacheScope,
@@ -72,6 +73,7 @@ export type CacheTokenClaims = typeof CacheTokenClaims.Type;
 
 export const CacheTokenRequest = Schema.Struct({
   subject: Schema.NonEmptyString,
+  uploadIdentity: Schema.optional(UploadIdentity),
   org: Schema.NonEmptyString,
   project: Schema.NonEmptyString,
   scope: CacheScope,
@@ -233,6 +235,7 @@ export const CacheTokenSignerLive: Layer.Layer<
             prj: request.project,
             scope: request.scope,
             epoch: { org, prj },
+            uploadIdentity: request.uploadIdentity,
           })
             .setProtectedHeader({ alg: CACHE_TOKEN_ALGORITHM, typ: "JWT", kid: key.kid })
             .setIssuer(config.issuer)
@@ -250,6 +253,7 @@ export const CacheTokenSignerLive: Layer.Layer<
           kid: key.kid,
           principal: {
             subject: request.subject,
+            uploadIdentity: request.uploadIdentity,
             org: request.org,
             project: request.project,
             scope: request.scope,
@@ -355,6 +359,7 @@ export const CacheTokenVerifierLive: Layer.Layer<
 
         return {
           subject: claims.sub,
+          uploadIdentity: claims.uploadIdentity,
           org: claims.org,
           project: claims.prj,
           scope: claims.scope,

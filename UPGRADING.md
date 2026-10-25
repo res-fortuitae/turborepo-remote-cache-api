@@ -6,6 +6,38 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Multipart artifact uploads (STV-492)
+
+- Direct requests retain their zone-dependent 100/200 MB ceiling. Optional
+  `limits.maxDirectUploadBytes` can lower it. The separate whole-object limit
+  `limits.maxArtifactBytes` defaults to 10 GB; project and effective quota policy
+  can lower it. Existing project rows may explicitly retain 100/200 MB and must
+  be updated by an admin before large uploads can succeed.
+- `/v8/x/uploads` adds authenticated multipart uploads. The shared client-core
+  transport preserves artifact headers and splits large files; the `tcache exec`
+  proxy command follows in STV-485. Direct Turbo/env mode still sends one PUT.
+- Objects larger than 512 MB bypass edge caching. New additive D1 migrations
+  retain purge jobs/upload provenance and the status of upload operations. Apply
+  them through the normal authorized deployment. See
+  [multipart uploads](docs/multipart-uploads.md) and
+  [incident response](docs/artifact-purge.md). No infrastructure was deployed by
+  these implementation changes.
+
+### Scoped cache credentials (STV-445)
+
+- Cache requests now resolve JWTs and organization-owned `tcache_` keys into a
+  project principal. Invalid credentials return 401; scope/policy/tenant denials
+  return 403. `TURBO_TEAM` must match the organization slug. Artifacts and edge
+  entries use `{orgId}/{projectId}/{hash}` for both scoped credential types.
+- Shared-token cache access defaults to disabled. To retain old clients and
+  `<team>/<hash>` objects during migration, explicitly set
+  `features.legacyToken: true` in root `deploy.config.ts` before an authorized
+  deployment. Disable it after migrating clients. Existing artifacts are not
+  moved. Doctor's instance bearer remains unchanged.
+- API-key requests carry a less-secure Warning header. See
+  [cache credentials](docs/cache-credentials.md) for services, tests and migration
+  details. No infrastructure deployment is performed by this code change.
+
 ### Plan capabilities (STV-500)
 
 - Existing deploy config is valid. Optional flags `features.emailSending`,

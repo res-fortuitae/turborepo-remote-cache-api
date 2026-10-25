@@ -49,3 +49,28 @@ describe("turbo against the in-process API", () => {
 
   testTurboRoundTrip(() => ({ api: server.url.origin, token }));
 });
+
+test("upload provenance is server-owned and is not returned as artifact response headers", async () => {
+  const bucket = memoryBucket();
+  const target = inProcessTarget(token, bucket);
+  const uploaded = await target.fetch("/v8/artifacts/abc?teamId=provenance", {
+    method: "PUT",
+    headers: {
+      ...bearer(token),
+      "content-length": "1",
+      "x-artifact-credential-id": "spoof",
+      "x-artifact-uploaded-at": "1970-01-01",
+      "x-artifact-duration": "42",
+    },
+    body: "x",
+  });
+  expect(uploaded.status).toBe(202);
+  const meta = bucket.objects.get("provenance/abc")?.customMetadata;
+  expect(meta).toMatchObject({ credentialType: "legacy", credentialId: "legacy", duration: "42" });
+  expect(Date.parse(meta!.uploadedAt!)).toBeGreaterThan(Date.now() - 60_000);
+  const downloaded = await target.fetch("/v8/artifacts/abc?teamId=provenance", {
+    headers: bearer(token),
+  });
+  expect(downloaded.headers.get("credentialId")).toBeNull();
+  expect(downloaded.headers.get("x-artifact-credential-id")).toBeNull();
+});

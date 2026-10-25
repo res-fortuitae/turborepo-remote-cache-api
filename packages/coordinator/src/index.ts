@@ -7,7 +7,12 @@ export {
   CoordinatorNamespaceTest,
 } from "./client.ts";
 
-export type { ChainHead, CoordinatorClientService, CoordinatorInstance } from "./client.ts";
+export type {
+  ScopeState,
+  ChainHead,
+  CoordinatorClientService,
+  CoordinatorInstance,
+} from "./client.ts";
 
 // Platform adapter exception (ADR 0001): Cloudflare needs the class exported.
 export {

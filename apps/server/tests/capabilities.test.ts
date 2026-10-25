@@ -15,7 +15,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { capabilitiesRoute } from "../src/capabilities-route.ts";
 import { Capabilities, capabilityLayers } from "../src/capabilities.ts";
-import { artifactApi } from "../src/api.ts";
+import { ApiError, artifactApi } from "../src/api.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
 import { memoryBucket } from "./support/in-process.ts";
 
@@ -86,6 +86,7 @@ test("upload ceiling rejects before reading the body or touching storage", async
   bucket.failing = true;
 
   const api = artifactApi({
+    legacyTokenEnabled: true,
     bucket,
     token,
     edgeCacheEnabled: false,
@@ -119,6 +120,7 @@ test("cache event batches reach the selected emitter with the namespace", async 
   const batches: string[] = [];
 
   const api = artifactApi({
+    legacyTokenEnabled: true,
     bucket: memoryBucket(),
     token,
     edgeCacheEnabled: false,
@@ -151,4 +153,41 @@ test("cache event batches reach the selected emitter with the namespace", async 
 
   expect(response.status).toBe(200);
   expect(batches).toEqual(["project-a:1"]);
+});
+
+test("authentication denial audit failure returns 500 before touching artifact storage", async () => {
+  const bucket = memoryBucket();
+  bucket.failing = true;
+
+  const api = artifactApi({
+    bucket,
+    token,
+    edgeCacheEnabled: false,
+    cache: createArtifactCache(false),
+    waitUntil: () => Effect.void,
+    auditDenial: () =>
+      Effect.fail(new ApiError({ status: 500, code: "unavailable", message: "audit offline" })),
+  });
+
+  const response = await Effect.runPromise(
+    api.pipe(
+      Effect.provideService(CanonicalOrigin, "http://localhost"),
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request("http://localhost/v8/artifacts/abc", {
+            headers: { authorization: "Bearer invalid" },
+          }),
+        ),
+      ),
+      Effect.map(HttpServerResponse.toWeb),
+    ),
+  );
+
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({
+    code: "unavailable",
+    message: "Cache audit unavailable",
+  });
+  expect(bucket.objects.size).toBe(0);
 });

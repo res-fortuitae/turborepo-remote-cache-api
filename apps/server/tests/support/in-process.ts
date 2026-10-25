@@ -48,7 +48,18 @@ export const memoryBucket = (): MemoryBucket => {
         Effect.sync(() => {
           const object = objects.get(key);
 
-          return object ? { ...object, body: Stream.make(object.bytes) } : null;
+          return object
+            ? {
+                ...object,
+                body: Stream.make(object.bytes),
+                readable: new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(object.bytes);
+                    controller.close();
+                  },
+                }),
+              }
+            : null;
         }),
       ),
     put: (key, value, options) =>
@@ -69,6 +80,7 @@ export const memoryBucket = (): MemoryBucket => {
 
 export const inProcessHandler = (token: string, bucket: MemoryBucket = memoryBucket()) => {
   const api = artifactApi({
+    legacyTokenEnabled: true,
     bucket,
     token: Redacted.make(token),
     edgeCacheEnabled: false,
