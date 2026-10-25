@@ -47,7 +47,10 @@ export class CoordinatorError extends Schema.TaggedError<CoordinatorError>()("Co
 export const EPOCH_CACHE_MILLIS = 5_000;
 
 export interface CoordinatorClientService {
-  readonly cacheGeneration: (projectId: string) => Effect.Effect<number, CoordinatorError>;
+  readonly cacheGeneration: (
+    projectId: string,
+    fresh?: boolean,
+  ) => Effect.Effect<number, CoordinatorError>;
   /** Call after durable deletion/replacement, before acknowledging a purge. */
   readonly invalidateCache: (projectId: string) => Effect.Effect<number, CoordinatorError>;
   /** Current epoch for a scope such as `org:<id>` or `project:<id>`. */
@@ -105,11 +108,14 @@ export const CoordinatorClientLive: Layer.Layer<CoordinatorClient, never, Coordi
         return next;
       };
 
-      const scopeState = Effect.fn("CoordinatorClient.scopeState")(function* (scope: string) {
+      const scopeState = Effect.fn("CoordinatorClient.scopeState")(function* (
+        scope: string,
+        fresh = false,
+      ) {
         const now = yield* Clock.currentTimeMillis;
         const cached = states.get(scope);
 
-        if (cached && cached.expiresAt > now) return cached;
+        if (!fresh && cached && cached.expiresAt > now) return cached;
 
         const state = yield* call(
           "CoordinatorClient.scopeState",
@@ -124,8 +130,8 @@ export const CoordinatorClientLive: Layer.Layer<CoordinatorClient, never, Coordi
 
       return {
         revocationEpoch,
-        cacheGeneration: (projectId) =>
-          Effect.map(scopeState(`project:${projectId}`), (state) => state.generation),
+        cacheGeneration: (projectId, fresh) =>
+          Effect.map(scopeState(`project:${projectId}`, fresh), (state) => state.generation),
         invalidateCache: Effect.fn("CoordinatorClient.invalidateCache")(function* (
           projectId: string,
         ) {

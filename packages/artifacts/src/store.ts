@@ -6,6 +6,16 @@ export class ArtifactStorageError extends Schema.TaggedError<ArtifactStorageErro
 ) {}
 
 export interface ArtifactMetadata {
+  uploadedAt?: string;
+  credentialType?: string;
+  credentialId?: string;
+  userId?: string;
+  provider?: string;
+  repositoryId?: string;
+  ref?: string;
+  jobWorkflowRef?: string;
+  commitSha?: string;
+  runId?: string;
   duration?: string;
   tag?: string;
   sha?: string;

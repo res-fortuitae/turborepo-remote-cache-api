@@ -1,3 +1,13 @@
+import { and, eq } from "drizzle-orm";
+import {
+  IncidentPurge,
+  IncidentPurgeLive,
+  PurgeInventory,
+  ArtifactPurger,
+  PurgeError,
+} from "@repo/artifacts";
+import { PurgeJobsLive } from "./purge-jobs.ts";
+import { purgeRoute, purgePath } from "./purge-route.ts";
 import { RateLimiterLive, RateLimitBinding } from "@repo/ratelimit";
 import {
   cacheCredentialGuard,
@@ -75,7 +85,7 @@ import {
   OidcAudiences,
   resolveOriginSettings,
 } from "@repo/deploy-config";
-import { ArtifactOpEmitter, ArtifactOpEmitterDisabled, AnalyticsEmitter } from "@repo/analytics";
+import { ArtifactOpEmitter, ArtifactOpEmitterD1Uploads, AnalyticsEmitter } from "@repo/analytics";
 import { Capabilities, DeploymentCapabilities, capabilityLayers } from "./capabilities.ts";
 import { capabilitiesRoute } from "./capabilities-route.ts";
 import { CapabilityReport } from "@repo/shared";
@@ -595,12 +605,119 @@ export default class Api extends Cloudflare.Worker<Api>()(
       }).pipe(Effect.provide(maintenanceLayer), Effect.tapCause(Effect.logError)),
     );
 
+    const incidentLayer = IncidentPurgeLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          PurgeJobsLive.pipe(Layer.provide(auditLayer), Layer.provide(databaseLayer)),
+          Layer.effect(
+            PurgeInventory,
+            Effect.gen(function* () {
+              const raw = yield* bucket.raw;
+              const convert = (o: {
+                key: string;
+                etag: string;
+                size: number;
+                uploaded: Date;
+                customMetadata?: Record<string, string> | undefined;
+              }) => ({
+                key: o.key,
+                etag: o.etag,
+                size: o.size,
+                uploaded: o.uploaded.getTime(),
+                metadata: o.customMetadata ?? {},
+              });
+              const fail = () => new PurgeError({ message: "Purge storage or audit unavailable" });
+              return {
+                list: (prefix: string, cursor?: string) =>
+                  Effect.tryPromise(async () => {
+                    const page = await raw.list({
+                      prefix,
+                      cursor,
+                      limit: 100,
+                      include: ["customMetadata"],
+                    });
+                    return {
+                      objects: page.objects.map(convert),
+                      cursor: page.truncated ? page.cursor : undefined,
+                    };
+                  }).pipe(Effect.mapError(fail)),
+                head: (key: string) =>
+                  Effect.tryPromise(() => raw.head(key)).pipe(
+                    Effect.map((o) => (o ? convert(o) : null)),
+                    Effect.mapError(fail),
+                  ),
+                remove: (keys: readonly string[]) =>
+                  keys.length
+                    ? Effect.tryPromise(() => raw.delete([...keys])).pipe(Effect.mapError(fail))
+                    : Effect.void,
+              };
+            }),
+          ),
+          Layer.effect(
+            ArtifactPurger,
+            Effect.map(CoordinatorClient, (coordinator) => ({
+              invalidate: coordinator.invalidateCache,
+              remove: () => Effect.die("Use the batch purge inventory"),
+            })),
+          ).pipe(Layer.provide(coordinatorLayer)),
+        ),
+      ),
+    );
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      Effect.flatMap(IncidentPurge, (p) => p.tick).pipe(
+        Effect.provide(incidentLayer),
+        Effect.tapCause(Effect.logError),
+      ),
+    );
+    const purge = purgeRoute.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          incidentLayer,
+          authLayer,
+          authorizationLayer,
+          ProjectRepoLive,
+          InstanceSettingsRepoLive,
+        ).pipe(Layer.provideMerge(databaseLayer)),
+      ),
+      Effect.catch(() =>
+        HttpServerResponse.json(
+          { message: "Purge unavailable" },
+          { status: 503, headers: { "cache-control": "no-store" } },
+        ),
+      ),
+    );
+
     const artifacts = artifactApi({
       guard: (scope) => cacheCredentialGuard(scope).pipe(Effect.provide(rateLimitLayer)),
       guardAuthFailure: cacheAuthenticationFailureGuard.pipe(Effect.provide(rateLimitLayer)),
       authorize: (credential, url, action) =>
         authorizeProjectCache(credential, url, action).pipe(
           Effect.provide(cacheAuthorizationLayer),
+          Effect.tap((scope) =>
+            action === "cache:write" && scope.credential?.credentialType !== "legacy"
+              ? Effect.gen(function* () {
+                  const db = yield* DatabaseService;
+                  const [active] = yield* db.query("Purge.writeFence", (q) =>
+                    q
+                      .select({ id: schema.artifactPurgeJob.id })
+                      .from(schema.artifactPurgeJob)
+                      .where(
+                        and(
+                          eq(schema.artifactPurgeJob.projectId, scope.credential!.projectId),
+                          eq(schema.artifactPurgeJob.state, "queued"),
+                        ),
+                      )
+                      .limit(1),
+                  );
+                  if (active)
+                    return yield* new ApiError({
+                      status: 409,
+                      code: "purge_in_progress",
+                      message: "Project writes are paused while a purge is running",
+                    });
+                }).pipe(Effect.provide(databaseLayer))
+              : Effect.void,
+          ),
           Effect.mapError((error) =>
             error instanceof ApiError
               ? error
@@ -627,7 +744,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             operation,
           ),
         ).pipe(
-          Effect.provide(ArtifactOpEmitterDisabled),
+          Effect.provide(ArtifactOpEmitterD1Uploads.pipe(Layer.provide(databaseLayer))),
           Effect.catch(() => Effect.void),
         ),
       auditDenial: (error) =>
@@ -730,6 +847,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         }
 
         if (pathname === "/api/instance/capabilities") return yield* report;
+
+        if (purgePath.test(pathname)) return yield* purge;
 
         if (isProjectsPath(pathname)) return yield* projects;
 
