@@ -73,3 +73,51 @@ lifecycle, and full scan latency grows with the number of prefixes/pages.
 Validate with `bun run check` and `bun run test`. Focused suites exercise migrated
 SQLite, signed session/JWT HTTP, failed R2 retry, prefix isolation, native rule
 capacity and retention cursors. They require no cloud credentials or deployment.
+
+## Trust policy administration
+
+Session-authenticated project admins can manage policies through:
+
+| Method | Path                                     | Result                        |
+| ------ | ---------------------------------------- | ----------------------------- |
+| GET    | `/projects/:id/trust-policies`           | List policies                 |
+| POST   | `/projects/:id/trust-policies`           | Create (201)                  |
+| PUT    | `/projects/:id/trust-policies/:policyId` | Replace body/provider/enabled |
+| DELETE | `/projects/:id/trust-policies/:policyId` | Delete (204)                  |
+
+Requests use the flattened `TrustPolicyRequest` in `@repo/api-spec`; responses add
+`id`, `projectId`, `createdBy`, and `createdAt`. Updates preserve creation metadata.
+All routes require a live session and `project:admin` (the same authorization as
+managing grants). Mutations also require the canonical Origin and any configured
+passkey step-up. Policy IDs are scoped to their project; unknown IDs return 404.
+Bodies are capped at 16 KiB. Responses use `Cache-Control: no-store`.
+
+Policy mutations and their audit events commit atomically. Deleting a project or
+organization disables its policies in the deletion transaction. The additive
+`created_at` column uses epoch zero for policies that predate this version.
+
+Project creation optionally accepts a GitHub source:
+
+```json
+{
+  "slug": "builds",
+  "name": "Build cache",
+  "github": {
+    "repository": "acme/app",
+    "defaultBranch": "main",
+    "audience": "https://cache.example.com"
+  }
+}
+```
+
+This creates two policies in the project's creation transaction, with their IDs
+included in its audit event: the exact repository and default-branch ref receive
+read/write; the exact repository and `repo:acme/app:pull_request` subject receive
+read-only. Both use the supplied audience and a 600-second TTL. Supply an audience
+accepted by the deployment's OIDC verifier. Without source metadata, creation does
+not infer a repository, branch, or audience and creates no policies. Additional
+repositories can share a project through additional policies, and the same
+repository can have policies in multiple projects. Vercel defaults follow in STV-491.
+
+See [trust policy matching](../packages/oidc/README.md#trust-policies) for exact
+matching, ref patterns, overlap resolution and exchange integration responsibilities.

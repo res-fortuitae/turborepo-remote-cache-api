@@ -5,6 +5,7 @@ import {
   Forbidden,
   GrantRequest,
   UpdateProjectRequest,
+  TrustPolicyRequest,
 } from "@repo/api-spec";
 import { Auth } from "@repo/auth";
 import { CanonicalOrigin } from "@repo/deploy-config";
@@ -16,6 +17,9 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 const collection = /^\/orgs\/([^/]+)\/projects\/?$/;
 const item = /^\/projects\/([^/]+)\/?$/;
 const grantsPath = /^\/projects\/([^/]+)\/grants(?:\/(user|team)\/([^/]+))?\/?$/;
+
+const policiesPath = /^\/projects\/([^/]+)\/trust-policies(?:\/([^/]+))?\/?$/;
+const decodeTrustPolicy = Schema.decodeUnknownEffect(TrustPolicyRequest);
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 const decodeCreate = Schema.decodeUnknownEffect(CreateProjectRequest);
@@ -48,7 +52,7 @@ const readJson = Effect.fn("Projects.readJson")(function* (
 });
 
 export const isProjectsPath = (path: string) =>
-  collection.test(path) || item.test(path) || grantsPath.test(path);
+  collection.test(path) || item.test(path) || grantsPath.test(path) || policiesPath.test(path);
 
 const errorResponse = (status: number, code: string, message: string) =>
   HttpServerResponse.json({ code, message }, { status });
@@ -86,6 +90,41 @@ export const projectsApi = Effect.gen(function* () {
       try: () => decodeURIComponent(value),
       catch: () => new BadRequest({ message: "Invalid identifier" }),
     });
+
+  const policyMatch = policiesPath.exec(url.pathname);
+
+  if (policyMatch?.[1]) {
+    const projectId = yield* decodeId(policyMatch[1]);
+    const policyId = policyMatch[2] === undefined ? undefined : yield* decodeId(policyMatch[2]);
+
+    if (policyId === undefined && request.method === "GET")
+      return yield* HttpServerResponse.json(yield* projects.listTrustPolicies(actor, projectId));
+
+    if (
+      (policyId === undefined && request.method === "POST") ||
+      (policyId !== undefined && request.method === "PUT")
+    ) {
+      const body = yield* decodeTrustPolicy(yield* readJson(request)).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Invalid trust policy" })),
+      );
+
+      return yield* HttpServerResponse.json(
+        yield* projects.saveTrustPolicy(actor, projectId, body, policyId),
+        { status: policyId === undefined ? 201 : 200 },
+      );
+    }
+
+    if (policyId !== undefined && request.method === "DELETE") {
+      yield* projects.deleteTrustPolicy(actor, projectId, policyId);
+
+      return HttpServerResponse.empty({ status: 204 });
+    }
+
+    return HttpServerResponse.empty({
+      status: 405,
+      headers: { allow: policyId === undefined ? "GET, POST" : "PUT, DELETE" },
+    });
+  }
 
   if (grantMatch?.[1]) {
     const id = yield* decodeId(grantMatch[1]);
@@ -161,7 +200,9 @@ export const projectsApi = Effect.gen(function* () {
       const body = yield* decodeDelete(yield* readJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Confirm deletion with the project ID" })),
       );
+
       yield* projects.delete(actor, id, body.confirmation);
+
       return HttpServerResponse.empty({ status: 202 });
     }
 

@@ -5,7 +5,7 @@ import { defaultInstancePolicy } from "@repo/deploy-config";
 import { Database, schema } from "@repo/db";
 import { eq } from "drizzle-orm";
 import { Clock, Effect, Layer, Result, Schema } from "effect";
-import { Project as ProjectResponse } from "@repo/api-spec";
+import { Project as ProjectResponse, TrustPolicyRequest } from "@repo/api-spec";
 import { Projects, ProjectsLive, ProjectLimits, type ProjectActor } from "./index.ts";
 import { ProjectsTest } from "./testing.ts";
 import { AuthorizationDatabaseLive } from "@repo/authz";
@@ -22,6 +22,7 @@ const actor: ProjectActor = {
 };
 
 const decodeProject = Schema.decodeUnknownSync(ProjectResponse);
+const isString = Schema.is(Schema.String);
 
 const seed = Effect.gen(function* () {
   const db = yield* Database;
@@ -317,7 +318,11 @@ test("an audit insert failure rolls the project mutation back", () =>
         Effect.gen(function* () {
           const projects = yield* Projects;
 
-          return yield* projects.create(actor, "a", { slug: "cache", name: "Cache" });
+          return yield* projects.create(actor, "a", {
+            slug: "cache",
+            name: "Cache",
+            github: { repository: "org/repo", defaultBranch: "main", audience: "cache" },
+          });
         }).pipe(Effect.provide(broken)),
       );
 
@@ -325,6 +330,31 @@ test("an audit insert failure rolls the project mutation back", () =>
       expect(yield* db.query("test.projects", (db) => db.select().from(schema.project))).toEqual(
         [],
       );
+      expect(
+        yield* db.query("test.defaultPolicies", (db) => db.select().from(schema.trustPolicy)),
+      ).toEqual([]);
+      const projects = yield* Projects;
+      const project = yield* projects.create(actor, "a", { slug: "cache", name: "Cache" });
+      const policy = yield* projects.saveTrustPolicy(actor, project.id, trustInput);
+
+      for (const change of [
+        (service: typeof Projects.Service) =>
+          service.saveTrustPolicy(actor, project.id, trustInput).pipe(Effect.asVoid),
+        (service: typeof Projects.Service) =>
+          service
+            .saveTrustPolicy(actor, project.id, { ...trustInput, enabled: false }, policy.id)
+            .pipe(Effect.asVoid),
+        (service: typeof Projects.Service) =>
+          service.deleteTrustPolicy(actor, project.id, policy.id),
+      ]) {
+        const failed = yield* Effect.result(
+          Effect.gen(function* () {
+            return yield* change(yield* Projects);
+          }).pipe(Effect.provide(broken)),
+        );
+        expect(failed._tag).toBe("Failure");
+        expect(yield* projects.listTrustPolicies(actor, project.id)).toEqual([policy]);
+      }
     }),
   ));
 
@@ -373,9 +403,11 @@ test("grants combine direct and live same-org teams; member and team removal app
         role: "cache:read",
       });
       expect((yield* projects.get(developer, project.id)).id).toBe(project.id);
+
       const denied = yield* Effect.result(
         projects.update(developer, project.id, { name: "Blocked" }),
       );
+
       expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
       yield* projects.addGrant(actor, project.id, {
         principalType: "team",
@@ -386,6 +418,7 @@ test("grants combine direct and live same-org teams; member and team removal app
         "Allowed",
       );
       expect(yield* projects.listGrants(developer, project.id)).toHaveLength(2);
+
       const foreign = yield* Effect.result(
         projects.addGrant(actor, project.id, {
           principalType: "team",
@@ -393,6 +426,7 @@ test("grants combine direct and live same-org teams; member and team removal app
           role: "project:admin",
         }),
       );
+
       expect(Result.isFailure(foreign) && foreign.failure._tag).toBe("BadRequest");
       yield* db.query("test.removeTeam", (db) =>
         db.delete(schema.teamMember).where(eq(schema.teamMember.id, "tm")),
@@ -412,5 +446,182 @@ test("grants combine direct and live same-org teams; member and team removal app
       );
       const lostMember = yield* Effect.result(projects.get(developer, project.id));
       expect(Result.isFailure(lostMember) && lostMember.failure._tag).toBe("Forbidden");
+    }),
+  ));
+
+const trustInput = {
+  provider: "github" as const,
+  enabled: true,
+  issuer: "https://token.actions.githubusercontent.com",
+  claims: { aud: ["cache"], repository: ["org/repo"] },
+  scope: "read write" as const,
+  ttlSeconds: 600,
+};
+
+test("trust policy CRUD preserves ownership and creation time, scopes IDs and audits mutations", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const db = yield* Database;
+      const project = yield* projects.create(actor, "a", { slug: "cache", name: "Cache" });
+      const other = yield* projects.create(actor, "a", { slug: "other", name: "Other" });
+      const policy = yield* projects.saveTrustPolicy(actor, project.id, trustInput);
+      expect(policy).toMatchObject({ ...trustInput, projectId: project.id, createdBy: "u" });
+      expect(yield* projects.listTrustPolicies(actor, project.id)).toEqual([policy]);
+
+      const updated = yield* projects.saveTrustPolicy(
+        actor,
+        project.id,
+        { ...trustInput, enabled: false, scope: "read" },
+        policy.id,
+      );
+
+      expect(updated).toMatchObject({
+        id: policy.id,
+        createdAt: policy.createdAt,
+        createdBy: "u",
+        enabled: false,
+        scope: "read",
+      });
+
+      const foreign = yield* Effect.result(
+        projects.saveTrustPolicy(actor, other.id, trustInput, policy.id),
+      );
+
+      expect(Result.isFailure(foreign) && foreign.failure._tag).toBe("NotFound");
+      yield* projects.deleteTrustPolicy(actor, project.id, policy.id);
+      expect(yield* projects.listTrustPolicies(actor, project.id)).toEqual([]);
+
+      const missing = yield* Effect.result(
+        projects.deleteTrustPolicy(actor, project.id, policy.id),
+      );
+
+      expect(Result.isFailure(missing) && missing.failure._tag).toBe("NotFound");
+
+      const events = yield* db.query("test.policyEvents", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+
+      expect(
+        events
+          .map((row) => row.payload.action)
+          .filter((action) => isString(action) && action.includes("trust_policy")),
+      ).toEqual([
+        "project.trust_policy.create",
+        "project.trust_policy.update",
+        "project.trust_policy.delete",
+      ]);
+    }),
+  ));
+
+test("policy validation rejects unsafe issuers, missing audience, empty rules and invalid TTL", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const project = yield* projects.create(actor, "a", { slug: "cache", name: "Cache" });
+
+      const invalidInputs: (typeof TrustPolicyRequest.Type)[] = [
+        { ...trustInput, issuer: "http://issuer" },
+        { ...trustInput, issuer: "https://issuer?" },
+        { ...trustInput, issuer: "https://issuer/#" },
+        { ...trustInput, issuer: "https://user:password@issuer" },
+        { ...trustInput, claims: {} },
+        { ...trustInput, claims: { repository: ["org/repo"] } },
+        { ...trustInput, claims: { aud: [] } },
+        { ...trustInput, claims: { aud: [""] } },
+        { ...trustInput, ttlSeconds: 0 },
+        { ...trustInput, ttlSeconds: 1.5 },
+        { ...trustInput, ttlSeconds: 3601 },
+      ];
+
+      for (const input of invalidInputs) {
+        const result = yield* Effect.result(projects.saveTrustPolicy(actor, project.id, input));
+        expect(Result.isFailure(result) && result.failure._tag).toBe("BadRequest");
+      }
+
+      expect(yield* projects.listTrustPolicies(actor, project.id)).toEqual([]);
+    }),
+  ));
+
+test("GitHub defaults are explicit, project-scoped, audited with creation, and disabled on deletion", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const db = yield* Database;
+
+      const project = yield* projects.create(actor, "a", {
+        slug: "cache",
+        name: "Cache",
+        github: { repository: "org/repo", defaultBranch: "develop", audience: "cache" },
+      });
+
+      const policies = yield* projects.listTrustPolicies(actor, project.id);
+      expect(policies).toHaveLength(2);
+      expect(policies.find((policy) => policy.scope === "read write")?.claims).toEqual({
+        aud: ["cache"],
+        repository: ["org/repo"],
+        ref: ["refs/heads/develop"],
+      });
+      expect(policies.find((policy) => policy.scope === "read")?.claims).toEqual({
+        aud: ["cache"],
+        repository: ["org/repo"],
+        sub: ["repo:org/repo:pull_request"],
+      });
+      yield* projects.delete(actor, project.id, project.id);
+
+      const disabled = yield* db.query("test.disabledPolicies", (db) =>
+        db.select().from(schema.trustPolicy),
+      );
+
+      expect(disabled.every((policy) => !policy.enabled)).toBe(true);
+      const blocked = yield* Effect.result(projects.saveTrustPolicy(actor, project.id, trustInput));
+      expect(Result.isFailure(blocked) && blocked.failure._tag).toBe("Forbidden");
+    }),
+  ));
+
+test("policy access requires project admin and live membership; passkey policy gates mutations", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const db = yield* Database;
+      const project = yield* projects.create(actor, "a", { slug: "cache", name: "Cache" });
+      const policy = yield* projects.saveTrustPolicy(actor, project.id, trustInput);
+      yield* db.query("test.demote", (db) =>
+        db.update(schema.member).set({ role: "member" }).where(eq(schema.member.id, "m")),
+      );
+
+      for (const operation of [
+        projects.listTrustPolicies(actor, project.id),
+        projects.saveTrustPolicy(actor, project.id, trustInput),
+        projects.deleteTrustPolicy(actor, project.id, policy.id),
+      ]) {
+        const denied = yield* Effect.result(operation);
+        expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
+      }
+
+      yield* db.query("test.promote", (db) =>
+        db.update(schema.member).set({ role: "owner" }).where(eq(schema.member.id, "m")),
+      );
+      yield* db.query("test.stepUp", (db) =>
+        db.insert(schema.organizationPolicy).values({
+          orgId: "a",
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [],
+            requirePasskeyForAdmins: true,
+          },
+          updatedAt: 1,
+        }),
+      );
+      const denied = yield* Effect.result(projects.saveTrustPolicy(actor, project.id, trustInput));
+      expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
+      expect(yield* projects.listTrustPolicies(actor, project.id)).toEqual([policy]);
+      yield* db.query("test.revokeMembership", (db) =>
+        db.delete(schema.member).where(eq(schema.member.id, "m")),
+      );
+      const revoked = yield* Effect.result(projects.listTrustPolicies(actor, project.id));
+      expect(Result.isFailure(revoked) && revoked.failure._tag).toBe("Forbidden");
     }),
   ));

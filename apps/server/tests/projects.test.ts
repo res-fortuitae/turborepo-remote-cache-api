@@ -4,7 +4,7 @@ import { Auth } from "@repo/auth";
 import { AuthTest } from "@repo/auth/testing";
 import { Database, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
-import { Project, ProjectList } from "@repo/api-spec";
+import { Project, ProjectList, TrustPolicy, TrustPolicyList } from "@repo/api-spec";
 import { Projects } from "@repo/projects";
 import { ProjectsTest } from "@repo/projects/testing";
 import { Effect, Layer, Schema } from "effect";
@@ -14,6 +14,8 @@ import { isProjectsPath, projectsRoute } from "../src/projects-route.ts";
 
 const decodeProject = Schema.decodeUnknownSync(Project);
 const decodePage = Schema.decodeUnknownSync(ProjectList);
+const decodeTrustPolicy = Schema.decodeUnknownSync(TrustPolicy);
+const decodeTrustPolicyList = Schema.decodeUnknownSync(TrustPolicyList);
 
 const cookie = async () => {
   const key = await crypto.subtle.importKey(
@@ -185,6 +187,7 @@ test("grant HTTP routes add, list and remove audited same-org grants", () =>
         method: "POST",
         body: { slug: "grants", name: "Grants" },
       });
+
       const project = decodeProject(yield* Effect.promise(() => response.json()));
       const path = `/projects/${project.id}/grants`;
       expect(
@@ -201,5 +204,59 @@ test("grant HTTP routes add, list and remove audited same-org grants", () =>
       expect((yield* serve(`${path}/user/u`, { method: "DELETE" })).status).toBe(204);
       const empty = yield* serve(path);
       expect(yield* Effect.promise(() => empty.json())).toEqual([]);
+    }),
+  ));
+
+test("trust policy routes enforce contract, session, origin, validation and project-scoped IDs", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const response = yield* serve("/orgs/org/projects", {
+        method: "POST",
+        body: { slug: "cache", name: "Cache" },
+      });
+
+      const project = decodeProject(yield* Effect.promise(() => response.json()));
+      const path = `/projects/${project.id}/trust-policies`;
+      expect(isProjectsPath(path)).toBe(true);
+
+      const body = {
+        provider: "github",
+        enabled: true,
+        issuer: "https://token.actions.githubusercontent.com",
+        claims: { aud: ["cache"], repository: ["org/repo"] },
+        scope: "read write",
+        ttlSeconds: 600,
+      };
+
+      expect((yield* serve(path, { anonymous: true })).status).toBe(401);
+      expect(
+        (yield* serve(path, { method: "POST", origin: "https://attacker.example", body })).status,
+      ).toBe(403);
+      expect((yield* serve(path, { method: "POST", body: { ...body, claims: {} } })).status).toBe(
+        400,
+      );
+      const created = yield* serve(path, { method: "POST", body });
+      expect(created.status).toBe(201);
+      expect(created.headers.get("cache-control")).toBe("no-store");
+
+      const policy = decodeTrustPolicy(yield* Effect.promise(() => created.json()));
+
+      const listed = yield* serve(path);
+      expect(decodeTrustPolicyList(yield* Effect.promise(() => listed.json()))).toHaveLength(1);
+      expect(
+        (yield* serve(`${path}/${policy.id}`, { method: "PUT", body: { ...body, enabled: false } }))
+          .status,
+      ).toBe(200);
+      expect((yield* serve(`${path}/missing`, { method: "PUT", body })).status).toBe(404);
+      expect((yield* serve(path, { method: "PATCH", body })).status).toBe(405);
+      expect((yield* serve(path, { method: "POST", rawBody: "{" })).status).toBe(400);
+      expect(
+        (yield* serve(path, {
+          method: "POST",
+          rawBody: JSON.stringify({ ...body, label: "x".repeat(17000) }),
+        })).status,
+      ).toBe(400);
+      expect((yield* serve(`${path}/${policy.id}`, { method: "DELETE" })).status).toBe(204);
+      expect((yield* serve(`${path}/${policy.id}`, { method: "DELETE" })).status).toBe(404);
     }),
   ));

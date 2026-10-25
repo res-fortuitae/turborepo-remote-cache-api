@@ -77,6 +77,7 @@ export const trustPolicy = sqliteTable(
     }).notNull(),
     enabled: integer({ mode: "boolean" }).notNull().default(true),
     createdBy: text("created_by").notNull(),
+    createdAt: integer("created_at").notNull().default(0),
     body: text({ mode: "json" }).$type<TrustPolicyBody>().notNull(),
   },
   (t) => [index("trust_policy_project").on(t.projectId)],

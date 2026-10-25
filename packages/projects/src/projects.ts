@@ -6,12 +6,13 @@ import {
   Forbidden,
   NotFound,
   UpdateProjectRequest,
+  TrustPolicyRequest,
   type Project as ProjectResponse,
 } from "@repo/api-spec";
 import { AuditLog, type AuditInput, type AuditLogError } from "@repo/audit";
 import { readInstancePolicy, requirePasskeyProof } from "@repo/auth";
 import { Authorization, type SessionPrincipal, type ProjectAction } from "@repo/authz";
-import { Database, ProjectRepo, schema, type Project } from "@repo/db";
+import { Database, ProjectRepo, schema, type Project, type TrustPolicy } from "@repo/db";
 import { AuthConfig, InstancePolicy, tightenPolicy } from "@repo/deploy-config";
 import { ProjectRetentionRules, artifactPrefix } from "./maintenance.ts";
 import { and, eq, ne } from "drizzle-orm";
@@ -36,6 +37,18 @@ export interface ProjectActor extends SessionPrincipal {
 const decodePolicy = Schema.decodeUnknownEffect(InstancePolicy);
 const decodeCreate = Schema.decodeUnknownEffect(CreateProjectRequest);
 const decodeUpdate = Schema.decodeUnknownEffect(UpdateProjectRequest);
+const decodeTrustPolicy = Schema.decodeUnknownEffect(TrustPolicyRequest);
+
+const presentTrustPolicy = (row: TrustPolicy) => ({
+  ...row.body,
+  id: row.id,
+  projectId: row.projectId,
+  provider: row.provider,
+  enabled: row.enabled,
+  createdBy: row.createdBy,
+  createdAt: new Date(row.createdAt).toISOString(),
+});
+
 const decodeGrant = Schema.decodeUnknownEffect(GrantRequest);
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Adapter failures are unknown by definition.
@@ -56,6 +69,7 @@ const projects = Effect.gen(function* () {
   const config = yield* AuthConfig;
   const limits = yield* ProjectLimits;
   const retentionRules = yield* Effect.serviceOption(ProjectRetentionRules);
+
   const syncRetention = (row: Project, policy: typeof InstancePolicy.Type) =>
     retentionRules._tag === "Some"
       ? retentionRules.value
@@ -202,7 +216,121 @@ const projects = Effect.gen(function* () {
         ),
       );
 
+  const policyProject = Effect.fn("Projects.policyProject")(function* (
+    actor: ProjectActor,
+    id: string,
+  ) {
+    const row = yield* locate(id);
+    yield* requirePermission(actor, "grant", row.orgId, id);
+
+    return row;
+  });
+
+  const findTrustPolicy = Effect.fn("Projects.findTrustPolicy")(function* (
+    id: string,
+    policyId: string,
+  ) {
+    const row = yield* database.query("Projects.findTrustPolicy", (db) =>
+      db
+        .select()
+        .from(schema.trustPolicy)
+        .where(and(eq(schema.trustPolicy.projectId, id), eq(schema.trustPolicy.id, policyId)))
+        .get(),
+    );
+
+    if (!row) return yield* new NotFound({ message: "Trust policy not found" });
+
+    return row;
+  });
+
   return {
+    listTrustPolicies: Effect.fn("Projects.listTrustPolicies")(function* (
+      actor: ProjectActor,
+      id: string,
+    ) {
+      yield* policyProject(actor, id);
+
+      const rows = yield* database.query("Projects.listTrustPolicies", (db) =>
+        db
+          .select()
+          .from(schema.trustPolicy)
+          .where(eq(schema.trustPolicy.projectId, id))
+          .orderBy(schema.trustPolicy.id),
+      );
+
+      return rows.map(presentTrustPolicy);
+    }),
+    saveTrustPolicy: Effect.fn("Projects.saveTrustPolicy")(function* (
+      actor: ProjectActor,
+      id: string,
+      input: typeof TrustPolicyRequest.Type,
+      policyId?: string,
+    ) {
+      const project = yield* policyProject(actor, id);
+      yield* mutationPolicy(actor, project.orgId);
+
+      const decoded = yield* decodeTrustPolicy(input).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Invalid trust policy" })),
+      );
+
+      const before = policyId === undefined ? undefined : yield* findTrustPolicy(id, policyId);
+      const { provider, enabled, ...body } = decoded;
+
+      const row: TrustPolicy = {
+        id: before?.id ?? crypto.randomUUID(),
+        projectId: id,
+        provider,
+        enabled,
+        createdBy: before?.createdBy ?? actor.userId,
+        createdAt: before?.createdAt ?? (yield* Clock.currentTimeMillis),
+        body: {
+          ...body,
+          claims: Object.fromEntries(
+            Object.entries(body.claims).map(([key, values]) => [key, [...values]]),
+          ),
+          refPatterns: body.refPatterns === undefined ? undefined : [...body.refPatterns],
+        },
+      };
+
+      yield* audit.commit(
+        {
+          ...event(
+            actor,
+            project.orgId,
+            before ? "trust_policy.update" : "trust_policy.create",
+            id,
+          ),
+          metadata: { policyId: row.id },
+        },
+        (db) => [
+          before
+            ? db
+                .update(schema.trustPolicy)
+                .set({ provider, enabled, body: row.body })
+                .where(and(eq(schema.trustPolicy.projectId, id), eq(schema.trustPolicy.id, row.id)))
+            : db.insert(schema.trustPolicy).values(row),
+        ],
+      );
+
+      return presentTrustPolicy(row);
+    }),
+    deleteTrustPolicy: Effect.fn("Projects.deleteTrustPolicy")(function* (
+      actor: ProjectActor,
+      id: string,
+      policyId: string,
+    ) {
+      const project = yield* policyProject(actor, id);
+      yield* mutationPolicy(actor, project.orgId);
+      yield* findTrustPolicy(id, policyId);
+      yield* audit.commit(
+        { ...event(actor, project.orgId, "trust_policy.delete", id), metadata: { policyId } },
+        (db) => [
+          db
+            .delete(schema.trustPolicy)
+            .where(and(eq(schema.trustPolicy.projectId, id), eq(schema.trustPolicy.id, policyId))),
+        ],
+      );
+    }),
     delete: Effect.fn("Projects.delete")(function* (
       actor: ProjectActor,
       id: string,
@@ -211,6 +339,7 @@ const projects = Effect.gen(function* () {
       const row = yield* locate(id);
       yield* requirePermission(actor, "delete", row.orgId, id);
       yield* mutationPolicy(actor, row.orgId);
+
       if (confirmation !== id)
         return yield* new BadRequest({ message: "Confirm deletion with the project ID" });
       const now = yield* Clock.currentTimeMillis;
@@ -380,12 +509,58 @@ const projects = Effect.gen(function* () {
         archivedAt: null,
       } satisfies Project;
 
-      yield* commitMutation(event(actor, orgId, "create", row.id), (db) => [
-        db.insert(schema.project).values(row),
-        db.insert(schema.projectRetention).values({ projectId: row.id, scannedAt: 0 }),
-      ]);
+      const defaultBodies: TrustPolicy["body"][] =
+        decoded.github === undefined
+          ? []
+          : [
+              {
+                issuer: "https://token.actions.githubusercontent.com",
+                ttlSeconds: 600,
+                label: "GitHub default branch",
+                claims: {
+                  aud: [decoded.github.audience],
+                  repository: [decoded.github.repository],
+                  ref: [`refs/heads/${decoded.github.defaultBranch}`],
+                },
+                scope: "read write",
+              },
+              {
+                issuer: "https://token.actions.githubusercontent.com",
+                ttlSeconds: 600,
+                label: "GitHub pull requests",
+                claims: {
+                  aud: [decoded.github.audience],
+                  repository: [decoded.github.repository],
+                  sub: [`repo:${decoded.github.repository}:pull_request`],
+                },
+                scope: "read",
+              },
+            ];
+
+      const defaults: TrustPolicy[] = defaultBodies.map((body) => ({
+        id: crypto.randomUUID(),
+        projectId: row.id,
+        provider: "github",
+        enabled: true,
+        createdBy: actor.userId,
+        createdAt: row.createdAt,
+        body,
+      }));
+
+      yield* commitMutation(
+        {
+          ...event(actor, orgId, "create", row.id),
+          metadata: { defaultTrustPolicyIds: defaults.map((policy) => policy.id) },
+        },
+        (db) => [
+          db.insert(schema.project).values(row),
+          db.insert(schema.projectRetention).values({ projectId: row.id, scannedAt: 0 }),
+          ...defaults.map((policy) => db.insert(schema.trustPolicy).values(policy)),
+        ],
+      );
 
       yield* syncRetention(row, policy);
+
       return present(row, policy);
     }),
     get: Effect.fn("Projects.get")(function* (actor: ProjectActor, id: string) {
@@ -477,6 +652,7 @@ const projects = Effect.gen(function* () {
 
       const updated = yield* locate(id);
       yield* syncRetention(updated, policy);
+
       return present(updated, policy);
     }),
   };

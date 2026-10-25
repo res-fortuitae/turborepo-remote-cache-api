@@ -25,3 +25,11 @@ export {
 } from "./verifier.ts";
 
 export type { VerifiedOidcToken } from "./verifier.ts";
+
+export {
+  TrustPolicyMatcher,
+  TrustPolicyMatcherLive,
+  TrustPolicyMatcherTest,
+} from "./trust-policy-matcher.ts";
+
+export type { TrustPolicyDecision, PolicyFailure } from "./trust-policy-matcher.ts";
