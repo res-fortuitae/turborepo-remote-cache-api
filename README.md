@@ -14,6 +14,8 @@ This Bun + Turborepo monorepo contains:
 - `packages/api-spec`: shared Effect HttpApi groups, transport schemas and tagged API errors
   ([contract and consumption guide](packages/api-spec/README.md)).
 - `packages/shared`: compatibility schema exports and redacted bearer token types.
+- `packages/client-core`: shared CI authentication, exchange, DPoP signing and in-memory refresh
+  ([composition guide](packages/client-core/README.md)).
 - `packages/action`: GitHub Action scaffold.
 - `packages/cli`: CLI scaffold.
 - `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.
