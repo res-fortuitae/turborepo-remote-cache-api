@@ -16,8 +16,11 @@
   },
   "dependencies": {
     "@repo/api-spec": "workspace:*",
+    "@repo/audit": "workspace:*",
+    "@repo/credentials": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/deploy-config": "workspace:*",
+    "@repo/ratelimit": "workspace:*",
     "effect": "^4.0.6",
     "jose": "^6.2.13"
   },

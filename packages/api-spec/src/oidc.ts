@@ -4,9 +4,9 @@ import { CacheScope, Id, Timestamp } from "./common.ts";
 import { ApiErrors } from "./http-errors.ts";
 
 export const ExchangeRequest = Schema.Struct({
-  token: Schema.RedactedFromValue(Schema.NonEmptyString),
-  team: Id,
-  project: Id,
+  token: Schema.RedactedFromValue(Schema.NonEmptyString.check(Schema.isMaxLength(16_384))),
+  team: Id.check(Schema.isMaxLength(256)),
+  project: Id.check(Schema.isMaxLength(256)),
 });
 
 export const ExchangeHeaders = Schema.Struct({

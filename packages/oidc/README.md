@@ -137,3 +137,35 @@ Future exchange handlers must evaluate guardrails with the current effective
 settings before matching, so legacy policies and tightened settings fail closed.
 The tester demonstrates that composition. Signature, audience, expiry and replay
 verification remain mandatory before any real exchange.
+
+## CI exchange
+
+`POST /oidc/exchange` accepts `{ token, team, project }`, where `team` and `project`
+are immutable organization/project IDs. No browser session is needed. The endpoint
+is mounted by the Worker; `OidcExchangeLive` owns the use case and receives verifier,
+matcher, guardrails, signer, audit, repositories and rate limiting as Effect services.
+
+Only enabled policies on the requested project can grant access. Current instance,
+organization and deployment ceilings are applied on every exchange. Invalid legacy
+policies fail closed; archived projects issue read-only tokens, deleted projects
+and archived organizations cannot exchange. The signed cache JWT contains current
+Coordinator revocation epochs. Its TTL is the minimum of matching policies, current
+instance/org maximum, signer maximum and remaining CI-token life plus a 30-second
+skew margin. The response matches `ExchangeResponse`: redacted token on the client,
+ISO `expiresAt`, canonical `api`, organization/project IDs and effective scope.
+
+Every POST attempt, including malformed input, replay, rate limiting and denials,
+is recorded durably in the audit log before returning. Claim snapshots contain only
+an allowlist of verified identity/context claims, never raw tokens, proofs or unknown
+custom claims. Denials expose a generic 403; nearest-policy/failed-claim and guardrail
+details stay in audit metadata. Limiter rejection returns 429 with Retry-After;
+service/audit failure returns 503. All responses use `Cache-Control: no-store`.
+Bodies are stream-bounded to 24 KiB, individual CI tokens to 16 KiB and IDs to 256
+characters. The native Rate Limiting binding uses separate `oidc:ip:` and `oidc:org:`
+keys (edge-local approximate protection, not an exact global quota).
+
+DPoP verification/binding follows in STV-486: a supplied proof or any binding
+requirement is rejected until then, never downgraded to bearer. Signature-key delivery
+follows STV-475; mandatory artifact signing also fails closed until available.
+`ExchangeConfig` carries deployment identity ceilings; hosts must supply real rate
+limits. No infrastructure is provisioned by this service or its tests.

@@ -123,7 +123,8 @@ organization policy ceilings, and batch/upload bounds.
 filters, audited background purge jobs, the dashboard, and `tcache admin purge`.
 
 The CI ID-token verifier and its replay/cache guarantees are documented in
-[`@repo/oidc`](packages/oidc/README.md). The exchange endpoint follows in STV-449.
+[`@repo/oidc`](packages/oidc/README.md). `POST /oidc/exchange` issues project-scoped cache JWTs; see that guide for
+policy, audit, rate-limit and pending binding/signature behavior.
 
 M2 project management supports CRUD, direct/team grants, live authorization,
 archive and durable deletion. Verified cache JWTs use isolated project prefixes.

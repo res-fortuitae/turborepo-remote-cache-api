@@ -40,3 +40,13 @@ export {
   PolicyGuardrailsTest,
 } from "./policy-guardrails.ts";
 export type { PolicyGuardrailSettings } from "./policy-guardrails.ts";
+
+export {
+  OidcExchange,
+  OidcExchangeLive,
+  ExchangeConfig,
+  ExchangeConfigLive,
+  ExchangeError,
+  OIDC_EXCHANGE_MARGIN_SECONDS,
+} from "./exchange.ts";
+export type { ExchangeContext } from "./exchange.ts";

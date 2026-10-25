@@ -70,7 +70,9 @@ import {
   DatabaseLive,
   ReplayGuardLive,
   ProjectRepoLive,
+  TrustPolicyRepoLive,
   InstanceSettingsRepoLive,
+  InstanceSettingsRepo,
 } from "@repo/db";
 import { AuthorizationDatabaseLive, AuthorizationCeilings } from "@repo/authz";
 import {
@@ -83,7 +85,20 @@ import {
   ProjectRetentionRules,
 } from "@repo/projects";
 import { isProjectsPath, projectsRoute } from "./projects-route.ts";
-import { pruneOidcReplayIds } from "@repo/oidc";
+import {
+  pruneOidcReplayIds,
+  OidcExchangeLive,
+  OidcVerifierLive,
+  OidcVerifierConfig,
+  GitHubIssuerRegistry,
+  JwksCacheLive,
+  KvNamespace,
+  TrustPolicyMatcherLive,
+  ExchangeConfig,
+} from "@repo/oidc";
+import { ExchangeRateLimiter, RateLimiter as RequestRateLimiter } from "@repo/ratelimit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { oidcRoute } from "./oidc-route.ts";
 import {
   AuthConfig,
   IdentityCeilings,
@@ -124,6 +139,7 @@ import {
   CredentialResolverLive,
   LegacyCredentialConfig,
   CacheTokenVerifierLive,
+  CacheTokenSignerLive,
   CacheTokenConfigLive,
   KeyStoreLive,
   SigningKeySecret,
@@ -882,6 +898,76 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const projects = projectsRoute(Layer.mergeAll(authLayer, projectsLayer));
 
+    const oidcVerifierLayer = OidcVerifierLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FetchHttpClient.layer,
+          GitHubIssuerRegistry,
+          ReplayGuardLive,
+          JwksCacheLive.pipe(Layer.provide(Layer.effect(KvNamespace, kv.raw))),
+          Layer.effect(
+            OidcVerifierConfig,
+            Effect.gen(function* () {
+              const settings = yield* InstanceSettingsRepo;
+              const policy = yield* settings.policy("", authEnvironment.IDENTITY_CEILINGS ?? {});
+              return {
+                allowedIssuers: policy.allowedOidcIssuers,
+                maxTokenAgeSeconds: 600,
+                clockSkewSeconds: 30,
+              };
+            }),
+          ).pipe(Layer.provide(InstanceSettingsRepoLive)),
+        ),
+      ),
+    );
+    const oidc = oidcRoute(
+      OidcExchangeLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            oidcVerifierLayer,
+            TrustPolicyMatcherLive,
+            PolicyGuardrailsLive,
+            CacheTokenSignerLive.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  coordinatorLayer,
+                  CacheTokenConfigLive,
+                  KeyStoreLive.pipe(
+                    Layer.provide(Layer.effect(SigningKeySecret, signingSecret.raw)),
+                  ),
+                ),
+              ),
+            ),
+            auditLayer,
+            ProjectRepoLive,
+            TrustPolicyRepoLive,
+            InstanceSettingsRepoLive,
+            Layer.succeed(ExchangeConfig, authEnvironment.IDENTITY_CEILINGS ?? {}),
+            Layer.effect(
+              ExchangeRateLimiter,
+              Effect.gen(function* () {
+                const limiter = yield* RequestRateLimiter;
+                return {
+                  allow: (key: string) =>
+                    limiter
+                      .check(key, {
+                        name: "oidc-exchange",
+                        limit: 600,
+                        period: 60,
+                      })
+                      .pipe(
+                        Effect.as(true),
+                        Effect.catchTag("RateLimited", () => Effect.succeed(false)),
+                      ),
+                };
+              }).pipe(Effect.provide(rateLimitLayer)),
+            ),
+          ),
+        ),
+        Layer.provide(databaseLayer),
+      ),
+    );
+
     const report = capabilitiesRoute(capabilities, token).pipe(
       Effect.provide(authLayer),
       Effect.catch(() =>
@@ -913,6 +999,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
                   : {},
               },
             );
+          return yield* oidc;
         }
 
         if (pathname === "/api/instance/capabilities") return yield* report;

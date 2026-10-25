@@ -121,3 +121,13 @@ export const betterAuthRateLimitStorage = (limiter: typeof RateLimiter.Service) 
       ),
     ),
 });
+
+/** Exchange-level IP/organization quotas retain their boolean domain port. */
+export class ExchangeRateLimiter extends Context.Service<
+  ExchangeRateLimiter,
+  { readonly allow: (key: string) => Effect.Effect<boolean, RateLimitUnavailable> }
+>()("@repo/ratelimit/ExchangeRateLimiter") {}
+
+export const ExchangeRateLimiterTest = Layer.succeed(ExchangeRateLimiter, {
+  allow: () => Effect.succeed(true),
+});
