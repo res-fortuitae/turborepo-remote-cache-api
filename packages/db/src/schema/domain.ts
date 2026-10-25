@@ -223,3 +223,33 @@ export const projectRetention = sqliteTable("project_retention", {
   cursor: text(),
   scannedAt: integer("scanned_at").notNull().default(0),
 });
+
+/** API-key epoch stamps and usage are separate from the plugin's mutable counters. */
+export const cacheApiKey = sqliteTable("cache_api_key", {
+  id: text().primaryKey(),
+  orgId: text("org_id").notNull(),
+  projectId: text("project_id").notNull(),
+  orgEpoch: integer("org_epoch").notNull(),
+  projectEpoch: integer("project_epoch").notNull(),
+  lastUsedAt: integer("last_used_at"),
+});
+
+/** Durable incident-response scans and bounded deletion checkpoints. */
+export const artifactPurgeJob = sqliteTable("artifact_purge_job", {
+  id: text().primaryKey(),
+  projectId: text("project_id").notNull(),
+  state: text().notNull(),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  data: text().notNull(),
+});
+
+/** Upload provenance stays queryable before the full M7 analytics sink is enabled. */
+export const artifactOperation = sqliteTable("artifact_operation", {
+  status: integer().notNull().default(202),
+  id: text().primaryKey(),
+  orgId: text("org_id").notNull(),
+  projectId: text("project_id").notNull(),
+  hash: text().notNull(),
+  createdAt: integer("created_at").notNull(),
+  provenance: text({ mode: "json" }).$type<Readonly<Record<string, string>>>().notNull(),
+});

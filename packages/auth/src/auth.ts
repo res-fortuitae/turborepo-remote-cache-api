@@ -1,3 +1,11 @@
+import { RateLimiter, betterAuthRateLimitStorage } from "@repo/ratelimit";
+import {
+  ApiKeyLookup,
+  ApiKeyEpochs,
+  ApiKeyBackground,
+  ApiKeyVerificationError,
+  makeApiKeys,
+} from "./api-keys.ts";
 import { AuditLog } from "@repo/audit";
 import { Database, schema, type DatabaseError } from "@repo/db";
 import { AuthConfig } from "@repo/deploy-config";
@@ -81,96 +89,186 @@ const toBetterAuthStorage = (storage: SecondaryStorageService): BetterAuthSecond
  * binding per request, so the app builds this layer per request.
  * `SecondaryStorage` is optional; without it sessions are read from D1.
  */
-export const AuthLive: Layer.Layer<Auth, never, Database | AuthConfig | Mailer | AuditLog> =
-  Layer.effect(
-    Auth,
-    Effect.gen(function* () {
-      const config = yield* AuthConfig;
-      const database = yield* Database;
-      const storage = yield* Effect.serviceOption(SecondaryStorage);
-      // Required now so hooks can use them without changing the layer type:
-      // email (STV-495) and audit (STV-458).
-      const mailer = yield* Mailer;
-      const audit = yield* AuditLog;
+export const AuthLive: Layer.Layer<
+  Auth | ApiKeyLookup,
+  never,
+  Database | AuthConfig | Mailer | AuditLog | RateLimiter
+> = Layer.effectContext(
+  Effect.gen(function* () {
+    const config = yield* AuthConfig;
+    const epochs = yield* Effect.serviceOption(ApiKeyEpochs);
+    const background = yield* Effect.serviceOption(ApiKeyBackground);
+    const database = yield* Database;
+    const storage = yield* Effect.serviceOption(SecondaryStorage);
+    // Required now so hooks can use them without changing the layer type:
+    // email (STV-495) and audit (STV-458).
+    const mailer = yield* Mailer;
+    const audit = yield* AuditLog;
 
-      const auth = makeBetterAuth({
-        config,
-        audit,
-        db: database.drizzle,
-        secondaryStorage: Option.getOrUndefined(Option.map(storage, toBetterAuthStorage)),
-        sendInvitation: (email, org, url) =>
-          Effect.runPromise(
-            mailer.send(invitationMessage(email, org, url)).pipe(
-              Effect.as(true),
-              Effect.catchTag("MailerError", () => Effect.succeed(false)),
-            ),
+    const limiter = yield* RateLimiter;
+
+    const auth = makeBetterAuth({
+      rateLimitStorage: betterAuthRateLimitStorage(limiter),
+      config,
+      audit,
+      db: database.drizzle,
+      secondaryStorage: Option.getOrUndefined(Option.map(storage, toBetterAuthStorage)),
+      sendInvitation: (email, org, url) =>
+        Effect.runPromise(
+          mailer.send(invitationMessage(email, org, url)).pipe(
+            Effect.as(true),
+            Effect.catchTag("MailerError", () => Effect.succeed(false)),
           ),
-        // Promise callback is the boundary from Better Auth into our Effect service.
-        sendMagicLink: (email, url) =>
-          Effect.runPromise(
-            mailer.send({
-              to: email,
-              subject: "Sign in to Turborepo Remote Cache",
-              text: `Sign in using this link (expires in 10 minutes):\n\n${url}`,
-            }),
-          ),
-      });
-
-      const getSession = (headers: Headers) =>
-        callBetterAuth("Auth.getSession", () =>
-          auth.api.getSession({ headers, query: { disableCookieCache: true } }),
-        ).pipe(Effect.map(Option.fromNullishOr));
-
-      const requireSession = (headers: Headers) =>
-        Effect.flatMap(
-          getSession(headers),
-          Option.match({
-            onNone: () => Effect.fail(new Unauthenticated({ reason: "missing" })),
-            onSome: Effect.succeed,
+        ),
+      // Promise callback is the boundary from Better Auth into our Effect service.
+      sendMagicLink: (email, url) =>
+        Effect.runPromise(
+          mailer.send({
+            to: email,
+            subject: "Sign in to Turborepo Remote Cache",
+            text: `Sign in using this link (expires in 10 minutes):\n\n${url}`,
           }),
-        );
+        ),
+    });
 
-      const requireFreshSession = Effect.fn("Auth.requireFreshSession")(function* (
-        headers: Headers,
-      ) {
-        const session = yield* requireSession(headers);
-        const now = new Date(yield* Clock.currentTimeMillis);
+    const getSession = (headers: Headers) =>
+      callBetterAuth("Auth.getSession", () =>
+        auth.api.getSession({ headers, query: { disableCookieCache: true } }),
+      ).pipe(Effect.map(Option.fromNullishOr));
 
-        const rows = yield* database.query("Auth.requireFreshSession", (db) =>
-          db
-            .select({ user: schema.user, session: schema.session })
-            .from(schema.session)
-            .innerJoin(schema.user, eq(schema.session.userId, schema.user.id))
-            .where(
-              and(
-                eq(schema.session.token, session.session.token),
-                gt(schema.session.expiresAt, now),
-              ),
-            )
-            .limit(1),
-        );
+    const requireSession = (headers: Headers) =>
+      Effect.flatMap(
+        getSession(headers),
+        Option.match({
+          onNone: () => Effect.fail(new Unauthenticated({ reason: "missing" })),
+          onSome: Effect.succeed,
+        }),
+      );
 
-        const live = rows[0];
+    const requireFreshSession = Effect.fn("Auth.requireFreshSession")(function* (headers: Headers) {
+      const session = yield* requireSession(headers);
+      const now = new Date(yield* Clock.currentTimeMillis);
 
-        if (live === undefined || live.user.banned)
-          return yield* new Unauthenticated({ reason: "revoked" });
+      const rows = yield* database.query("Auth.requireFreshSession", (db) =>
+        db
+          .select({ user: schema.user, session: schema.session })
+          .from(schema.session)
+          .innerJoin(schema.user, eq(schema.session.userId, schema.user.id))
+          .where(
+            and(eq(schema.session.token, session.session.token), gt(schema.session.expiresAt, now)),
+          )
+          .limit(1),
+      );
 
-        return {
-          ...session,
-          user: { ...session.user, ...live.user },
-          session: { ...session.session, ...live.session },
-        };
-      });
+      const live = rows[0];
+
+      if (live === undefined || live.user.banned)
+        return yield* new Unauthenticated({ reason: "revoked" });
 
       return {
-        handler: (request) => callBetterAuth("Auth.handler", () => auth.handler(request)),
-        getSession,
-        requireSession,
-        requireFreshSession,
-        revokeSessions: (headers) =>
-          Effect.asVoid(
-            callBetterAuth("Auth.revokeSessions", () => auth.api.revokeSessions({ headers })),
+        ...session,
+        user: { ...session.user, ...live.user },
+        session: { ...session.session, ...live.session },
+      };
+    });
+
+    const keys = makeApiKeys({
+      db: database.drizzle,
+      auth,
+      config,
+      audit,
+      storage: Option.getOrUndefined(storage),
+      epochs: Option.getOrUndefined(epochs),
+      background: Option.getOrUndefined(background),
+    });
+
+    const handler = (request: Request) =>
+      Effect.gen(function* () {
+        const path = new URL(request.url).pathname;
+        // Aggregate IP guard also covers our custom routes, outside Better Auth's router.
+        yield* limiter.check(request.headers.get("cf-connecting-ip") ?? "unknown", {
+          name: "auth-ip",
+          limit: 60,
+          period: 60,
+        });
+
+        // Stock routes accept mutable plugin controls; expose only the constrained API.
+        if (path.startsWith("/api/auth/api-key/")) return new Response(null, { status: 404 });
+
+        if (!path.startsWith("/api/auth/cache-keys/"))
+          return yield* callBetterAuth("Auth.handler", () => auth.handler(request)).pipe(
+            Effect.map((response) => {
+              if (response.status !== 429) return response;
+              // Pinned Better Auth emits X-Retry-After; expose the standard header too.
+              const headers = new Headers(response.headers);
+              headers.set("Retry-After", headers.get("x-retry-after") ?? "60");
+              headers.set("Cache-Control", "no-store");
+              return new Response(response.body, { status: response.status, headers });
+            }),
+          );
+        const origin = request.headers.get("origin");
+
+        if (!origin || ![config.baseURL, ...config.trustedOrigins].includes(origin))
+          return new Response(null, { status: 403 });
+
+        return yield* Effect.gen(function* () {
+          const session = yield* requireFreshSession(request.headers);
+
+          return yield* callBetterAuth("Auth.cacheKeys", () =>
+            keys.handle(request, session.user.id),
+          );
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.succeed(
+              Response.json(
+                { code: "cache_key_request_failed" },
+                {
+                  status:
+                    error._tag === "Unauthenticated"
+                      ? 401
+                      : error._tag === "AuthError"
+                        ? error.status
+                        : 500,
+                  headers: { "Cache-Control": "no-store" },
+                },
+              ),
+            ),
           ),
-      } satisfies AuthService;
-    }),
-  );
+        );
+      }).pipe(
+        Effect.catchTags({
+          RateLimited: (error) =>
+            Effect.succeed(
+              Response.json(
+                { code: "rate_limited" },
+                {
+                  status: 429,
+                  headers: { "Retry-After": String(error.retryAfter), "Cache-Control": "no-store" },
+                },
+              ),
+            ),
+          RateLimitUnavailable: () =>
+            Effect.succeed(Response.json({ code: "unavailable" }, { status: 503 })),
+        }),
+      );
+
+    return Context.make(Auth, {
+      handler,
+      getSession,
+      requireSession,
+      requireFreshSession,
+      revokeSessions: (headers) =>
+        Effect.asVoid(
+          callBetterAuth("Auth.revokeSessions", () => auth.api.revokeSessions({ headers })),
+        ),
+    } satisfies AuthService).pipe(
+      Context.add(ApiKeyLookup, {
+        verify: (key) =>
+          Effect.tryPromise({
+            try: () => keys.verify(key),
+            catch: () => new ApiKeyVerificationError({ cause: "Invalid or unavailable API key" }),
+          }),
+      }),
+    );
+  }),
+);

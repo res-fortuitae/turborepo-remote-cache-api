@@ -1,9 +1,31 @@
 #!/usr/bin/env bun
+import { adminPurge } from "./purge.ts";
 import { doctorServer, formatCapabilities } from "./index.ts";
 
 const args = Bun.argv.slice(2);
 
-if (args[0] !== "doctor" || !args.includes("--server")) {
+if (args[0] === "admin" && args[1] === "purge") {
+  try {
+    console.log(
+      JSON.stringify(
+        await adminPurge(args.slice(2), {
+          server: Bun.env.TURBO_API,
+          cookie: Bun.env.TCACHE_SESSION_COOKIE,
+        }),
+        null,
+        2,
+      ),
+    );
+  } catch (error) {
+    console.error(
+      error instanceof Error &&
+        /^(Set |Purge request|Confirm |Missing |An HTTPS)/.test(error.message)
+        ? error.message
+        : "Purge request failed. Check the filter, server and session.",
+    );
+    process.exitCode = 1;
+  }
+} else if (args[0] !== "doctor" || !args.includes("--server")) {
   console.error(
     "Usage: bun packages/cli/src/bin.ts doctor --server [https://cache.example.com] [--json]\nUses TURBO_API and TURBO_TOKEN. Other doctor checks are pending STV-489.",
   );

@@ -292,12 +292,41 @@ export const RateLimiter = Cloudflare.RateLimit("RATE_LIMITER", {
   simple: { limit: 600, period: 60 },
 });
 
+/** Fixed binding thresholds. Bindings in a period share counters across policy tiers. */
+export const RequestRateLimits = ([10, 60] as const).flatMap((period) =>
+  ([1, 3, 10, 30, 60, 100, 300, 600] as const).map((limit) => ({
+    period,
+    limit,
+    binding:
+      period === 60 && limit === 600
+        ? RateLimiter
+        : Cloudflare.RateLimit(`RATE_LIMIT_${period}_${limit}`, {
+            namespaceId: period === 60 ? 4280 : 4281,
+            simple: { limit, period },
+          }),
+  })),
+);
+
 /** Dashboard build output, served by the API Worker ahead of its fetch handler. */
 export const DashboardAssets = {
   directory: new URL("../../../apps/dashboard/dist", import.meta.url).pathname,
   notFoundHandling: "single-page-application",
   // Cache API paths never resolve to dashboard files.
-  runWorkerFirst: ["/v8", "/v8/*", "/api", "/api/*", "/oidc", "/oidc/*", "/.well-known/*"],
+  runWorkerFirst: [
+    "/v8",
+    "/v8/*",
+    "/api",
+    "/api/*",
+    "/oidc",
+    "/oidc/*",
+    "/.well-known/*",
+    "/v2/*",
+    "/v3/user/tokens/*",
+    "/v5/user/tokens/*",
+    "/v0/spaces",
+    "/registration/verify",
+    "/login/oauth/*",
+  ],
 } satisfies Cloudflare.AssetsProps;
 
 export {
