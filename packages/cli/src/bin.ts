@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
+import { runAuthCommand } from "./commands.ts";
 import { adminPurge } from "./purge.ts";
 import { doctorServer, formatCapabilities } from "./index.ts";
 
 const args = Bun.argv.slice(2);
 
-if (args[0] === "admin" && args[1] === "purge") {
+if (["exec", "proxy", "env", "proxy-stop"].includes(args[0] ?? "")) {
+  process.exitCode = await runAuthCommand(args);
+} else if (args[0] === "admin" && args[1] === "purge") {
   try {
     console.log(
       JSON.stringify(

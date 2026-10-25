@@ -36,16 +36,6 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
-      # PR #43 is a parallel stack. Pin the actual exec implementation, not a test proxy.
-      # Once merged, remove this checkout/install and point TCACHE_COMPAT_BIN at this checkout.
-      - if: matrix.mode == 'proxy'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: 61ddd7e4ef4ef9c95479dc4a71fe0ce8e51451e5
-          path: .compat-proxy
-          persist-credentials: false
-      - if: matrix.mode == 'proxy'
-        run: bun install --frozen-lockfile --cwd .compat-proxy
       - name: Verify release version selection
         if: github.event_name == 'release'
         run: bun scripts/turbo-compatibility-versions.ts --check-latest
@@ -54,7 +44,7 @@ jobs:
         env:
           TURBO_COMPAT_VERSION: ${{ matrix.turbo }}
           TURBO_COMPAT_MODE: ${{ matrix.mode }}
-          TCACHE_COMPAT_BIN: ${{ github.workspace }}/.compat-proxy/packages/cli/src/bin.ts
+          TCACHE_COMPAT_BIN: ${{ github.workspace }}/packages/cli/src/bin.ts
           TURBO_COMPAT_REPORT: compatibility-results.md
           # Secrets are supplied only to explicit workflow_dispatch preview runs, never PR jobs.
           TURBO_COMPAT_API: ${{ github.event_name == 'workflow_dispatch' && inputs.api || '' }}

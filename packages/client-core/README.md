@@ -1,6 +1,6 @@
 # @repo/client-core
 
-Shared Effect authentication for the Action, CLI and future local proxy. Runtime
+Shared Effect authentication for the Action, CLI and local proxy. Runtime
 imports are only `effect`, `jose` and `@repo/api-spec`. No Node/Bun APIs, environment
 globals, provider SDKs or server packages enter the library. All state belongs to a
 layer build; create one build per job/process and share it across callers.
@@ -118,3 +118,8 @@ for the proxy's later request binding; it does not claim server enforcement toda
 Run `bun run --cwd packages/client-core test` for deterministic in-memory platform,
 HTTP and clock tests, including cryptographic proof verification. No cloud or
 credentials are required.
+
+`CacheProxyLive` is the platform-independent forwarding service. The host supplies
+`ProxySession` (redacted session secret), `ProxyTransport` (streaming, no redirects),
+`ClientConfig` and `TokenCache`. Its request method returns a streaming `Response`;
+listener binding, maintenance timers, process execution and cleanup remain app-owned.

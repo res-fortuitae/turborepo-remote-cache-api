@@ -70,6 +70,7 @@
         "@repo/client-core": "workspace:*",
         "@repo/config": "workspace:*",
         "@types/bun": "latest",
+        "jose": "6.2.13",
         "miniflare": "^4.20260730.0",
       },
       "peerDependencies": {
@@ -188,7 +189,12 @@
     "packages/cli": {
       "name": "@repo/cli",
       "version": "0.0.0",
+      "bin": {
+        "tcache": "./src/bin.ts",
+      },
       "dependencies": {
+        "@effect/platform-bun": "^4.0.6",
+        "@repo/client-core": "workspace:*",
         "@repo/shared": "workspace:*",
         "effect": "^4.0.6",
       },
