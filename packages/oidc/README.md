@@ -67,3 +67,31 @@ that schedule occurs through the normal root deploy command.
 discovery, transport-bound, clock, and concurrent replay tests without network
 or credentials. The shared replay repository is additionally tested against
 SQLite and local workerd D1 in `@repo/db`.
+
+## Trust policies
+
+`TrustPolicyMatcherLive` (or the identical, stateless `TrustPolicyMatcherTest`)
+provides `TrustPolicyMatcher.match(project, policies, claims)`. Pass only claims
+already verified by `OidcVerifier`. Matching performs no network access and does
+not consume replay IDs, issue tokens, or write audit records.
+
+Policies retain the [OIDC UI shape](https://ui.shadcn.com/oidc/docs/save-and-verify):
+`issuer`, `claims`, and optional `label`, with `scope`, `ttlSeconds`, optional
+`refPatterns`, and optional `requireBoundTokens`. Issuers must use HTTPS without
+credentials, query or fragment. Every claim rule must have nonempty string values;
+`aud` is required. TTL is an integer between 1 and 3600 seconds; the exchange must
+also enforce instance/org ceilings and the incoming token lifetime.
+
+The issuer and every configured claim match exactly, including case. Scalar claims
+and array claims match if at least one string equals an allowed value. `*` in an
+ordinary claim is a literal. Optional `refPatterns` adds an AND constraint: at least
+one pattern must match a string `ref` or `branch` claim. Only `*` (any sequence)
+and `?` (one character) are special, including across `/`; an empty pattern list
+matches nothing. Pattern warnings and provider-specific guardrails follow in STV-487.
+
+Only enabled policies belonging to the requested project participate. All matches
+combine into the most restrictive scope, shortest TTL, and binding required if any
+match requires it. Archived projects force read-only; a deleted project never
+matches. Denials return the closest policy ID and failed rule names (first policy
+wins ties), without claim values. STV-449 consumes these diagnostics for denial audit
+and returns 403; HTTP exchange is not implemented by the matcher.

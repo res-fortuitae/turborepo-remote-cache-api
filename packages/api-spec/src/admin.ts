@@ -16,6 +16,7 @@ export const ProjectSlug = Schema.String.check(
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   Schema.isMaxLength(64),
 );
+
 const ProjectName = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(100));
 const ProjectDescription = Schema.String.check(Schema.isMaxLength(2000));
 const ProjectLimit = PositiveInteger.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER));
@@ -26,6 +27,13 @@ export const CreateProjectRequest = Schema.Struct({
   description: Schema.optional(ProjectDescription),
   retentionDays: Schema.optional(ProjectLimit),
   maxArtifactBytes: Schema.optional(ProjectLimit),
+  github: Schema.optional(
+    Schema.Struct({
+      repository: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)),
+      defaultBranch: Schema.NonEmptyString,
+      audience: Schema.NonEmptyString,
+    }),
+  ),
 });
 
 export const DeleteProjectRequest = Schema.Struct({ confirmation: Id });
@@ -71,13 +79,46 @@ export const ProjectGrant = Schema.Struct({
 
 export const ProjectGrants = Schema.Array(ProjectGrant);
 
+const PolicyIssuer = Schema.NonEmptyString.check(
+  Schema.makeFilter(
+    (value: string) => {
+      try {
+        const url = new URL(value);
+
+        return (
+          url.protocol === "https:" &&
+          !url.search &&
+          !url.hash &&
+          !url.username &&
+          !url.password &&
+          !value.includes("?") &&
+          !value.includes("#")
+        );
+      } catch {
+        return false;
+      }
+    },
+    { message: "Issuer must be HTTPS without credentials, query or fragment" },
+  ),
+);
+
+const ClaimValues = Schema.Array(Schema.NonEmptyString).check(Schema.isMinLength(1));
+
+const PolicyClaims = Schema.Record(Schema.NonEmptyString, ClaimValues).check(
+  Schema.makeFilter(
+    (claims: Record<string, readonly string[]>) =>
+      Object.hasOwn(claims, "aud") && (claims.aud?.length ?? 0) > 0,
+    { message: "An audience claim rule is required" },
+  ),
+);
+
 export const TrustPolicyBody = Schema.Struct({
-  issuer: Schema.NonEmptyString,
-  claims: Schema.Record(Schema.String, Schema.Array(Schema.String)),
+  issuer: PolicyIssuer,
+  claims: PolicyClaims,
   label: Schema.optional(Schema.String),
   scope: CacheScope,
-  ttlSeconds: PositiveInteger,
-  refPatterns: Schema.optional(Schema.Array(Schema.String)),
+  ttlSeconds: PositiveInteger.check(Schema.isLessThanOrEqualTo(3600)),
+  refPatterns: Schema.optional(Schema.Array(Schema.NonEmptyString)),
   requireBoundTokens: Schema.optional(Schema.Boolean),
 });
 

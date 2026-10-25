@@ -1,0 +1,1 @@
+ALTER TABLE `trust_policy` ADD `created_at` integer DEFAULT 0 NOT NULL;
