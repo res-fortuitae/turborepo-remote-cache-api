@@ -33,3 +33,10 @@ export {
 } from "./trust-policy-matcher.ts";
 
 export type { TrustPolicyDecision, PolicyFailure } from "./trust-policy-matcher.ts";
+
+export {
+  PolicyGuardrails,
+  PolicyGuardrailsLive,
+  PolicyGuardrailsTest,
+} from "./policy-guardrails.ts";
+export type { PolicyGuardrailSettings } from "./policy-guardrails.ts";

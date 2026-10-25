@@ -6,6 +6,7 @@ import {
   GrantRequest,
   UpdateProjectRequest,
   TrustPolicyRequest,
+  TestTrustPoliciesRequest,
 } from "@repo/api-spec";
 import { Auth } from "@repo/auth";
 import { CanonicalOrigin } from "@repo/deploy-config";
@@ -97,6 +98,16 @@ export const projectsApi = Effect.gen(function* () {
     const projectId = yield* decodeId(policyMatch[1]);
     const policyId = policyMatch[2] === undefined ? undefined : yield* decodeId(policyMatch[2]);
 
+    if (policyId === "test") {
+      if (request.method !== "POST")
+        return HttpServerResponse.empty({ status: 405, headers: { allow: "POST" } });
+      const body = yield* Schema.decodeUnknownEffect(TestTrustPoliciesRequest)(
+        yield* readManagementJson(request),
+      ).pipe(Effect.mapError(() => new BadRequest({ message: "Invalid sample claims" })));
+      return yield* HttpServerResponse.json(
+        yield* projects.testTrustPolicies(actor, projectId, body),
+      );
+    }
     if (policyId === undefined && request.method === "GET")
       return yield* HttpServerResponse.json(yield* projects.listTrustPolicies(actor, projectId));
 

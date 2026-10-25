@@ -1,3 +1,4 @@
+import { PolicyGuardrailsLive } from "@repo/oidc";
 import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/artifacts";
 import { multipartRoute } from "./multipart-route.ts";
 import { MULTIPART_PART_BYTES, MAX_MULTIPART_PARTS } from "@repo/api-spec";
@@ -865,6 +866,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const auth = authRoute(authLayer);
 
     const projectsLayer = ProjectsLive.pipe(
+      Layer.provide(PolicyGuardrailsLive),
       Layer.provide(
         Layer.mergeAll(
           ProjectRepoLive,

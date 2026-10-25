@@ -78,12 +78,13 @@ capacity and retention cursors. They require no cloud credentials or deployment.
 
 Session-authenticated project admins can manage policies through:
 
-| Method | Path                                     | Result                        |
-| ------ | ---------------------------------------- | ----------------------------- |
-| GET    | `/projects/:id/trust-policies`           | List policies                 |
-| POST   | `/projects/:id/trust-policies`           | Create (201)                  |
-| PUT    | `/projects/:id/trust-policies/:policyId` | Replace body/provider/enabled |
-| DELETE | `/projects/:id/trust-policies/:policyId` | Delete (204)                  |
+| Method | Path                                     | Result                                        |
+| ------ | ---------------------------------------- | --------------------------------------------- |
+| GET    | `/projects/:id/trust-policies`           | List policies                                 |
+| POST   | `/projects/:id/trust-policies`           | Create (201)                                  |
+| PUT    | `/projects/:id/trust-policies/:policyId` | Replace body/provider/enabled                 |
+| DELETE | `/projects/:id/trust-policies/:policyId` | Delete (204)                                  |
+| POST   | `/projects/:id/trust-policies/test`      | Simulate saved policies against sample claims |
 
 Requests use the flattened `TrustPolicyRequest` in `@repo/api-spec`; responses add
 `id`, `projectId`, `createdBy`, and `createdAt`. Updates preserve creation metadata.
@@ -104,6 +105,8 @@ Project creation optionally accepts a GitHub source:
   "name": "Build cache",
   "github": {
     "repository": "acme/app",
+    "repositoryId": "123456",
+    "repositoryOwnerId": "7890",
     "defaultBranch": "main",
     "audience": "https://cache.example.com"
   }
@@ -113,7 +116,7 @@ Project creation optionally accepts a GitHub source:
 This creates two policies in the project's creation transaction, with their IDs
 included in its audit event: the exact repository and default-branch ref receive
 read/write; the exact repository and `repo:acme/app:pull_request` subject receive
-read-only. Both use the supplied audience and a 600-second TTL. Supply an audience
+read-only. Both use immutable repository and owner IDs, the supplied audience and a 600-second TTL. The write default also requires `event_name=push`. Supply an audience
 accepted by the deployment's OIDC verifier. Without source metadata, creation does
 not infer a repository, branch, or audience and creates no policies. Additional
 repositories can share a project through additional policies, and the same
@@ -121,3 +124,28 @@ repository can have policies in multiple projects. Vercel defaults follow in STV
 
 See [trust policy matching](../packages/oidc/README.md#trust-policies) for exact
 matching, ref patterns, overlap resolution and exchange integration responsibilities.
+
+### Guardrails and policy tester
+
+Policy saves enforce immutable provider IDs, accepted audiences, the effective
+issuer allowlist, TTL ceiling and bound-token requirements. GitHub default source
+metadata must include numeric `repositoryId` and `repositoryOwnerId`; names alone
+are refused. A default write policy requires `event_name=push` as well as the branch.
+Strict instance/org workflow and environment allowlists apply to generated defaults
+as well; create manually constrained policies when those defaults cannot satisfy
+the strict settings.
+
+List/create/update responses include `errors` and `warnings` with stable codes,
+claim names where relevant, and messages. Existing unsafe policies remain visible
+with errors so admins can repair or delete them. Warning codes include
+`broad_write_refs`, `unrestricted_write_job`, `ttl_near_maximum`, and
+`untrusted_writes_enabled`. Enabling `allowUntrustedWrites` is an explicit security
+override for broader write events, with a persistent warning and audited flag.
+
+`POST /projects/:id/trust-policies/test` takes `{ "claims": { ... } }` and evaluates
+saved project policies. The response includes `simulation: true`, matching IDs,
+resulting scope/TTL/binding requirement, and each policy's rule results and
+warnings/errors. Invalid policies cannot contribute to the simulated grant.
+It requires the same live project-admin session and matching Origin as policy
+mutations, shares their 16 KiB limit and no-store response, and never issues a token
+or writes policy/audit rows. Sample claims have no authentication authority.

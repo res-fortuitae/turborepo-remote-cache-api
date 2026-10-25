@@ -30,6 +30,8 @@ export const CreateProjectRequest = Schema.Struct({
   github: Schema.optional(
     Schema.Struct({
       repository: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)),
+      repositoryId: Schema.String.check(Schema.isPattern(/^[0-9]+$/)),
+      repositoryOwnerId: Schema.String.check(Schema.isPattern(/^[0-9]+$/)),
       defaultBranch: Schema.NonEmptyString,
       audience: Schema.NonEmptyString,
     }),
@@ -120,6 +122,7 @@ export const TrustPolicyBody = Schema.Struct({
   ttlSeconds: PositiveInteger.check(Schema.isLessThanOrEqualTo(3600)),
   refPatterns: Schema.optional(Schema.Array(Schema.NonEmptyString)),
   requireBoundTokens: Schema.optional(Schema.Boolean),
+  allowUntrustedWrites: Schema.optional(Schema.Boolean),
 });
 
 export const TrustPolicyRequest = Schema.Struct({
@@ -128,8 +131,41 @@ export const TrustPolicyRequest = Schema.Struct({
   ...TrustPolicyBody.fields,
 });
 
+export const PolicyFinding = Schema.Struct({
+  code: Schema.String,
+  claim: Schema.optional(Schema.String),
+  message: Schema.String,
+});
+export const PolicyGuardrailReport = Schema.Struct({
+  errors: Schema.Array(PolicyFinding),
+  warnings: Schema.Array(PolicyFinding),
+});
+export const TestTrustPoliciesRequest = Schema.Struct({
+  claims: Schema.Record(Schema.String, Schema.Json),
+});
+export const TestTrustPoliciesResponse = Schema.Struct({
+  simulation: Schema.Literal(true),
+  matched: Schema.Boolean,
+  policyIds: Schema.Array(Id),
+  scope: Schema.optional(CacheScope),
+  ttlSeconds: Schema.optional(PositiveInteger),
+  requireBoundTokens: Schema.optional(Schema.Boolean),
+  policies: Schema.Array(
+    Schema.Struct({
+      policyId: Id,
+      enabled: Schema.Boolean,
+      failedClaims: Schema.Array(Schema.String),
+      checks: Schema.Array(
+        Schema.Struct({ claim: Schema.String, matched: Schema.Boolean, message: Schema.String }),
+      ),
+      ...PolicyGuardrailReport.fields,
+    }),
+  ),
+});
+
 export const TrustPolicy = Schema.Struct({
   ...TrustPolicyRequest.fields,
+  ...PolicyGuardrailReport.fields,
   id: Id,
   projectId: Id,
   createdBy: Id,
@@ -198,6 +234,12 @@ export const AdminApi = HttpApiGroup.make("admin")
     HttpApiEndpoint.get("listTrustPolicies", "/projects/:id/trust-policies", {
       params: ProjectParams,
       success: TrustPolicyList,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.post("testTrustPolicies", "/projects/:id/trust-policies/test", {
+      params: ProjectParams,
+      payload: TestTrustPoliciesRequest,
+      success: TestTrustPoliciesResponse,
       error: ApiErrors,
     }),
     HttpApiEndpoint.post("createTrustPolicy", "/projects/:id/trust-policies", {
