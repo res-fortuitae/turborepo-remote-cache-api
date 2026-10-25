@@ -104,7 +104,7 @@ export const projectsApi = Effect.gen(function* () {
       (policyId === undefined && request.method === "POST") ||
       (policyId !== undefined && request.method === "PUT")
     ) {
-      const body = yield* decodeTrustPolicy(yield* readJson(request)).pipe(
+      const body = yield* decodeTrustPolicy(yield* readManagementJson(request)).pipe(
         Effect.mapError(() => new BadRequest({ message: "Invalid trust policy" })),
       );
 
