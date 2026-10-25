@@ -47,6 +47,7 @@ export default Alchemy.Stack(
       jurisdiction: residency.jurisdiction,
       workersPlan: config.workersPlan,
       features: config.features,
+      emailConfigured: config.email !== undefined,
       catalogToken: Option.isSome(catalogToken),
     });
 

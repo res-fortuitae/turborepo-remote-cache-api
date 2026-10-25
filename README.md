@@ -256,10 +256,10 @@ only sent for a detected/asserted Workers Paid account.
   unexported rows are never pruned, so D1-only audit data remains indefinitely.
   Budget D1 storage accordingly. Switching away from Basin retains existing
   stateful resources under the normal deletion-protection policy.
-- **Email:** the production disabled mailer reports an error rather than claiming
-  delivery. Use GitHub sign-in. Email Sending/domain verification and dashboard
-  invite-link delivery remain pending STV-495; a paid plan alone does not enable
-  the integration.
+- **Email:** configure `email.from` after onboarding the sender domain to enable Cloudflare
+  Email Service on Workers Paid. Without it, use signed invite links and GitHub
+  sign-in. See [transactional email](docs/email.md); the dashboard invite screen
+  follows in STV-468.
 - **Uploads:** Free, Pro, workers.dev, and unknown plans use a conservative
   100,000,000-byte request ceiling. A Business/Enterprise serving zone permits
   up to 200,000,000 bytes in this version; Cloudflare can impose a lower zone

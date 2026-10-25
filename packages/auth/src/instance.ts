@@ -100,6 +100,18 @@ export const instancePlugin = (
   return {
     id: "instance-policy",
     endpoints: {
+      instanceNotifications: createAuthEndpoint(
+        "/instance/notifications",
+        { method: "GET", use: [guard] },
+        async (ctx) =>
+          ctx.json({
+            notifications: await db
+              .select()
+              .from(schema.notification)
+              .where(eq(schema.notification.userId, ctx.context.session.user.id))
+              .limit(100),
+          }),
+      ),
       instanceSettings: createAuthEndpoint(
         "/instance/settings",
         { method: "GET", use: [guard] },

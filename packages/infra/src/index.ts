@@ -305,3 +305,6 @@ export {
 } from "./capabilities.ts";
 
 export type { CapabilityInputs } from "./capabilities.ts";
+
+/** Worker binding only; domain onboarding is an explicit operator step. */
+export const TransactionalEmail = Cloudflare.Email.SendEmail("TransactionalEmail");

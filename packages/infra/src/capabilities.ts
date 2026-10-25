@@ -10,6 +10,7 @@ export interface CapabilityInputs {
   readonly domain?: string | undefined;
   readonly jurisdiction?: string | undefined;
   readonly workersPlan?: "free" | "paid" | undefined;
+  readonly emailConfigured?: boolean;
   readonly catalogToken: boolean;
   readonly features: {
     readonly emailSending?: boolean;
@@ -86,17 +87,18 @@ export const resolveCapabilities = (
     workersPlan,
     zonePlan: input.dev ? "none" : detected.zonePlan,
     emailSending: {
-      enabled: false,
+      enabled: paid && input.features.emailSending !== false && input.emailConfigured === true,
       reason:
         input.features.emailSending === false
           ? "Disabled in deploy.config.ts."
           : !paid
             ? `Workers Paid is required; detected plan: ${workersPlan}.`
-            : "Email Sending integration and domain verification are pending STV-495.",
-      fallback:
-        "No email delivery. Dashboard invite links are pending STV-495; use GitHub sign-in.",
+            : input.emailConfigured
+              ? "Email Sending configured; domain onboarding must be complete."
+              : "No email sender configured.",
+      fallback: "Copy signed invitation links; alerts remain available in the console.",
       upgrade:
-        "Workers Paid and Email Service enabled on a verified domain unlock transactional email (STV-495).",
+        "Workers Paid and Email Service enabled on a verified domain unlock transactional email.",
     },
     analytics: {
       enabled: false,

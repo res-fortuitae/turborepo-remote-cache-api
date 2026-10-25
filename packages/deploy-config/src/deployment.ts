@@ -14,6 +14,9 @@ export const DeployConfigSchema = Schema.Struct({
   stagingDomain: Schema.optional(Hostname),
   /** Omit to accept this stage's canonical origin. Pin during domain migrations. */
   oidcAudiences: Schema.optional(OidcAudiences),
+  email: Schema.optional(
+    Schema.Struct({ from: Schema.String.check(Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) }),
+  ),
   identityCeilings: Schema.optional(IdentityCeilings),
   jurisdiction: Schema.Literals(["default", "eu", "fedramp"]),
   githubApp: Schema.optional(
@@ -52,6 +55,15 @@ export const defineDeployConfig = (input: DeployConfig): DeployConfig => {
 
   if (config.domain && config.domain === config.stagingDomain) {
     throw new Error("Production and staging must use different domains");
+  }
+
+  if (config.email !== undefined) {
+    const senderDomain = config.email.from.split("@")[1] ?? "";
+    if (
+      !config.domain ||
+      !(config.domain === senderDomain || config.domain.endsWith(`.${senderDomain}`))
+    )
+      throw new Error("Email sender must belong to the configured custom domain zone");
   }
 
   return config;
