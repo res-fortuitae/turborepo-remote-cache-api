@@ -17,7 +17,7 @@ This Bun + Turborepo monorepo contains:
 - `packages/client-core`: shared CI authentication, exchange, DPoP signing and in-memory refresh
   ([composition guide](packages/client-core/README.md)).
 - `packages/action`: GitHub Action scaffold.
-- `packages/cli`: CLI scaffold.
+- `packages/cli`: local authentication proxy, exec/env modes and server doctor ([guide](packages/cli/README.md)).
 - `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.
 
 Domain package skeletons and the allowed dependency graph are documented in

@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
+import { runAuthCommand } from "./commands.ts";
 import { doctorServer, formatCapabilities } from "./index.ts";
 
 const args = Bun.argv.slice(2);
 
-if (args[0] !== "doctor" || !args.includes("--server")) {
+if (["exec", "proxy", "env", "proxy-stop"].includes(args[0] ?? "")) {
+  process.exitCode = await runAuthCommand(args);
+} else if (args[0] !== "doctor" || !args.includes("--server")) {
   console.error(
     "Usage: bun packages/cli/src/bin.ts doctor --server [https://cache.example.com] [--json]\nUses TURBO_API and TURBO_TOKEN. Other doctor checks are pending STV-489.",
   );

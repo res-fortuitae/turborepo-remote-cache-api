@@ -38,3 +38,5 @@ export type { ClientCredential } from "./token-cache.ts";
 export { authOrDisabled } from "./fallback.ts";
 
 export { ClientCoreLive } from "./live.ts";
+
+export { CacheProxy, CacheProxyLive, ProxyTransport, ProxySession } from "./cache-proxy.ts";
