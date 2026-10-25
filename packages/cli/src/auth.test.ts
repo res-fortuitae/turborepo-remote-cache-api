@@ -48,6 +48,10 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
       const bad = await fetch(api + '/v8/artifacts/hash');
       if (bad.status !== 401) process.exit(2);
       const headers = {authorization: 'Bearer ' + Bun.env.TURBO_TOKEN};
+      const preflight = await fetch(api + '/v8/artifacts/hash', {method:'OPTIONS',headers});
+      if (preflight.status !== 204 || preflight.headers.has('location') || !preflight.headers.get('access-control-allow-headers')?.includes('Authorization')) process.exit(3);
+      const unauthenticatedPreflight = await fetch(api + '/v8/artifacts/hash', {method:'OPTIONS'});
+      if (unauthenticatedPreflight.status !== 401) process.exit(4);
       const put = await fetch(api + '/v8/artifacts/hash', {method:'PUT',headers:{...headers,'content-length':'1048576'},body:new Uint8Array(1048576)});
       const head = await fetch(api + '/v8/artifacts/hash', {method:'HEAD',headers});
       console.log(JSON.stringify({api,put:put.status,head:head.status,length:head.headers.get('content-length'),token:Bun.env.TURBO_TOKEN}));`,

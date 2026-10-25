@@ -2,7 +2,7 @@ import type { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { type ChainHead, CoordinatorNamespace } from "./client.ts";
+import { type ChainHead, type ScopeState, CoordinatorNamespace } from "./client.ts";
 
 type Rpc<A> = Effect.Effect<A, never, RuntimeContext>;
 
@@ -16,6 +16,8 @@ export class Coordinator extends Cloudflare.DurableObject<
   {
     /** Credentials issued before the current epoch are revoked. */
     revocationEpoch(): Rpc<number>;
+    scopeState(): Rpc<ScopeState>;
+    bumpCacheGeneration(): Rpc<number>;
     /** Revoke every credential issued in this scope so far. */
     bumpRevocationEpoch(): Rpc<number>;
     chainHead(): Rpc<ChainHead>;
@@ -25,6 +27,7 @@ export class Coordinator extends Cloudflare.DurableObject<
 >()("Coordinator") {}
 
 const EPOCH_KEY = "revocation-epoch";
+const GENERATION_KEY = "cache-generation";
 const CHAIN_KEY = "chain-head";
 const EMPTY_CHAIN: ChainHead = { sequence: 0, hash: null };
 
@@ -40,6 +43,17 @@ export const CoordinatorLive = Coordinator.make(
 
     return Effect.succeed({
       revocationEpoch,
+      scopeState: () =>
+        Effect.all({
+          epoch: revocationEpoch(),
+          generation: Effect.map(state.storage.get<number>(GENERATION_KEY), (value) => value ?? 0),
+        }),
+      bumpCacheGeneration: Effect.fn("Coordinator.bumpCacheGeneration")(function* () {
+        const next = ((yield* state.storage.get<number>(GENERATION_KEY)) ?? 0) + 1;
+        yield* state.storage.put(GENERATION_KEY, next);
+
+        return next;
+      }),
       bumpRevocationEpoch: Effect.fn("Coordinator.bumpRevocationEpoch")(function* () {
         const next = (yield* revocationEpoch()) + 1;
         yield* state.storage.put(EPOCH_KEY, next);
@@ -77,7 +91,10 @@ export const makeCoordinatorNamespace = (
 ): typeof CoordinatorNamespace.Service => ({
   getByName: (name) => {
     const stub = namespace.getByName(name);
+
     return {
+      scopeState: () => fromStub(stub.scopeState()),
+      bumpCacheGeneration: () => fromStub(stub.bumpCacheGeneration()),
       revocationEpoch: () => fromStub(stub.revocationEpoch()),
       bumpRevocationEpoch: () => fromStub(stub.bumpRevocationEpoch()),
       chainHead: () => fromStub(stub.chainHead()),

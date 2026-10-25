@@ -3,7 +3,7 @@ import { AuditLog } from "@repo/audit";
 import { CacheTokenSigner, DpopVerifier } from "@repo/credentials";
 import { InstanceSettingsRepo, ProjectRepo, TrustPolicyRepo } from "@repo/db";
 import { CanonicalOrigin, OidcAudience, type IdentityCeilings } from "@repo/deploy-config";
-import { RateLimiter } from "@repo/ratelimit";
+import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
 import { Clock, Context, Effect, Layer, Redacted, Schema } from "effect";
 import { OidcVerifier, type VerifiedOidcToken } from "./verifier.ts";
 import { TrustPolicyMatcher } from "./trust-policy-matcher.ts";
@@ -244,6 +244,32 @@ const makeExchange = Effect.gen(function* () {
           scope: decision.scope,
           maxTtlSeconds: ttl,
           cnf: thumbprint === undefined ? undefined : { jkt: thumbprint },
+          // Only these verified, bounded claims enter artifact incident-response metadata.
+          uploadIdentity: {
+            provider: verified.issuer.length <= 128 ? verified.issuer : undefined,
+            repositoryId:
+              typeof verified.claims.repository_id === "string" &&
+              verified.claims.repository_id.length <= 128
+                ? verified.claims.repository_id
+                : undefined,
+            ref:
+              typeof verified.claims.ref === "string" && verified.claims.ref.length <= 128
+                ? verified.claims.ref
+                : undefined,
+            jobWorkflowRef:
+              typeof verified.claims.job_workflow_ref === "string" &&
+              verified.claims.job_workflow_ref.length <= 128
+                ? verified.claims.job_workflow_ref
+                : undefined,
+            commitSha:
+              typeof verified.claims.sha === "string" && verified.claims.sha.length <= 128
+                ? verified.claims.sha
+                : undefined,
+            runId:
+              typeof verified.claims.run_id === "string" && verified.claims.run_id.length <= 128
+                ? verified.claims.run_id
+                : undefined,
+          },
         });
 
         diagnostics = {

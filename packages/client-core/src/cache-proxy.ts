@@ -73,9 +73,22 @@ const make = Effect.gen(function* () {
 
       if (
         !/^\/v8\/artifacts(?:\/[^/]+)?$/.test(incoming.pathname) ||
-        !["GET", "HEAD", "PUT", "POST"].includes(request.method)
+        !["GET", "HEAD", "PUT", "POST", "OPTIONS"].includes(request.method)
       )
         return new Response(null, { status: 404 });
+      // Turbo checks this header before forwarding its session secret on real requests.
+      // Answer locally after session authentication; no credential or body goes upstream.
+      if (request.method === "OPTIONS")
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "access-control-allow-origin": "*",
+            "access-control-allow-methods": "GET, HEAD, PUT, POST, OPTIONS",
+            "access-control-allow-headers":
+              "Authorization, Content-Type, Content-Length, User-Agent, X-Artifact-Tag, X-Artifact-Duration, X-Artifact-Client-Ci, X-Artifact-Client-Interactive",
+            "cache-control": "no-store",
+          },
+        });
       const credential = yield* cache.peek;
 
       if (credential === undefined) return new Response(null, { status: 503 });

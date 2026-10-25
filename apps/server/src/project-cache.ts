@@ -1,11 +1,11 @@
+import { CoordinatorClient } from "@repo/coordinator";
 import { Authorization, AuthorizationAudit, AuthorizationCeilings } from "@repo/authz";
-import { CacheTokenVerifier, DpopVerifier, DpopInvalid } from "@repo/credentials";
+import { CredentialResolver, DpopVerifier, DpopInvalid } from "@repo/credentials";
 import { Database, InstanceSettingsRepo, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
-import { Redacted } from "effect";
 import { ProjectLimits } from "@repo/projects";
 import { and, eq } from "drizzle-orm";
-import { Effect } from "effect";
+import { Effect, Redacted } from "effect";
 import { ApiError } from "./api.ts";
 
 /** Query selectors may confirm a tenant; authenticated claims alone choose storage. */
@@ -21,16 +21,33 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
       readonly proofAlreadyVerified?: boolean;
     },
   ) {
-    const verifier = yield* CacheTokenVerifier;
-    const principal = yield* verifier.verify(token);
+    const resolver = yield* CredentialResolver;
+    const credential = yield* resolver.resolve(Redacted.make(`Bearer ${token}`));
 
+    if (credential.credentialType === "legacy") {
+      if (request?.scheme === "dpop" || request?.dpop)
+        return yield* new DpopInvalid({ reason: "binding" });
+      const team = url.searchParams.get("teamId") ?? url.searchParams.get("slug") ?? "default";
+
+      if (!/^[\w.-]+$/.test(team))
+        return yield* new ApiError({
+          status: 400,
+          code: "bad_request",
+          message: "Invalid legacy team",
+        });
+      const limits = yield* ProjectLimits;
+
+      return { prefix: team, maxUploadBytes: limits.maxArtifactBytes, credential };
+    }
+
+    const principal = credential.principal;
+    const kind = credential.credentialType;
     if (principal.cnf !== undefined) {
       if (!request?.dpop || request.scheme !== "dpop")
         return yield* new DpopInvalid({ reason: "binding" });
       const dpop = yield* DpopVerifier;
       const origin = yield* CanonicalOrigin;
-
-      // The API repeats live authorization after streaming PUT. Claim the proof only once per request.
+      // Only the post-stream recheck inside this request skips the already claimed proof.
       if (!request.proofAlreadyVerified)
         yield* dpop.verify({
           proof: request.dpop,
@@ -44,7 +61,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     const authorization = yield* Authorization;
     yield* authorization.require(
       {
-        kind: "cacheJwt",
+        kind,
         id: principal.tokenId,
         orgId: principal.org,
         projectId: principal.project,
@@ -82,7 +99,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
       yield* audit
         .deny(
           {
-            kind: "cacheJwt",
+            kind,
             id: principal.tokenId,
             orgId: principal.org,
             projectId: principal.project,
@@ -120,13 +137,18 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     const settings = yield* InstanceSettingsRepo;
     const ceilings = yield* AuthorizationCeilings;
     const policy = yield* settings.policy(principal.org, ceilings);
-
     if (policy.requireBoundTokens && principal.cnf === undefined)
       return yield* new DpopInvalid({ reason: "binding" });
     const limits = yield* ProjectLimits;
 
     return {
       prefix: `${principal.org}/${principal.project}`,
+      cacheGeneration: yield* CoordinatorClient.use((client) =>
+        client.cacheGeneration(principal.project, action === "cache:write"),
+      ),
+      credential,
+      maxQueryHashes: policy.maxQueryHashes ?? 100,
+      requestsPerMinute: policy.cacheRequestsPerMinute ?? 600,
       maxUploadBytes: Math.min(
         row.project.maxArtifactBytes ?? limits.maxArtifactBytes,
         limits.maxArtifactBytes,
@@ -143,13 +165,9 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
           message: "Cache proof rejected",
         }),
       ),
-    CacheTokenInvalid: () =>
+    CredentialInvalid: () =>
       Effect.fail(
-        new ApiError({ status: 403, code: "forbidden", message: "Invalid cache credential" }),
-      ),
-    CacheTokenRevoked: () =>
-      Effect.fail(
-        new ApiError({ status: 403, code: "forbidden", message: "Revoked cache credential" }),
+        new ApiError({ status: 401, code: "unauthorized", message: "Invalid cache credential" }),
       ),
     AuthzError: (error) =>
       Effect.fail(

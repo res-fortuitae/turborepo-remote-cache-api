@@ -13,6 +13,7 @@
   "dependencies": {
     "@repo/analytics": "workspace:*",
     "@repo/api-spec": "workspace:*",
+    "@repo/artifacts": "workspace:*",
     "@repo/audit": "workspace:*",
     "@repo/auth": "workspace:*",
     "@repo/authz": "workspace:*",
@@ -31,8 +32,12 @@
     "effect": "^4.0.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "@repo/client-core": "workspace:*",
     "@repo/config": "workspace:*",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "jose": "6.2.13",
+    "miniflare": "^4.20260730.0"
   },
   "peerDependencies": {
     "typescript": "^7"

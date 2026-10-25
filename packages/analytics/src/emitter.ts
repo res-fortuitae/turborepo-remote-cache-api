@@ -96,3 +96,57 @@ export const AnalyticsEmitterLite = Layer.effect(
     } satisfies AnalyticsEmitterService;
   }),
 );
+
+/** Server-observed operations; deliberately separate from client-reported Turbo events. */
+export interface ArtifactOperation {
+  readonly method: string;
+  readonly hash?: string;
+  readonly provenance?: Readonly<Record<string, string>>;
+  readonly status: number;
+}
+
+export class ArtifactOpEmitter extends Context.Service<
+  ArtifactOpEmitter,
+  {
+    readonly emit: (
+      scope: AnalyticsScope,
+      operation: ArtifactOperation,
+    ) => Effect.Effect<void, AnalyticsError>;
+  }
+>()("@repo/analytics/ArtifactOpEmitter") {}
+
+/** M7 supplies persistence without changing cache route behavior. */
+export const ArtifactOpEmitterDisabled = Layer.succeed(ArtifactOpEmitter, {
+  emit: () => Effect.void,
+});
+
+/** Persist uploads and direct-size rejections; M7 can export the same provenance. */
+export const ArtifactOpEmitterD1Uploads = Layer.effect(
+  ArtifactOpEmitter,
+  Effect.gen(function* () {
+    const database = yield* Database;
+    return {
+      emit: (scope, operation) =>
+        operation.method === "PUT" &&
+        [202, 413].includes(operation.status) &&
+        operation.hash &&
+        operation.provenance
+          ? database
+              .query("ArtifactOpEmitter.upload", (db) =>
+                db.insert(schema.artifactOperation).values({
+                  id: crypto.randomUUID(),
+                  ...scope,
+                  hash: operation.hash!,
+                  status: operation.status,
+                  createdAt: Date.now(),
+                  provenance: operation.provenance!,
+                }),
+              )
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError((cause) => new AnalyticsError({ cause })),
+              )
+          : Effect.void,
+    } satisfies typeof ArtifactOpEmitter.Service;
+  }),
+);
