@@ -18,15 +18,24 @@ export class EdgeCache extends Context.Service<
   EdgeCache,
   {
     readonly cacheControl: string;
-    readonly match: (prefix: string, hash: string) => Effect.Effect<Response | undefined>;
-    readonly put: (prefix: string, hash: string, response: Response) => Effect.Effect<void>;
-    readonly remove: (prefix: string, hash: string) => Effect.Effect<void>;
+    readonly match: (
+      prefix: string,
+      hash: string,
+      generation?: number,
+    ) => Effect.Effect<Response | undefined>;
+    readonly put: (
+      prefix: string,
+      hash: string,
+      response: Response,
+      generation?: number,
+    ) => Effect.Effect<void>;
+    readonly remove: (prefix: string, hash: string, generation?: number) => Effect.Effect<void>;
   }
 >()("@repo/artifacts/EdgeCache") {}
 
-// Prefix contains the verified org AND project. Encode it as one path component.
-const cacheKey = (prefix: string, hash: string) =>
-  `https://artifact-cache.internal/${encodeURIComponent(prefix)}/${hash}`;
+// Scope is verified before use; generation changes invalidate all locations.
+const cacheKey = (prefix: string, hash: string, generation = 0) =>
+  `https://artifact-cache.internal/${prefix.split("/").map(encodeURIComponent).join("/")}/g${generation}/${hash}`;
 
 export const EdgeCacheLive = Layer.effect(
   EdgeCache,
@@ -42,11 +51,14 @@ export const EdgeCacheLive = Layer.effect(
 
     return {
       cacheControl: storage.open ? "public, max-age=3600" : "no-store",
-      match: (prefix, hash) => attempt((cache) => cache.match(cacheKey(prefix, hash))),
-      put: (prefix, hash, response) =>
-        attempt((cache) => cache.put(cacheKey(prefix, hash), response)).pipe(Effect.asVoid),
-      remove: (prefix, hash) =>
-        attempt((cache) => cache.delete(cacheKey(prefix, hash))).pipe(Effect.asVoid),
+      match: (prefix, hash, generation) =>
+        attempt((cache) => cache.match(cacheKey(prefix, hash, generation))),
+      put: (prefix, hash, response, generation) =>
+        attempt((cache) => cache.put(cacheKey(prefix, hash, generation), response)).pipe(
+          Effect.asVoid,
+        ),
+      remove: (prefix, hash, generation) =>
+        attempt((cache) => cache.delete(cacheKey(prefix, hash, generation))).pipe(Effect.asVoid),
     } satisfies typeof EdgeCache.Service;
   }),
 );

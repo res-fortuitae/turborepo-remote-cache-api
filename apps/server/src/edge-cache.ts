@@ -22,13 +22,17 @@ export const createArtifactCache = (enabled: boolean): typeof EdgeCache.Service 
 
   return {
     cacheControl: enabled ? "public, max-age=3600" : "no-store",
-    match: (prefix, hash) =>
-      Effect.flatMap(EdgeCache, (cache) => cache.match(prefix, hash)).pipe(Effect.provide(layer)),
-    put: (prefix, hash, response) =>
-      Effect.flatMap(EdgeCache, (cache) => cache.put(prefix, hash, response)).pipe(
+    match: (prefix, hash, generation) =>
+      Effect.flatMap(EdgeCache, (cache) => cache.match(prefix, hash, generation)).pipe(
         Effect.provide(layer),
       ),
-    remove: (prefix, hash) =>
-      Effect.flatMap(EdgeCache, (cache) => cache.remove(prefix, hash)).pipe(Effect.provide(layer)),
+    put: (prefix, hash, response, generation) =>
+      Effect.flatMap(EdgeCache, (cache) => cache.put(prefix, hash, response, generation)).pipe(
+        Effect.provide(layer),
+      ),
+    remove: (prefix, hash, generation) =>
+      Effect.flatMap(EdgeCache, (cache) => cache.remove(prefix, hash, generation)).pipe(
+        Effect.provide(layer),
+      ),
   };
 };

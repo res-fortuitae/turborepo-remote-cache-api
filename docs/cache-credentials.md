@@ -84,3 +84,24 @@ project isolation on warm cache entries, deletion/authorization races, and real
 Turbo upload/restore round trips with JWTs and API keys. The shared live/stack suites
 still exercise legacy team namespaces; explicitly enable `features.legacyToken`
 when running those suites against a running stack.
+
+## Purging edge copies
+
+Scoped downloads use `/{orgId}/{projectId}/g{generation}/{hash}` in the Workers
+Cache. The Coordinator stores generation beside the project's revocation epoch;
+JWT verification and cache routing share the same read. Clients cache that pair
+for five seconds. A generation bump is immediately visible to the client making
+it and reaches other clients after their five-second snapshot expires. An
+unavailable Coordinator fails authorization rather than serving an expired
+snapshot. Requests already in flight can finish under their original generation.
+
+`ArtifactPurger.remove(orgId, projectId, hash)` deletes durable bytes before
+bumping the generation. `ArtifactPurger.invalidate(projectId)` is the shared
+hook for batch/project purges and future incident/anomaly handlers: call it after
+durable removal and before acknowledging success. A failed bump fails the purge;
+retry the operation. Every hash in that project's old generation becomes
+unreachable, while old edge entries expire naturally. Other projects and
+credential revocation epochs are unaffected. The project-deletion maintenance
+adapter also bumps generation when revoking the deleted project's credentials.
+Legacy migration namespaces retain generation zero; incident purge flows must use
+scoped credentials. Residency-disabled caching remains disabled.

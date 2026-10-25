@@ -468,6 +468,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const cacheAuthorizationLayer = Layer.mergeAll(
+      coordinatorLayer,
       authorizationLayer,
       AuthorizationAuditLive.pipe(Layer.provide(auditLayer)),
       CredentialResolverLive.pipe(
@@ -530,7 +531,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
                     };
                   }),
                 delete: (keys: readonly string[]) => Effect.tryPromise(() => raw.delete([...keys])),
-                revoke: (id: string) => coordinator.revokeAll(`project:${id}`).pipe(Effect.asVoid),
+                revoke: (id: string) =>
+                  coordinator
+                    .revokeAll(`project:${id}`)
+                    .pipe(Effect.andThen(coordinator.invalidateCache(id)), Effect.asVoid),
               };
             }),
           ).pipe(Layer.provide(coordinatorLayer)),

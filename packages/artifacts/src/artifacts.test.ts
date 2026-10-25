@@ -1,7 +1,10 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun drives domain Effects at this test boundary. */
+import { CoordinatorClient, CoordinatorClientTest } from "@repo/coordinator";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Result, Stream } from "effect";
 import {
+  ArtifactPurger,
+  ArtifactPurgerLive,
   ArtifactStore,
   ArtifactStoreLive,
   ArtifactStoreTest,
@@ -91,4 +94,28 @@ test("edge cache scopes identical hashes by organization/project and evicts only
       expect(yield* cache.match("org/a", "abc")).toBeUndefined();
       expect(yield* cache.match("org/b", "abc")).toBeDefined();
     }).pipe(Effect.provide(EdgeCacheTest)),
+  ));
+
+test("purge removes R2 bytes then invalidates all hashes without revoking credentials", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* ArtifactStore;
+      const purger = yield* ArtifactPurger;
+      const coordinator = yield* CoordinatorClient;
+      yield* store.put("org/a", "abc", Stream.make(new Uint8Array([65])), options);
+      expect(yield* coordinator.cacheGeneration("a")).toBe(0);
+      yield* purger.remove("org", "a", "abc");
+      expect(yield* store.get("org/a", "abc")).toBeNull();
+      expect(yield* coordinator.cacheGeneration("a")).toBe(1);
+      expect(yield* coordinator.revocationEpoch("project:a")).toBe(0);
+      expect(yield* coordinator.cacheGeneration("b")).toBe(0);
+      yield* purger.invalidate("a");
+      expect(yield* coordinator.cacheGeneration("a")).toBe(2);
+    }).pipe(
+      Effect.provide(
+        ArtifactPurgerLive.pipe(
+          Layer.provideMerge(Layer.mergeAll(ArtifactStoreTest, CoordinatorClientTest)),
+        ),
+      ),
+    ),
   ));
