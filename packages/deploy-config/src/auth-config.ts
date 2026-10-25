@@ -20,6 +20,12 @@ export const AuthSettings = Schema.Struct({
   github: Schema.optional(GitHubOAuthCredentials),
   /** Opt in only alongside a delivering Mailer layer. The stock Worker leaves this off. */
   magicLink: Schema.optional(Schema.Boolean),
+  groups: Schema.optional(
+    Schema.Struct({
+      maxGroups: Schema.Int.check(Schema.isGreaterThan(0)),
+      maxMembersPerGroup: Schema.Int.check(Schema.isGreaterThan(0)),
+    }),
+  ),
   identityCeilings: Schema.optional(IdentityCeilings),
 });
 

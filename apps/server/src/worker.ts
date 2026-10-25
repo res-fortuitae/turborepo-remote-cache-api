@@ -76,6 +76,9 @@ const AuthEnvironment = Schema.Struct({
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
   CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
   GITHUB_CLIENT_ID: Schema.optional(Schema.NonEmptyString),
+  GROUP_LIMITS: Schema.optional(
+    Schema.fromJsonString(Schema.Struct({ maxGroups: Schema.Int, maxMembersPerGroup: Schema.Int })),
+  ),
   EMAIL_FROM: Schema.optional(Schema.String),
   IDENTITY_CEILINGS: Schema.optional(Schema.fromJsonString(IdentityCeilings)),
 });
@@ -87,6 +90,7 @@ interface DeploymentEnvironment {
   GITHUB_CLIENT_ID?: string;
   IDENTITY_CEILINGS?: string;
   EMAIL_FROM?: string;
+  GROUP_LIMITS?: string;
 }
 
 const decodeAuthEnvironment = Schema.decodeUnknownEffect(AuthEnvironment);
@@ -123,6 +127,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
       CAPABILITIES: JSON.stringify(capabilities),
     };
+
+    if (config.groups !== undefined) env.GROUP_LIMITS = JSON.stringify(config.groups);
 
     if (config.email !== undefined) env.EMAIL_FROM = config.email.from;
 
@@ -212,6 +218,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           baseURL: origin,
           trustedOrigins: [origin],
           github,
+          groups: authEnvironment.GROUP_LIMITS,
           identityCeilings: authEnvironment.IDENTITY_CEILINGS,
         };
       }),

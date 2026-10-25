@@ -17,6 +17,9 @@ export const DeployConfigSchema = Schema.Struct({
   email: Schema.optional(
     Schema.Struct({ from: Schema.String.check(Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) }),
   ),
+  groups: Schema.optional(
+    Schema.Struct({ maxGroups: PositiveInteger, maxMembersPerGroup: PositiveInteger }),
+  ),
   identityCeilings: Schema.optional(IdentityCeilings),
   jurisdiction: Schema.Literals(["default", "eu", "fedramp"]),
   githubApp: Schema.optional(

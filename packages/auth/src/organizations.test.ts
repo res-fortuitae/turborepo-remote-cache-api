@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { Database, schema } from "@repo/db";
 import { Effect, Schema } from "effect";
 import { Auth } from "./auth.ts";
-import { AuthTest } from "./testing.ts";
+import { AuthTest, authTestWithSettings } from "./testing.ts";
 
 const responseOrg = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String }));
 const invitationResponse = Schema.decodeUnknownSync(
@@ -149,5 +149,46 @@ test("concurrent acceptance consumes an invitation once", async () => {
       const members = yield* db.query("test.members", (db) => db.select().from(schema.member));
       expect(members.filter((member) => member.userId === "member")).toHaveLength(1);
     }).pipe(Effect.provide(AuthTest)),
+  );
+});
+
+test("groups are optional, role-free, scoped to org members, and respect configured limits", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const db = yield* Database;
+      const owner = yield* seed("owner", "owner");
+      yield* seed("outsider");
+      const created = yield* post(auth, owner, "create", { name: "Web", slug: "web" });
+      const org = yield* Effect.promise(async () => responseOrg(await created.json()));
+      expect(yield* db.query("test.groups", (db) => db.select().from(schema.team))).toEqual([]);
+      const groupResponse = yield* post(auth, owner, "create-team", {
+        organizationId: org.id,
+        name: "frontend-core",
+      });
+      expect(groupResponse.status).toBe(200);
+      const group = yield* Effect.promise(async () => responseOrg(await groupResponse.json()));
+      expect(
+        (yield* post(auth, owner, "create-team", { organizationId: org.id, name: "another" }))
+          .status,
+      ).toBe(400);
+      expect(
+        (yield* post(auth, owner, "add-team-member", { teamId: group.id, userId: "outsider" }))
+          .status,
+      ).toBe(400);
+      expect(
+        (yield* post(auth, owner, "add-team-member", { teamId: group.id, userId: "owner" })).status,
+      ).toBe(200);
+      const [member] = yield* db.query("test.group-members", (db) =>
+        db.select().from(schema.teamMember),
+      );
+      expect(member).not.toHaveProperty("role");
+      expect(
+        (yield* post(auth, owner, "remove-team", { organizationId: org.id, teamId: group.id }))
+          .status,
+      ).toBe(200);
+    }).pipe(
+      Effect.provide(authTestWithSettings({ groups: { maxGroups: 1, maxMembersPerGroup: 1 } })),
+    ),
   );
 });
