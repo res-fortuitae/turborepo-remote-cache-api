@@ -37,4 +37,17 @@ export {
 
 export type { KeyStoreService, KeyStoreTestControlService } from "./key-store.ts";
 
-export { CacheScope, Principal } from "./principal.ts";
+export { CacheScope, Principal, UploadIdentity } from "./principal.ts";
+
+export { ApiKeyVerifier, ApiKeyVerifierLive, ApiKeyVerifierTest } from "./api-key.ts";
+
+export {
+  CredentialResolver,
+  CredentialResolverLive,
+  CredentialResolverTest,
+  CredentialInvalid,
+  CredentialUnavailable,
+  LegacyCredentialConfig,
+} from "./resolver.ts";
+
+export type { ResolvedCredential } from "./resolver.ts";

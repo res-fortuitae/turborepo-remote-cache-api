@@ -32,6 +32,7 @@ const serve = <E>(
 
 const api = () =>
   artifactApi({
+    legacyTokenEnabled: true,
     bucket: memoryBucket(),
     token: Redacted.make("test-token"),
     edgeCacheEnabled: false,

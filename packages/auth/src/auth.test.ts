@@ -220,6 +220,7 @@ describe("Better Auth schema", () => {
         const database = yield* Database;
 
         return makeBetterAuth({
+          rateLimitStorage: { consume: async () => ({ allowed: true, retryAfter: null }) },
           config: {
             secret: Redacted.make(SECRET),
             baseURL: "http://localhost",
@@ -252,4 +253,46 @@ describe("Better Auth schema", () => {
 
     expect(missing).toEqual([]);
   });
+});
+
+test("Better Auth and custom management routes use IP bindings without database counters", async () => {
+  await run(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const database = yield* Database;
+
+      const request = (path: string) =>
+        auth.handler(
+          new Request(`http://localhost/api/auth${path}`, {
+            method: "POST",
+            headers: {
+              "cf-connecting-ip": "192.0.2.44",
+              "content-type": "application/json",
+              origin: "http://localhost",
+            },
+            body: JSON.stringify({ provider: "github", callbackURL: "http://localhost" }),
+          }),
+        );
+
+      for (let i = 0; i < 3; i++) expect((yield* request("/sign-in/social")).status).not.toBe(429);
+      const limited = yield* request("/sign-in/social");
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("retry-after")).toBe("10");
+      // A different IP does not inherit the exhausted endpoint bucket.
+      const other = yield* auth.handler(
+        new Request("http://localhost/api/auth/ok", {
+          headers: { "cf-connecting-ip": "192.0.2.45" },
+        }),
+      );
+      expect(other.status).toBe(200);
+
+      for (let i = 0; i < 56; i++) yield* request("/cache-keys/list");
+      const custom = yield* request("/cache-keys/list");
+      expect(custom.status).toBe(429);
+      expect(custom.headers.get("retry-after")).toBe("60");
+      expect(
+        yield* database.query("test.rateCounters", (db) => db.select().from(schema.rateLimit)),
+      ).toEqual([]);
+    }),
+  );
 });

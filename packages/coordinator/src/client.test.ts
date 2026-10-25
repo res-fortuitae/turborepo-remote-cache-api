@@ -68,6 +68,8 @@ describe("revocation epochs", () => {
   test("transport failures become CoordinatorError", async () => {
     const failing = Layer.succeed(CoordinatorNamespace, {
       getByName: () => ({
+        scopeState: () => Effect.die(new Error("stub reset")),
+        bumpCacheGeneration: () => Effect.fail("unavailable"),
         revocationEpoch: () => Effect.die(new Error("stub reset")),
         bumpRevocationEpoch: () => Effect.fail("unavailable"),
         chainHead: () => Effect.die(new Error("stub reset")),
@@ -119,4 +121,28 @@ describe("hash-chain sequencing", () => {
 
     expect(await head()).toEqual(await head());
   });
+});
+
+test("generation and revocation share a read; bumps are independent and projects isolated", async () => {
+  await run(
+    Effect.gen(function* () {
+      const client = yield* Layer.build(CoordinatorClientLive).pipe(
+        Effect.map(Context.get(CoordinatorClient)),
+      );
+      const remote = yield* Layer.build(CoordinatorClientLive).pipe(
+        Effect.map(Context.get(CoordinatorClient)),
+      );
+      expect(yield* client.revocationEpoch("project:a")).toBe(0);
+      expect(yield* client.cacheGeneration("a")).toBe(0);
+      expect(yield* remote.invalidateCache("a")).toBe(1);
+      expect(yield* remote.cacheGeneration("a")).toBe(1);
+      expect(yield* client.cacheGeneration("a")).toBe(0);
+      yield* TestClock.adjust(EPOCH_CACHE_MILLIS);
+      expect(yield* client.cacheGeneration("a")).toBe(1);
+      expect(yield* client.revocationEpoch("project:a")).toBe(0);
+      yield* client.revokeAll("project:a");
+      expect(yield* client.cacheGeneration("a")).toBe(1);
+      expect(yield* client.cacheGeneration("b")).toBe(0);
+    }).pipe(Effect.scoped),
+  );
 });
