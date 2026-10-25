@@ -108,6 +108,7 @@ import { makeRetentionRules } from "./retention-rules.ts";
 import { authorizeProjectCache } from "./project-cache.ts";
 import {
   CacheTokenVerifierLive,
+  DpopVerifierLive,
   CacheTokenSignerLive,
   CacheTokenConfigLive,
   KeyStoreLive,
@@ -454,6 +455,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       authorizationLayer,
       AuthorizationAuditLive.pipe(Layer.provide(auditLayer)),
       verifierLayer,
+      DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
       InstanceSettingsRepoLive,
       limitsLayer,
       Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
@@ -516,8 +518,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const artifacts = artifactApi({
-      authorize: (credential, url, action) =>
-        authorizeProjectCache(credential, url, action).pipe(
+      authorize: (credential, url, action, request) =>
+        authorizeProjectCache(credential, url, action, request).pipe(
           Effect.provide(cacheAuthorizationLayer),
         ),
       bucket,
@@ -588,6 +590,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         Layer.provide(
           Layer.mergeAll(
             oidcVerifierLayer,
+            DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
             TrustPolicyMatcherLive,
             PolicyGuardrailsLive,
             CacheTokenSignerLive.pipe(

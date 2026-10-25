@@ -2,8 +2,8 @@
 import { expect, test } from "bun:test";
 import { AuthorizationDatabaseLive } from "@repo/authz";
 import { AuditLogD1Only } from "@repo/audit";
-import { CacheTokensTest, CacheTokenSigner } from "@repo/credentials";
-import { Database, InstanceSettingsRepoLive, schema } from "@repo/db";
+import { CacheTokensTest, CacheTokenSigner, DpopVerifierLive } from "@repo/credentials";
+import { Database, InstanceSettingsRepoLive, ReplayGuardLive, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { AuthorizationAuditLive, ProjectLimits } from "@repo/projects";
@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { Effect, Layer, Redacted } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { generateKeyPair, exportJWK, calculateJwkThumbprint, SignJWT } from "jose";
 import { artifactApi } from "../src/api.ts";
 import { authorizeProjectCache } from "../src/project-cache.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
@@ -18,6 +19,7 @@ import { memoryBucket } from "./support/in-process.ts";
 
 const layer = Layer.mergeAll(
   CacheTokensTest,
+  DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
   InstanceSettingsRepoLive,
   AuthorizationAuditLive.pipe(Layer.provide(AuditLogD1Only)),
   AuthorizationDatabaseLive.pipe(
@@ -40,6 +42,7 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         ]),
       ]);
       const signer = yield* CacheTokenSigner;
+
       const a = (yield* signer.issue({
         maxTtlSeconds: 900,
         subject: "ci",
@@ -47,6 +50,7 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         project: "a",
         scope: "read write",
       })).token;
+
       const b = (yield* signer.issue({
         maxTtlSeconds: 900,
         subject: "ci",
@@ -54,6 +58,7 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         project: "b",
         scope: "read write",
       })).token;
+
       const reader = (yield* signer.issue({
         maxTtlSeconds: 900,
         subject: "ci",
@@ -61,7 +66,9 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         project: "a",
         scope: "read",
       })).token;
+
       const bucket = memoryBucket();
+
       const api = artifactApi({
         bucket,
         token: Redacted.make("legacy"),
@@ -70,6 +77,7 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         waitUntil: () => Effect.void,
         authorize: authorizeProjectCache,
       });
+
       const request = (credential: string, method = "GET", query = "", body?: string) =>
         api.pipe(
           Effect.provideService(
@@ -87,6 +95,7 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
           ),
           Effect.map(HttpServerResponse.toWeb),
         );
+
       expect((yield* request(a, "PUT", "?slug=team", "A")).status).toBe(202);
       expect((yield* request(b, "PUT", "", "B")).status).toBe(202);
       expect(bucket.objects.size).toBe(2);
@@ -126,5 +135,94 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         );
       expect((yield* request(b, "PUT", "", "race")).status).toBe(403);
       expect(bucket.objects.has("org/b/abc")).toBe(false);
+    }).pipe(Effect.provide(layer), Effect.provideService(CanonicalOrigin, "https://cache.test")),
+  ));
+
+test("bound cache JWT cannot be used without its fresh request proof, including repeat reads", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((db) => [
+        db
+          .insert(schema.organization)
+          .values({ id: "org", slug: "org", name: "Org", createdAt: new Date(0) }),
+        db
+          .insert(schema.project)
+          .values({ id: "p", orgId: "org", slug: "p", name: "P", createdAt: 0 }),
+      ]);
+      const keys = yield* Effect.promise(() => generateKeyPair("ES256"));
+      const jwk = yield* Effect.promise(() => exportJWK(keys.publicKey));
+      const jkt = yield* Effect.promise(() => calculateJwkThumbprint(jwk));
+      const signer = yield* CacheTokenSigner;
+      const bound = yield* signer.issue({
+        maxTtlSeconds: 900,
+        subject: "ci",
+        org: "org",
+        project: "p",
+        scope: "read write",
+        cnf: { jkt },
+      });
+      const bearer = yield* signer.issue({
+        maxTtlSeconds: 900,
+        subject: "ci",
+        org: "org",
+        project: "p",
+        scope: "read write",
+      });
+      const api = artifactApi({
+        bucket: memoryBucket(),
+        token: Redacted.make("legacy"),
+        edgeCacheEnabled: false,
+        cache: createArtifactCache(false),
+        waitUntil: () => Effect.void,
+        authorize: authorizeProjectCache,
+      });
+      const url = "https://cache.test/v8/artifacts/abc";
+
+      const proof = (method: string, accessToken = bound.token) =>
+        Effect.promise(async () => {
+          const digest = new Uint8Array(
+            await crypto.subtle.digest("SHA-256", new TextEncoder().encode(accessToken)),
+          );
+          const ath = btoa(String.fromCharCode(...digest))
+            .replaceAll("+", "-")
+            .replaceAll("/", "_")
+            .replace(/=+$/, "");
+
+          return new SignJWT({ htm: method, htu: url, ath })
+            .setProtectedHeader({ typ: "dpop+jwt", alg: "ES256", jwk })
+            .setIssuedAt()
+            .setJti(crypto.randomUUID())
+            .sign(keys.privateKey);
+        });
+
+      const request = (method: string, dpop?: string, token = bound.token, scheme = "DPoP") =>
+        api.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request(url, {
+                method,
+                headers: {
+                  authorization: `${scheme} ${token}`,
+                  ...(dpop ? { dpop } : {}),
+                  "content-length": "1",
+                },
+                body: method === "PUT" ? "x" : undefined,
+              }),
+            ),
+          ),
+          Effect.map(HttpServerResponse.toWeb),
+        );
+      expect((yield* request("PUT")).status).toBe(403);
+      expect((yield* request("PUT", undefined, bound.token, "Bearer")).status).toBe(403);
+      const put = yield* proof("PUT");
+      expect((yield* request("PUT", put)).status).toBe(202);
+      expect((yield* request("PUT", put)).status).toBe(403);
+      expect((yield* request("GET", yield* proof("PUT"))).status).toBe(403);
+      expect((yield* request("GET", yield* proof("GET", "another-token"))).status).toBe(403);
+      expect((yield* request("GET", yield* proof("GET"))).status).toBe(200);
+      expect((yield* request("GET")).status).toBe(403);
+      expect((yield* request("GET", undefined, bearer.token, "Bearer")).status).toBe(200);
     }).pipe(Effect.provide(layer), Effect.provideService(CanonicalOrigin, "https://cache.test")),
   ));

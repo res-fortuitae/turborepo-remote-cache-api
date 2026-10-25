@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { ExchangeResponse } from "@repo/api-spec";
 import { AuditLogD1Only } from "@repo/audit";
-import { CacheTokensTest, CacheTokenVerifier } from "@repo/credentials";
+import { CacheTokensTest, CacheTokenVerifier, DpopVerifierLive } from "@repo/credentials";
 import {
   Database,
   ProjectRepoLive,
@@ -91,6 +91,7 @@ const network = (issuer: string) =>
 const deps = (issuer: string) =>
   Layer.mergeAll(
     CacheTokensTest,
+    DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
     AuditLogD1Only,
     ProjectRepoLive,
     TrustPolicyRepoLive,
@@ -444,6 +445,7 @@ test("Google assertion without jti/nbf exchanges through real policy, signer and
             },
           }),
         ]);
+
         const ci = yield* Effect.promise(() =>
           new SignJWT({
             iss: google,
@@ -456,11 +458,14 @@ test("Google assertion without jti/nbf exchanges through real policy, signer and
             .setProtectedHeader({ alg: "RS256", kid: "ci" })
             .sign(keys.privateKey),
         );
+
         const response = yield* serve(body(ci));
         expect(response.status).toBe(200);
+
         const result = Schema.decodeUnknownSync(ExchangeResponse)(
           yield* Effect.promise(() => response.json()),
         );
+
         expect(
           yield* (yield* CacheTokenVerifier).verify(Redacted.value(result.token)),
         ).toMatchObject({ org: "org", project: "p", scope: "read" });
@@ -475,3 +480,33 @@ test("Google assertion without jti/nbf exchanges through real policy, signer and
     google,
   );
 });
+
+test("exchange binds cache JWT to verified ephemeral key and rejects proof reuse", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const pair = yield* Effect.promise(() => generateKeyPair("ES256"));
+      const publicKey = yield* Effect.promise(() => exportJWK(pair.publicKey));
+      const proof = yield* Effect.promise(() =>
+        new SignJWT({ htm: "POST", htu: `${api}/oidc/exchange` })
+          .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk: publicKey })
+          .setIssuedAt(1000)
+          .setJti(crypto.randomUUID())
+          .sign(pair.privateKey),
+      );
+      const db = yield* Database;
+      yield* db.batch((db) => [
+        db.update(schema.trustPolicy).set({ body: { ...policy, requireBoundTokens: true } }),
+      ]);
+      const response = yield* serve(body(yield* token()), { dpop: proof });
+      expect(response.status).toBe(200);
+      const result = Schema.decodeUnknownSync(ExchangeResponse)(
+        yield* Effect.promise(() => response.json()),
+      );
+      const verifier = yield* CacheTokenVerifier;
+      const principal = yield* verifier.verify(Redacted.value(result.token));
+      expect(principal.cnf?.jkt).toHaveLength(43);
+      expect(decodeJwt(Redacted.value(result.token)).cnf).toEqual(principal.cnf);
+      expect((yield* serve(body(yield* token()), { dpop: proof })).status).toBe(403);
+      expect((yield* serve(body(yield* token()))).status).toBe(403);
+    }),
+  ));

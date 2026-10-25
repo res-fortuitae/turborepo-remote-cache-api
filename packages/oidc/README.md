@@ -166,8 +166,8 @@ Bodies are stream-bounded to 24 KiB, individual CI tokens to 16 KiB and IDs to 2
 characters. The native Rate Limiting binding uses separate `oidc:ip:` and `oidc:org:`
 keys (edge-local approximate protection, not an exact global quota).
 
-DPoP verification/binding follows in STV-486: a supplied proof or any binding
-requirement is rejected until then, never downgraded to bearer. Signature-key delivery
+DPoP verification and binding are enforced as described below. Missing/invalid proofs
+never downgrade a required binding to bearer. Signature-key delivery
 follows STV-475; mandatory artifact signing also fails closed until available.
 `ExchangeConfig` carries deployment identity ceilings; hosts must supply real rate
 limits. No infrastructure is provisioned by this service or its tests.
@@ -328,3 +328,32 @@ and [custom audience CLI](https://circleci.com/docs/guides/permissions-authentic
 [Google](https://docs.cloud.google.com/compute/docs/instances/verifying-instance-identity),
 [Entra claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)
 and [AKS federation](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview).
+
+## Sender-constrained tokens
+
+Exchange accepts an ES256 `DPoP` proof and binds the cache JWT using `cnf.jkt`.
+The proof must name POST and the canonical `/oidc/exchange` URL, with no `ath` at
+exchange. Instance/trust policies requiring binding reject exchanges without it.
+Env mode requests no binding and therefore cannot obtain write credentials from
+a binding-required policy. Optional binding still binds when a proof is supplied.
+
+Cache calls use `Authorization: DPoP <cache JWT>` and a fresh DPoP header for each
+request/retry. The key remains nonextractable in the proxy process. The credentials
+verifier accepts only public P-256 ES256 proofs, validates `ath`, `htm`, exact
+canonical upstream `htu` excluding query/fragment, and `iat` (30 seconds old, at most
+5 seconds ahead). Tokens with `cnf` cannot use Bearer or omit a proof. Unbound
+tokens cannot use the DPoP scheme to imply binding. Reads authenticate before edge
+lookup; uploads repeat live authorization after streaming, without claiming the
+same proof twice inside that request.
+
+Proof IDs are atomically claimed in D1's existing replay table under `dpop:<jkt>`,
+retained for the whole acceptance window and purged by the existing cron. KV is
+never used for this decision. DB failure fails closed with 503. This adds a D1 write
+to each bound request; benchmark that cost in the deployed region. Nonces are not
+required in this initial protocol; no nonce challenge is advertised.
+
+`bun packages/credentials/bench/dpop.ts` isolates crypto/service verification from
+D1/network. On the local host it measured 0.0784 ms mean over 1,000 verifications.
+This is not a deployed Workers CPU/latency measurement. The replay tests separately
+exercise real SQLite atomic claims, including concurrent duplicate proofs.
+Protocol reference: [RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html).

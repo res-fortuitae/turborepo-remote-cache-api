@@ -38,3 +38,6 @@ export {
 export type { KeyStoreService, KeyStoreTestControlService } from "./key-store.ts";
 
 export { CacheScope, Principal } from "./principal.ts";
+
+export { DpopVerifier, DpopVerifierLive, DpopInvalid } from "./dpop.ts";
+export type { DpopVerification } from "./dpop.ts";

@@ -66,7 +66,7 @@ export const runAuthCommand = async (args: string[]) => {
     project: option(options, "--project"),
     audience: option(options, "--audience"),
     strict: options.includes("--strict") ? true : undefined,
-    boundTokens: options.includes("--bound-tokens"),
+    boundTokens: mode !== "env" && !options.includes("--unbound-tokens"),
   });
 
   let proxy: Awaited<ReturnType<typeof startProxy>>;

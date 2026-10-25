@@ -90,6 +90,12 @@ export interface ApiDependencies<R> {
     token: string,
     url: URL,
     action: "cache:read" | "cache:write",
+    request: {
+      readonly method: string;
+      readonly dpop?: string;
+      readonly scheme: string;
+      readonly proofAlreadyVerified?: boolean;
+    },
   ) => Effect.Effect<ArtifactScope, ApiError, R>;
   readonly maxUploadBytes?: number;
   readonly emitEvents?: (
@@ -152,32 +158,43 @@ export const artifactApi = <R>({
   emitEvents = () => Effect.void,
   authorize,
 }: ApiDependencies<R>) => {
-  const authenticate = Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const header = request.headers["authorization"] ?? "";
-    const [scheme, value] = header.split(" ", 2);
+  const authenticate = (proofAlreadyVerified = false) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const header = request.headers["authorization"] ?? "";
+      const [scheme, value] = header.split(" ", 2);
 
-    if (scheme?.toLowerCase() !== "bearer" || !value) {
-      return yield* new ApiError({
-        status: 401,
-        code: "unauthorized",
-        message: "Missing bearer token",
-      });
-    }
+      if (!["bearer", "dpop"].includes(scheme?.toLowerCase() ?? "") || !value) {
+        return yield* new ApiError({
+          status: 401,
+          code: "unauthorized",
+          message: "Missing bearer token",
+        });
+      }
 
-    const url = new URL(request.url, "http://localhost");
-    if (authorize && !safeEqual(value, Redacted.value(token))) {
-      return yield* authorize(value, url, request.method === "PUT" ? "cache:write" : "cache:read");
-    }
-    if (!safeEqual(value, Redacted.value(token))) {
-      return yield* new ApiError({
-        status: 403,
-        code: "forbidden",
-        message: "Invalid token",
-      });
-    }
-    return { prefix: yield* teamScope(url), maxUploadBytes };
-  });
+      const url = new URL(request.url, "http://localhost");
+      if (authorize && !safeEqual(value, Redacted.value(token))) {
+        return yield* authorize(
+          value,
+          url,
+          request.method === "PUT" ? "cache:write" : "cache:read",
+          {
+            method: request.method,
+            dpop: request.headers.dpop,
+            scheme: scheme!.toLowerCase(),
+            proofAlreadyVerified,
+          },
+        );
+      }
+      if (scheme?.toLowerCase() !== "bearer" || !safeEqual(value, Redacted.value(token))) {
+        return yield* new ApiError({
+          status: 403,
+          code: "forbidden",
+          message: "Invalid token",
+        });
+      }
+      return { prefix: yield* teamScope(url), maxUploadBytes };
+    });
 
   const status = HttpServerResponse.json({ status: "enabled" });
 
@@ -282,7 +299,7 @@ export const artifactApi = <R>({
     });
 
     // A deletion or archive racing an upload must not leave a newly written artifact.
-    yield* authenticate.pipe(
+    yield* authenticate(true).pipe(
       Effect.catch((error) =>
         (bucket.delete ? bucket.delete([`${team}/${hash}`]) : Effect.void).pipe(
           Effect.andThen(Effect.fail(error)),
@@ -356,7 +373,7 @@ export const artifactApi = <R>({
       });
     }
 
-    const scope = yield* authenticate;
+    const scope = yield* authenticate();
     const team = scope.prefix;
     const segment = match[1];
     const method = request.method;

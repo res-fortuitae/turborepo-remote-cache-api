@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Redacted } from "effect";
 import { TokenCache } from "./token-cache.ts";
+import { DpopSigner } from "./dpop.ts";
 import { ClientConfig } from "./config.ts";
 
 /** Host supplies a streaming HTTP transport; it must not follow redirects. */
@@ -24,6 +25,8 @@ const headersFor = (source: Headers) => {
     "content-type",
     "content-length",
     "x-artifact-tag",
+    "x-artifact-sha",
+    "x-artifact-dirty-hash",
     "x-artifact-duration",
     "x-artifact-client-ci",
     "x-artifact-client-interactive",
@@ -53,6 +56,7 @@ const make = Effect.gen(function* () {
   const config = yield* ClientConfig;
   const transport = yield* ProxyTransport;
   const session = yield* ProxySession;
+  const signer = yield* DpopSigner;
   const stats = { hits: 0, misses: 0, uploads: 0, errors: 0, retries: 0 };
 
   return {
@@ -81,7 +85,19 @@ const make = Effect.gen(function* () {
 
       for (let attempt = 0; attempt < attempts; attempt++) {
         const headers = headersFor(request.headers);
-        headers.set("authorization", `Bearer ${Redacted.value(credential.token)}`);
+        headers.set(
+          "authorization",
+          `${config.boundTokens && credential.source !== "apiKey" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
+        );
+
+        if (config.boundTokens && credential.source !== "apiKey") {
+          const proof = yield* signer.proof({
+            url: target.href,
+            method: request.method,
+            accessToken: credential.token,
+          });
+          headers.set("dpop", Redacted.value(proof));
+        }
 
         const upstream = new Request(target.href, {
           method: request.method,

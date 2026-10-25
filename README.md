@@ -118,7 +118,7 @@ steps, security headers and Cloudflare plan limits.
 The CI ID-token verifier and its replay/cache guarantees are documented in
 [`@repo/oidc`](packages/oidc/README.md). `POST /oidc/exchange` issues project-scoped cache JWTs; see that guide for
 policy, audit, rate-limit, supported CI issuers and pinned custom issuer configuration,
-and pending binding/signature behavior.
+DPoP binding, and pending artifact signature delivery.
 
 M2 project management supports CRUD, direct/team grants, live authorization,
 archive and durable deletion. Verified cache JWTs use isolated project prefixes.
