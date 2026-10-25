@@ -1,3 +1,4 @@
+import { IdentityCeilings } from "./identity-policy.ts";
 import * as Schema from "effect/Schema";
 import { OidcAudiences } from "./origin.ts";
 
@@ -13,6 +14,7 @@ export const DeployConfigSchema = Schema.Struct({
   stagingDomain: Schema.optional(Hostname),
   /** Omit to accept this stage's canonical origin. Pin during domain migrations. */
   oidcAudiences: Schema.optional(OidcAudiences),
+  identityCeilings: Schema.optional(IdentityCeilings),
   jurisdiction: Schema.Literals(["default", "eu", "fedramp"]),
   githubApp: Schema.optional(
     Schema.Struct({

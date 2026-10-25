@@ -15,3 +15,10 @@ export {
   matchOidcAudience,
   resolveOriginSettings,
 } from "./origin.ts";
+
+export {
+  IdentityCeilings,
+  InstancePolicy,
+  defaultInstancePolicy,
+  clampPolicy,
+} from "./identity-policy.ts";

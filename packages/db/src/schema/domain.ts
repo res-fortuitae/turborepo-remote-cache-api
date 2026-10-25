@@ -157,3 +157,18 @@ export const oidcJti = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.issuer, t.jti] }), index("oidc_jti_expiry").on(t.expiresAt)],
 );
+
+/** Explicit, short-lived access; never implies permanent organization membership. */
+export const orgElevation = sqliteTable("org_elevation", {
+  id: text().primaryKey(),
+  userId: text("user_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  orgId: text("org_id").notNull(),
+  reason: text().notNull(),
+  expiresAt: integer("expires_at").notNull(),
+});
+
+export const orgLifecycle = sqliteTable("org_lifecycle", {
+  orgId: text("org_id").primaryKey(),
+  archivedAt: integer("archived_at"),
+});
