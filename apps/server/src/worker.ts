@@ -141,6 +141,7 @@ import {
   CredentialResolverLive,
   LegacyCredentialConfig,
   CacheTokenVerifierLive,
+  DpopVerifierLive,
   CacheTokenSignerLive,
   CacheTokenConfigLive,
   KeyStoreLive,
@@ -570,6 +571,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       coordinatorLayer,
       authorizationLayer,
       AuthorizationAuditLive.pipe(Layer.provide(auditLayer)),
+      DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
       CredentialResolverLive.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -582,6 +584,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           ),
         ),
       ),
+
       InstanceSettingsRepoLive,
       limitsLayer,
       Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
@@ -777,8 +780,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       guard: (scope) => cacheCredentialGuard(scope).pipe(Effect.provide(rateLimitLayer)),
       guardAuthFailure: cacheAuthenticationFailureGuard.pipe(Effect.provide(rateLimitLayer)),
-      authorize: (credential, url, action) =>
-        authorizeProjectCache(credential, url, action).pipe(
+      authorize: (credential, url, action, request) =>
+        authorizeProjectCache(credential, url, action, request).pipe(
           Effect.provide(cacheAuthorizationLayer),
           Effect.tap((scope) =>
             action === "cache:write" &&
@@ -936,6 +939,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         Layer.provide(
           Layer.mergeAll(
             oidcVerifierLayer,
+            DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
             TrustPolicyMatcherLive,
             PolicyGuardrailsLive,
             CacheTokenSignerLive.pipe(

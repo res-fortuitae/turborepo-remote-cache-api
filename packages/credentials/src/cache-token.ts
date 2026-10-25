@@ -63,6 +63,9 @@ export const CacheTokenClaims = Schema.Struct({
   prj: Schema.NonEmptyString,
   scope: CacheScope,
   epoch: CacheTokenEpoch,
+  cnf: Schema.optional(
+    Schema.Struct({ jkt: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)) }),
+  ),
   jti: Schema.NonEmptyString,
   iat: Schema.Int,
   nbf: Schema.Int,
@@ -78,6 +81,9 @@ export const CacheTokenRequest = Schema.Struct({
   project: Schema.NonEmptyString,
   scope: CacheScope,
   /** Lower bound from the matching trust policy, if any. */
+  cnf: Schema.optional(
+    Schema.Struct({ jkt: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)) }),
+  ),
   maxTtlSeconds: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 
@@ -235,6 +241,7 @@ export const CacheTokenSignerLive: Layer.Layer<
             prj: request.project,
             scope: request.scope,
             epoch: { org, prj },
+            cnf: request.cnf,
             uploadIdentity: request.uploadIdentity,
           })
             .setProtectedHeader({ alg: CACHE_TOKEN_ALGORITHM, typ: "JWT", kid: key.kid })
@@ -252,6 +259,7 @@ export const CacheTokenSignerLive: Layer.Layer<
           token,
           kid: key.kid,
           principal: {
+            cnf: request.cnf,
             subject: request.subject,
             uploadIdentity: request.uploadIdentity,
             org: request.org,
@@ -358,6 +366,7 @@ export const CacheTokenVerifierLive: Layer.Layer<
         }
 
         return {
+          cnf: claims.cnf,
           subject: claims.sub,
           uploadIdentity: claims.uploadIdentity,
           org: claims.org,

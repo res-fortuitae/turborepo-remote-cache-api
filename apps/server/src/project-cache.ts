@@ -1,7 +1,8 @@
 import { CoordinatorClient } from "@repo/coordinator";
 import { Authorization, AuthorizationAudit, AuthorizationCeilings } from "@repo/authz";
-import { CredentialResolver } from "@repo/credentials";
+import { CredentialResolver, DpopVerifier, DpopInvalid } from "@repo/credentials";
 import { Database, InstanceSettingsRepo, schema } from "@repo/db";
+import { CanonicalOrigin } from "@repo/deploy-config";
 import { ProjectLimits } from "@repo/projects";
 import { and, eq } from "drizzle-orm";
 import { Effect, Redacted } from "effect";
@@ -9,11 +10,23 @@ import { ApiError } from "./api.ts";
 
 /** Query selectors may confirm a tenant; authenticated claims alone choose storage. */
 export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
-  function* (token: string, url: URL, action: "cache:read" | "cache:write") {
+  function* (
+    token: string,
+    url: URL,
+    action: "cache:read" | "cache:write",
+    request?: {
+      readonly method: string;
+      readonly dpop?: string;
+      readonly scheme: string;
+      readonly proofAlreadyVerified?: boolean;
+    },
+  ) {
     const resolver = yield* CredentialResolver;
     const credential = yield* resolver.resolve(Redacted.make(`Bearer ${token}`));
 
     if (credential.credentialType === "legacy") {
+      if (request?.scheme === "dpop" || request?.dpop)
+        return yield* new DpopInvalid({ reason: "binding" });
       const team = url.searchParams.get("teamId") ?? url.searchParams.get("slug") ?? "default";
 
       if (!/^[\w.-]+$/.test(team))
@@ -29,6 +42,22 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
 
     const principal = credential.principal;
     const kind = credential.credentialType;
+    if (principal.cnf !== undefined) {
+      if (!request?.dpop || request.scheme !== "dpop")
+        return yield* new DpopInvalid({ reason: "binding" });
+      const dpop = yield* DpopVerifier;
+      const origin = yield* CanonicalOrigin;
+      // Only the post-stream recheck inside this request skips the already claimed proof.
+      if (!request.proofAlreadyVerified)
+        yield* dpop.verify({
+          proof: request.dpop,
+          method: request.method,
+          url: new URL(url.pathname + url.search, origin).href,
+          thumbprint: principal.cnf.jkt,
+          accessToken: Redacted.make(token),
+        });
+    } else if (request?.dpop || request?.scheme === "dpop")
+      return yield* new DpopInvalid({ reason: "binding" });
     const authorization = yield* Authorization;
     yield* authorization.require(
       {
@@ -108,6 +137,8 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     const settings = yield* InstanceSettingsRepo;
     const ceilings = yield* AuthorizationCeilings;
     const policy = yield* settings.policy(principal.org, ceilings);
+    if (policy.requireBoundTokens && principal.cnf === undefined)
+      return yield* new DpopInvalid({ reason: "binding" });
     const limits = yield* ProjectLimits;
 
     return {
@@ -126,6 +157,14 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     };
   },
   Effect.catchTags({
+    DpopInvalid: (error) =>
+      Effect.fail(
+        new ApiError({
+          status: error.reason === "unavailable" ? 503 : 403,
+          code: "forbidden",
+          message: "Cache proof rejected",
+        }),
+      ),
     CredentialInvalid: () =>
       Effect.fail(
         new ApiError({ status: 401, code: "unauthorized", message: "Invalid cache credential" }),

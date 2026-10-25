@@ -111,9 +111,10 @@ errors. The response `expiresAt` is an ISO timestamp.
 `DpopSignerLive` acquires a nonextractable ES256 private key per layer/job and exposes
 its public JWK thumbprint. Proofs have fresh `jti`, `iat`, uppercase `htm`, `htu`
 without query/fragment, optional nonce and SHA-256 access-token hash (`ath`). Keys
-and tokens are never written to disk. `boundTokens` is opt-in: the current exchange
-fails closed for proofs until STV-486 adds verification/binding. The signer is ready
-for the proxy's later request binding; it does not claim server enforcement today.
+and tokens are never written to disk. `boundTokens` enables binding at exchange and per-request proxy proofs; CLI proxy/exec
+turn it on by default. Server enforcement checks `cnf.jkt`, method, upstream URL,
+access-token hash, proof age and atomic replay before touching cached artifacts.
+Env mode stays unbound and is refused by binding-required policies.
 
 Run `bun run --cwd packages/client-core test` for deterministic in-memory platform,
 HTTP and clock tests, including cryptographic proof verification. No cloud or

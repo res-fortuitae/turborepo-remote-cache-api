@@ -66,7 +66,7 @@ export const runAuthCommand = async (args: string[]) => {
     project: option(options, "--project"),
     audience: option(options, "--audience"),
     strict: options.includes("--strict") ? true : undefined,
-    boundTokens: options.includes("--bound-tokens"),
+    boundTokens: mode !== "env" && !options.includes("--unbound-tokens"),
   });
 
   let proxy: Awaited<ReturnType<typeof startProxy>>;
@@ -140,15 +140,20 @@ export const runAuthCommand = async (args: string[]) => {
 
     if (mode === "exec")
       return await spawn({ ...Bun.env, TCACHE_API_KEY: undefined, ...proxy.environment });
-    // Exclusive create with restrictive permissions; never overwrite a user file or follow a symlink.
-    const { open, unlink } = await import("node:fs/promises");
-    const file = await open(state!, "wx", 0o600);
-    removeState = true;
-
+    // Publish a fully written file atomically without replacing an existing path/symlink.
+    const { open, unlink, link } = await import("node:fs/promises");
+    const temporary = `${state!}.${crypto.randomUUID()}.tmp`;
+    const file = await open(temporary, "wx", 0o600);
     try {
-      await file.writeFile(JSON.stringify(proxy.environment));
+      try {
+        await file.writeFile(JSON.stringify(proxy.environment));
+      } finally {
+        await file.close();
+      }
+      await link(temporary, state!);
+      removeState = true;
     } finally {
-      await file.close();
+      await unlink(temporary);
     }
 
     await done;

@@ -1,6 +1,6 @@
 import { ExchangeRequest, type ExchangeResponse } from "@repo/api-spec";
 import { AuditLog } from "@repo/audit";
-import { CacheTokenSigner } from "@repo/credentials";
+import { CacheTokenSigner, DpopVerifier } from "@repo/credentials";
 import { InstanceSettingsRepo, ProjectRepo, TrustPolicyRepo } from "@repo/db";
 import { CanonicalOrigin, OidcAudience, type IdentityCeilings } from "@repo/deploy-config";
 import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
@@ -84,6 +84,7 @@ const makeExchange = Effect.gen(function* () {
   const matcher = yield* TrustPolicyMatcher;
   const guardrails = yield* PolicyGuardrails;
   const signer = yield* CacheTokenSigner;
+  const dpop = yield* DpopVerifier;
   const audit = yield* AuditLog;
   const limiter = yield* RateLimiter;
   const projects = yield* ProjectRepo;
@@ -203,9 +204,25 @@ const makeExchange = Effect.gen(function* () {
 
         if (!decision.matched) return yield* denied("policy_mismatch");
 
-        // Until STV-486 verifies proofs, never mint an unbound token in their presence.
-        if (context.dpop !== undefined || policy.requireBoundTokens || decision.requireBoundTokens)
-          return yield* denied("binding_unavailable");
+        if (
+          context.dpop === undefined &&
+          (policy.requireBoundTokens || decision.requireBoundTokens)
+        )
+          return yield* denied("binding_required");
+        const thumbprint =
+          context.dpop === undefined
+            ? undefined
+            : yield* dpop
+                .verify({
+                  proof: context.dpop,
+                  method: "POST",
+                  url: `${api}/oidc/exchange`,
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    error.reason === "unavailable" ? unavailable() : denied(`dpop_${error.reason}`),
+                  ),
+                );
 
         if (policy.requireArtifactSigning) return yield* denied("artifact_signing_unavailable");
 
@@ -226,10 +243,38 @@ const makeExchange = Effect.gen(function* () {
           project: project.id,
           scope: decision.scope,
           maxTtlSeconds: ttl,
+          cnf: thumbprint === undefined ? undefined : { jkt: thumbprint },
+          // Only these verified, bounded claims enter artifact incident-response metadata.
+          uploadIdentity: {
+            provider: verified.issuer.length <= 128 ? verified.issuer : undefined,
+            repositoryId:
+              typeof verified.claims.repository_id === "string" &&
+              verified.claims.repository_id.length <= 128
+                ? verified.claims.repository_id
+                : undefined,
+            ref:
+              typeof verified.claims.ref === "string" && verified.claims.ref.length <= 128
+                ? verified.claims.ref
+                : undefined,
+            jobWorkflowRef:
+              typeof verified.claims.job_workflow_ref === "string" &&
+              verified.claims.job_workflow_ref.length <= 128
+                ? verified.claims.job_workflow_ref
+                : undefined,
+            commitSha:
+              typeof verified.claims.sha === "string" && verified.claims.sha.length <= 128
+                ? verified.claims.sha
+                : undefined,
+            runId:
+              typeof verified.claims.run_id === "string" && verified.claims.run_id.length <= 128
+                ? verified.claims.run_id
+                : undefined,
+          },
         });
 
         diagnostics = {
           ...diagnostics,
+          bound: thumbprint !== undefined,
           scope: decision.scope,
           expiresAt: issued.principal.expiresAt * 1000,
           cacheTokenId: issued.principal.tokenId,

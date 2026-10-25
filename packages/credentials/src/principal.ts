@@ -28,6 +28,9 @@ export const Principal = Schema.Struct({
   project: Schema.NonEmptyString,
   scope: CacheScope,
   tokenId: Schema.NonEmptyString,
+  cnf: Schema.optional(
+    Schema.Struct({ jkt: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)) }),
+  ),
   /** Seconds since the epoch, like the JWT claims they come from. */
   issuedAt: Schema.Int,
   expiresAt: Schema.Int,

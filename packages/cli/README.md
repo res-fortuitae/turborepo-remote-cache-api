@@ -15,8 +15,10 @@ bun packages/cli/src/bin.ts proxy-stop --state "$RUNNER_TEMP/tcache-session.json
 ```
 
 Flags before `--`: `--api`, `--team`, `--project`, `--audience`, `--strict`,
-`--bound-tokens`. Config precedence remains flags > TCACHE_* > .turbo-cache.json.
-Proxy binding is opt-in until STV-486 implements server verification.
+`--unbound-tokens`. Config precedence remains flags > TCACHE_* > .turbo-cache.json.
+Proxy/exec use DPoP by default; `--unbound-tokens` explicitly opts out for legacy
+servers or policies permitting bearer tokens. Env mode always requests an unbound
+token, so policies requiring binding refuse it. Static API keys remain bearer tokens.
 
 Exec binds a random loopback port, passes a random per-session token to the child,
 streams requests/responses, preserves Content-Length and HEAD, and closes the
@@ -32,8 +34,7 @@ its environment; avoid forcing remote-only caching when requesting fail-open.
 Only the Remote Cache artifact routes are forwarded. Incoming cookies, DPoP,
 authorization, forwarding headers and arbitrary headers are discarded. Upstream
 redirects are never followed. GET/HEAD retry 502/503/504 and network failures twice
-with bounded delays; PUT/POST are never replayed. Each outgoing proof will be made
-by the job signer in STV-486. Stats report hits, misses, uploads, failures, retries
+with bounded delays; PUT/POST are never replayed. Each bound outgoing request and safe retry gets a fresh DPoP proof from the job signer. Stats report hits, misses, uploads, failures, retries
 on stderr without paths, credentials or upstream error bodies.
 
 `env --format github|gitlab|shell|dotenv|json` emits credentials intentionally.

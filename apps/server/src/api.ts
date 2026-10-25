@@ -109,6 +109,12 @@ export interface ApiDependencies<R> {
     token: string,
     url: URL,
     action: "cache:read" | "cache:write",
+    request?: {
+      readonly method: string;
+      readonly dpop?: string;
+      readonly scheme: string;
+      readonly proofAlreadyVerified?: boolean;
+    },
   ) => Effect.Effect<ArtifactScope, ApiError, R>;
   readonly auditDenial?: (
     error: ApiError,
@@ -205,40 +211,48 @@ export const artifactApi = <R>({
     ),
   );
 
-  const authenticate = Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const header = request.headers["authorization"] ?? "";
-    const match = /^Bearer ([^\s,]+)$/i.exec(header);
-    const value = match?.[1];
+  const authenticate = (proofAlreadyVerified = false) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const header = request.headers["authorization"] ?? "";
+      const match = /^(Bearer|DPoP) ([^\s,]+)$/i.exec(header);
+      const value = match?.[2];
+      const scheme = match?.[1]?.toLowerCase();
 
-    if (!value) {
-      return yield* new ApiError({
-        status: 401,
-        code: "unauthorized",
-        message: "Missing bearer token",
-      });
-    }
+      if (!value) {
+        return yield* new ApiError({
+          status: 401,
+          code: "unauthorized",
+          message: "Missing bearer token",
+        });
+      }
 
-    const url = new URL(request.url, "http://localhost");
+      const url = new URL(request.url, "http://localhost");
 
-    if (authorize) {
-      return yield* authorize(
-        value,
-        url,
-        request.method === "PUT" || isMultipartPath(url.pathname) ? "cache:write" : "cache:read",
-      );
-    }
+      if (authorize) {
+        return yield* authorize(
+          value,
+          url,
+          request.method === "PUT" || isMultipartPath(url.pathname) ? "cache:write" : "cache:read",
+          {
+            method: request.method,
+            dpop: request.headers.dpop,
+            scheme: scheme!,
+            proofAlreadyVerified,
+          },
+        );
+      }
 
-    if (!legacyTokenEnabled || !safeEqual(value, Redacted.value(token))) {
-      return yield* new ApiError({
-        status: 401,
-        code: "unauthorized",
-        message: "Invalid token",
-      });
-    }
+      if (scheme !== "bearer" || !legacyTokenEnabled || !safeEqual(value, Redacted.value(token))) {
+        return yield* new ApiError({
+          status: 401,
+          code: "unauthorized",
+          message: "Invalid token",
+        });
+      }
 
-    return { prefix: yield* teamScope(url), maxUploadBytes };
-  });
+      return { prefix: yield* teamScope(url), maxUploadBytes };
+    });
 
   const status = HttpServerResponse.json({ status: "enabled" });
 
@@ -361,7 +375,7 @@ export const artifactApi = <R>({
     else yield* store.put(team, hash, request.stream, { ...options, contentLength });
 
     // A deletion or archive racing an upload must not leave a newly written artifact.
-    yield* authenticate.pipe(
+    yield* authenticate(true).pipe(
       Effect.flatMap((current) =>
         (current.cacheGeneration ?? 0) === generation
           ? Effect.void
@@ -462,7 +476,7 @@ export const artifactApi = <R>({
     if (request.method === "OPTIONS")
       return HttpServerResponse.empty({ status: 204, headers: TURBO_PREFLIGHT_HEADERS });
 
-    const scope = yield* authenticate;
+    const scope = yield* authenticate();
     const team = scope.prefix;
     const provenance = uploadProvenance(scope.credential);
     const segment = match?.[1];
@@ -472,7 +486,7 @@ export const artifactApi = <R>({
       yield* guard(scope);
       if (multipartRequest)
         return multipart
-          ? yield* multipart(scope, authenticate)
+          ? yield* multipart(scope, authenticate(true))
           : yield* Effect.fail(
               new ApiError({ status: 404, code: "not_found", message: "Multipart is unavailable" }),
             );

@@ -6,6 +6,7 @@ import { AuditLogD1Only } from "@repo/audit";
 import {
   CacheTokensTest,
   CacheTokenSigner,
+  DpopVerifierLive,
   CredentialResolverLive,
   ApiKeyVerifierTest,
   ApiKeyVerifier,
@@ -13,7 +14,7 @@ import {
 import { EdgeCache, EdgeCacheTest } from "@repo/artifacts";
 import { operations } from "./support/permission-matrix.ts";
 import { turboRoundTrip } from "./support/turbo.ts";
-import { Database, InstanceSettingsRepoLive, schema } from "@repo/db";
+import { Database, InstanceSettingsRepoLive, ReplayGuardLive, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
 import { RateLimiter, RateLimiterTest } from "@repo/ratelimit";
 import { cacheCredentialGuard, cacheAuthenticationFailureGuard } from "../src/request-guards.ts";
@@ -29,15 +30,18 @@ import {
   CoordinatorClientLive,
   CoordinatorNamespaceTest,
 } from "@repo/coordinator";
+import { generateKeyPair, exportJWK, calculateJwkThumbprint, SignJWT } from "jose";
 import { ApiError, artifactApi } from "../src/api.ts";
 import { authorizeProjectCache } from "../src/project-cache.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
 import { memoryBucket } from "./support/in-process.ts";
 
 const layer = Layer.mergeAll(
+  DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
   CacheTokensTest,
   CredentialResolverLive.pipe(Layer.provide(Layer.mergeAll(CacheTokensTest, ApiKeyVerifierTest()))),
   InstanceSettingsRepoLive,
+  ReplayGuardLive,
   AuthorizationAuditLive.pipe(Layer.provide(AuditLogD1Only)),
   AuthorizationDatabaseLive.pipe(
     Layer.provide(AuthorizationAuditLive.pipe(Layer.provide(AuditLogD1Only))),
@@ -181,10 +185,12 @@ const scopedCredentials = Layer.effect(
 );
 
 const v2Layer = Layer.mergeAll(
+  DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
   CredentialResolverLive.pipe(
     Layer.provideMerge(Layer.mergeAll(CacheTokensTest, scopedCredentials)),
   ),
   InstanceSettingsRepoLive,
+  ReplayGuardLive,
   AuthorizationAuditLive.pipe(Layer.provide(AuditLogD1Only)),
   AuthorizationDatabaseLive.pipe(
     Layer.provide(AuthorizationAuditLive.pipe(Layer.provide(AuditLogD1Only))),
@@ -611,4 +617,93 @@ test("request guards cap org policies, isolate credentials and IPs, and reject b
         (yield* request("invalid", "/v8/artifacts/status", "GET", undefined, "192.0.2.2")).status,
       ).toBe(401);
     }).pipe(Effect.provide(Layer.merge(v2Layer, RateLimiterTest))),
+  ));
+
+test("bound cache JWT cannot be used without its fresh request proof, including repeat reads", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((db) => [
+        db
+          .insert(schema.organization)
+          .values({ id: "org", slug: "org", name: "Org", createdAt: new Date(0) }),
+        db
+          .insert(schema.project)
+          .values({ id: "p", orgId: "org", slug: "p", name: "P", createdAt: 0 }),
+      ]);
+      const keys = yield* Effect.promise(() => generateKeyPair("ES256"));
+      const jwk = yield* Effect.promise(() => exportJWK(keys.publicKey));
+      const jkt = yield* Effect.promise(() => calculateJwkThumbprint(jwk));
+      const signer = yield* CacheTokenSigner;
+      const bound = yield* signer.issue({
+        maxTtlSeconds: 900,
+        subject: "ci",
+        org: "org",
+        project: "p",
+        scope: "read write",
+        cnf: { jkt },
+      });
+      const bearer = yield* signer.issue({
+        maxTtlSeconds: 900,
+        subject: "ci",
+        org: "org",
+        project: "p",
+        scope: "read write",
+      });
+      const api = artifactApi({
+        bucket: memoryBucket(),
+        token: Redacted.make("legacy"),
+        edgeCacheEnabled: false,
+        cache: createArtifactCache(false),
+        waitUntil: () => Effect.void,
+        authorize: authorizeProjectCache,
+      });
+      const url = "https://cache.test/v8/artifacts/abc";
+
+      const proof = (method: string, accessToken = bound.token) =>
+        Effect.promise(async () => {
+          const digest = new Uint8Array(
+            await crypto.subtle.digest("SHA-256", new TextEncoder().encode(accessToken)),
+          );
+          const ath = btoa(String.fromCharCode(...digest))
+            .replaceAll("+", "-")
+            .replaceAll("/", "_")
+            .replace(/=+$/, "");
+
+          return new SignJWT({ htm: method, htu: url, ath })
+            .setProtectedHeader({ typ: "dpop+jwt", alg: "ES256", jwk })
+            .setIssuedAt()
+            .setJti(crypto.randomUUID())
+            .sign(keys.privateKey);
+        });
+
+      const request = (method: string, dpop?: string, token = bound.token, scheme = "DPoP") =>
+        api.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request(url, {
+                method,
+                headers: {
+                  authorization: `${scheme} ${token}`,
+                  ...(dpop ? { dpop } : {}),
+                  "content-length": "1",
+                },
+                body: method === "PUT" ? "x" : undefined,
+              }),
+            ),
+          ),
+          Effect.map(HttpServerResponse.toWeb),
+        );
+      expect((yield* request("PUT")).status).toBe(403);
+      expect((yield* request("PUT", undefined, bound.token, "Bearer")).status).toBe(403);
+      const put = yield* proof("PUT");
+      expect((yield* request("PUT", put)).status).toBe(202);
+      expect((yield* request("PUT", put)).status).toBe(403);
+      expect((yield* request("GET", yield* proof("PUT"))).status).toBe(403);
+      expect((yield* request("GET", yield* proof("GET", "another-token"))).status).toBe(403);
+      expect((yield* request("GET", yield* proof("GET"))).status).toBe(200);
+      expect((yield* request("GET")).status).toBe(403);
+      expect((yield* request("GET", undefined, bearer.token, "Bearer")).status).toBe(200);
+    }).pipe(Effect.provide(layer), Effect.provideService(CanonicalOrigin, "https://cache.test")),
   ));
