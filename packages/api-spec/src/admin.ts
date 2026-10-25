@@ -28,6 +28,8 @@ export const CreateProjectRequest = Schema.Struct({
   maxArtifactBytes: Schema.optional(ProjectLimit),
 });
 
+export const DeleteProjectRequest = Schema.Struct({ confirmation: Id });
+
 export const UpdateProjectRequest = Schema.Struct({
   slug: Schema.optional(ProjectSlug),
   name: Schema.optional(ProjectName),
@@ -132,6 +134,7 @@ export const AdminApi = HttpApiGroup.make("admin")
     }),
     HttpApiEndpoint.delete("deleteProject", "/projects/:id", {
       params: ProjectParams,
+      payload: DeleteProjectRequest,
       success: HttpApiSchema.Accepted,
       error: ApiErrors,
     }),

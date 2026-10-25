@@ -13,6 +13,7 @@ import { readInstancePolicy, requirePasskeyProof } from "@repo/auth";
 import { Authorization, type SessionPrincipal, type ProjectAction } from "@repo/authz";
 import { Database, ProjectRepo, schema, type Project } from "@repo/db";
 import { AuthConfig, InstancePolicy, tightenPolicy } from "@repo/deploy-config";
+import { ProjectRetentionRules, artifactPrefix } from "./maintenance.ts";
 import { and, eq, ne } from "drizzle-orm";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 
@@ -54,6 +55,25 @@ const projects = Effect.gen(function* () {
   const audit = yield* AuditLog;
   const config = yield* AuthConfig;
   const limits = yield* ProjectLimits;
+  const retentionRules = yield* Effect.serviceOption(ProjectRetentionRules);
+  const syncRetention = (row: Project, policy: typeof InstancePolicy.Type) =>
+    retentionRules._tag === "Some"
+      ? retentionRules.value
+          .sync(
+            row.id,
+            artifactPrefix(row.orgId, row.id),
+            Math.min(
+              row.retentionDays ?? limits.retentionDays,
+              limits.retentionDays,
+              policy.retentionDays,
+            ),
+          )
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logError("Native retention unavailable; using sweeper", error),
+            ),
+          )
+      : Effect.void;
 
   const event = (
     actor: ProjectActor,
@@ -183,6 +203,29 @@ const projects = Effect.gen(function* () {
       );
 
   return {
+    delete: Effect.fn("Projects.delete")(function* (
+      actor: ProjectActor,
+      id: string,
+      confirmation: string,
+    ) {
+      const row = yield* locate(id);
+      yield* requirePermission(actor, "delete", row.orgId, id);
+      yield* mutationPolicy(actor, row.orgId);
+      if (confirmation !== id)
+        return yield* new BadRequest({ message: "Confirm deletion with the project ID" });
+      const now = yield* Clock.currentTimeMillis;
+      yield* audit.commit(event(actor, row.orgId, "delete.requested", id), (db) => [
+        db
+          .insert(schema.projectDeletion)
+          .values({ projectId: id, orgId: row.orgId, requestedAt: now })
+          .onConflictDoNothing(),
+        db.update(schema.project).set({ archivedAt: now }).where(eq(schema.project.id, id)),
+        db
+          .update(schema.trustPolicy)
+          .set({ enabled: false })
+          .where(eq(schema.trustPolicy.projectId, id)),
+      ]);
+    }),
     listGrants: Effect.fn("Projects.listGrants")(function* (actor: ProjectActor, id: string) {
       const row = yield* locate(id);
       yield* requirePermission(actor, "grant", row.orgId, id);
@@ -339,8 +382,10 @@ const projects = Effect.gen(function* () {
 
       yield* commitMutation(event(actor, orgId, "create", row.id), (db) => [
         db.insert(schema.project).values(row),
+        db.insert(schema.projectRetention).values({ projectId: row.id, scannedAt: 0 }),
       ]);
 
+      yield* syncRetention(row, policy);
       return present(row, policy);
     }),
     get: Effect.fn("Projects.get")(function* (actor: ProjectActor, id: string) {
@@ -420,10 +465,19 @@ const projects = Effect.gen(function* () {
             .update(schema.project)
             .set(changes)
             .where(and(eq(schema.project.id, id), eq(schema.project.orgId, before.orgId))),
+          db
+            .insert(schema.projectRetention)
+            .values({ projectId: id, scannedAt: 0 })
+            .onConflictDoUpdate({
+              target: schema.projectRetention.projectId,
+              set: { scannedAt: 0, cursor: null },
+            }),
         ],
       );
 
-      return present(yield* locate(id), policy);
+      const updated = yield* locate(id);
+      yield* syncRetention(updated, policy);
+      return present(updated, policy);
     }),
   };
 });

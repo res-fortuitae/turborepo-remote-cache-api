@@ -278,6 +278,8 @@ export const BetterAuthSecret = requiredSecret("BetterAuthSecret", "BETTER_AUTH_
 export const GitHubOAuthSecret = optionalSecret("GitHubOAuthSecret", "GITHUB_OAUTH_CLIENT_SECRET");
 
 /** Basin is unavailable in restricted jurisdictions; the token stays unset there. */
+export const R2LifecycleToken = optionalSecret("R2LifecycleToken", "R2_LIFECYCLE_API_TOKEN");
+
 export const BasinSqlToken = optionalSecret("BasinSqlToken", "BASIN_SQL_TOKEN");
 
 /**

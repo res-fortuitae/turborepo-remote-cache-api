@@ -71,24 +71,23 @@ const fromStub = <A>(call: Rpc<A>) =>
   // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- erases a phantom requirement only.
   call as unknown as Effect.Effect<A, unknown>;
 
-/** Wraps the Worker's binding in `CoordinatorNamespace`. Provide it inside the Worker init. */
+/** Capture a namespace during Worker initialization; RPC stubs are request independent. */
+export const makeCoordinatorNamespace = (
+  namespace: Effect.Success<typeof Coordinator>,
+): typeof CoordinatorNamespace.Service => ({
+  getByName: (name) => {
+    const stub = namespace.getByName(name);
+    return {
+      revocationEpoch: () => fromStub(stub.revocationEpoch()),
+      bumpRevocationEpoch: () => fromStub(stub.bumpRevocationEpoch()),
+      chainHead: () => fromStub(stub.chainHead()),
+      advanceChain: (expectedSequence, hash) => fromStub(stub.advanceChain(expectedSequence, hash)),
+    };
+  },
+});
+
+/** Wraps the Worker's binding in CoordinatorNamespace. */
 export const CoordinatorNamespaceLive = Layer.effect(
   CoordinatorNamespace,
-  Effect.gen(function* () {
-    const namespace = yield* Coordinator;
-
-    return {
-      getByName: (name) => {
-        const stub = namespace.getByName(name);
-
-        return {
-          revocationEpoch: () => fromStub(stub.revocationEpoch()),
-          bumpRevocationEpoch: () => fromStub(stub.bumpRevocationEpoch()),
-          chainHead: () => fromStub(stub.chainHead()),
-          advanceChain: (expectedSequence, hash) =>
-            fromStub(stub.advanceChain(expectedSequence, hash)),
-        };
-      },
-    };
-  }),
+  Effect.map(Coordinator, makeCoordinatorNamespace),
 );

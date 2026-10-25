@@ -23,7 +23,7 @@ import type { createArtifactCache } from "./edge-cache.ts";
  * with an in-memory bucket; `worker.ts` supplies the R2 binding.
  */
 
-class ApiError extends Data.TaggedError("ApiError")<{
+export class ApiError extends Data.TaggedError("ApiError")<{
   readonly status: number;
   readonly code: string;
   readonly message: string;
@@ -70,6 +70,7 @@ export interface ArtifactPutOptions {
 
 /** The subset of the R2 bucket client the API uses. */
 export interface ArtifactBucket<R> {
+  delete?(keys: string[]): Effect.Effect<void, Cloudflare.R2.R2Error, R>;
   head(key: string): Effect.Effect<StoredArtifact | null, Cloudflare.R2.R2Error, R>;
   get(key: string): Effect.Effect<StoredArtifactBody | null, Cloudflare.R2.R2Error, R>;
   put<Err>(
@@ -79,7 +80,17 @@ export interface ArtifactBucket<R> {
   ): Effect.Effect<unknown, Cloudflare.R2.R2Error | Err, R>;
 }
 
+export interface ArtifactScope {
+  readonly prefix: string;
+  readonly maxUploadBytes: number;
+}
+
 export interface ApiDependencies<R> {
+  readonly authorize?: (
+    token: string,
+    url: URL,
+    action: "cache:read" | "cache:write",
+  ) => Effect.Effect<ArtifactScope, ApiError, R>;
   readonly maxUploadBytes?: number;
   readonly emitEvents?: (
     team: string,
@@ -139,6 +150,7 @@ export const artifactApi = <R>({
   waitUntil,
   maxUploadBytes = 100_000_000,
   emitEvents = () => Effect.void,
+  authorize,
 }: ApiDependencies<R>) => {
   const authenticate = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -153,6 +165,10 @@ export const artifactApi = <R>({
       });
     }
 
+    const url = new URL(request.url, "http://localhost");
+    if (authorize && !safeEqual(value, Redacted.value(token))) {
+      return yield* authorize(value, url, request.method === "PUT" ? "cache:write" : "cache:read");
+    }
     if (!safeEqual(value, Redacted.value(token))) {
       return yield* new ApiError({
         status: 403,
@@ -160,6 +176,7 @@ export const artifactApi = <R>({
         message: "Invalid token",
       });
     }
+    return { prefix: yield* teamScope(url), maxUploadBytes };
   });
 
   const status = HttpServerResponse.json({ status: "enabled" });
@@ -222,7 +239,11 @@ export const artifactApi = <R>({
     return HttpServerResponse.raw(client, options);
   });
 
-  const upload = Effect.fn("Api.upload")(function* (team: string, hash: string) {
+  const upload = Effect.fn("Api.upload")(function* (
+    team: string,
+    hash: string,
+    uploadLimit: number,
+  ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const h = request.headers;
     const contentLength = Number(h["content-length"]);
@@ -231,11 +252,11 @@ export const artifactApi = <R>({
       return yield* badRequest("Missing or invalid Content-Length header");
     }
 
-    if (contentLength > maxUploadBytes)
+    if (contentLength > uploadLimit)
       return yield* new ApiError({
         status: 413,
         code: "payload_too_large",
-        message: `Upload exceeds this instance's ${maxUploadBytes} byte request limit. Multipart upload support is pending STV-492.`,
+        message: `Upload exceeds this instance's ${uploadLimit} byte request limit. Multipart upload support is pending STV-492.`,
       });
 
     const duration = h["x-artifact-duration"];
@@ -259,6 +280,15 @@ export const artifactApi = <R>({
       httpMetadata: { contentType: "application/octet-stream" },
       customMetadata: { ...meta },
     });
+
+    // A deletion or archive racing an upload must not leave a newly written artifact.
+    yield* authenticate.pipe(
+      Effect.catch((error) =>
+        (bucket.delete ? bucket.delete([`${team}/${hash}`]) : Effect.void).pipe(
+          Effect.andThen(Effect.fail(error)),
+        ),
+      ),
+    );
 
     // Drop any stale copy cached in this datacenter.
     if (edgeCacheEnabled) yield* cache.remove(team, hash);
@@ -326,8 +356,8 @@ export const artifactApi = <R>({
       });
     }
 
-    yield* authenticate;
-    const team = yield* teamScope(url);
+    const scope = yield* authenticate;
+    const team = scope.prefix;
     const segment = match[1];
     const method = request.method;
 
@@ -346,7 +376,7 @@ export const artifactApi = <R>({
 
       if (method === "GET") return yield* download(team, segment);
 
-      if (method === "PUT") return yield* upload(team, segment);
+      if (method === "PUT") return yield* upload(team, segment, scope.maxUploadBytes);
     }
 
     return yield* new ApiError({

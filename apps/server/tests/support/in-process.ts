@@ -35,6 +35,12 @@ export const memoryBucket = (): MemoryBucket => {
 
   const bucket: MemoryBucket = {
     objects,
+    delete: (keys) =>
+      guard(
+        Effect.sync(() => {
+          for (const key of keys) objects.delete(key);
+        }),
+      ),
     failing: false,
     head: (key) => guard(Effect.sync(() => objects.get(key) ?? null)),
     get: (key) =>

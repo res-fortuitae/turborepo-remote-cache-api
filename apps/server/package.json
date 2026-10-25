@@ -17,6 +17,7 @@
     "@repo/auth": "workspace:*",
     "@repo/authz": "workspace:*",
     "@repo/coordinator": "workspace:*",
+    "@repo/credentials": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/deploy-config": "workspace:*",
     "@repo/infra": "workspace:*",
@@ -25,6 +26,7 @@
     "@repo/projects": "workspace:*",
     "@repo/shared": "workspace:*",
     "alchemy": "2.0.0-beta.83",
+    "drizzle-orm": "1.0.0-rc.5",
     "effect": "^4.0.6"
   },
   "devDependencies": {

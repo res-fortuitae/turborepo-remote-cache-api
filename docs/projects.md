@@ -1,67 +1,75 @@
-# Project management (M2, first slice)
+# Project management
 
-`@repo/projects` owns the `Projects` Effect service. It uses the existing project
-table and `ProjectRepo`, the session/org portion of `Authorization`, and `AuditLog`.
-The Worker provides policy configuration, upload/retention ceilings and database
-bindings. No migration or infrastructure deployment is needed for this slice.
+`@repo/projects` owns project CRUD, grants and maintenance. Changes and their
+audit events commit atomically in D1. `@repo/authz` makes live permission decisions;
+see [authorization](authorization.md).
 
-## HTTP API
+Session routes require a live Better Auth cookie. Mutations require the canonical
+Origin and at most 16 KiB of JSON. Responses use `Cache-Control: no-store`.
 
-These routes implement the existing `@repo/api-spec` contracts:
+| Route                                                     | Behavior                                                     |
+| --------------------------------------------------------- | ------------------------------------------------------------ |
+| POST `/orgs/:id/projects`                                 | Create (201)                                                 |
+| GET `/orgs/:id/projects?limit=50&cursor=...`              | Stable ID pagination, maximum 100                            |
+| GET `/projects/:id`                                       | Read                                                         |
+| PATCH `/projects/:id`                                     | Rename, limits, description, archive/restore                 |
+| DELETE `/projects/:id`                                    | `{ "confirmation": "<project-id>" }`; enqueue deletion (202) |
+| GET/POST `/projects/:id/grants`                           | List/upsert same-org user/team grants                        |
+| DELETE `/projects/:id/grants/:principalType/:principalId` | Remove grant (204)                                           |
 
-- `POST /orgs/:id/projects`: create, returning 201 and a project.
-- `GET /orgs/:id/projects?limit=50&cursor=...`: list by stable project ID. The
-  maximum page size is 100. Use `nextCursor` for the next page.
-- `GET /projects/:id`: read a project.
-- `PATCH /projects/:id`: update name, slug, description, limits or `archived`.
-  `archived: true` archives; `archived: false` restores. Description accepts null.
+Slugs are unique per organization, lowercase alphanumeric with single hyphens,
+maximum 64 characters. Names are nonblank, maximum 100; descriptions maximum 2000.
+IDs remain stable through renames. Retention and artifact size are clamped to live
+instance/org policy and deployment limits. Passkey step-up applies when required.
 
-Requests need a live Better Auth session cookie. Mutations also need an `Origin`
-header equal to the instance's canonical origin. JSON bodies are limited to 16 KiB.
-Responses, including errors, use `Cache-Control: no-store`. The legacy shared
-bearer token cannot manage projects.
+Direct and team grants combine by strongest role: project admin, cache write,
+cache read. Current organization membership is mandatory. Org owners/admins
+implicitly administer projects. Instance roles require a session-bound elevation
+to gain organization powers. Denials are audited and audit failure closes access.
 
-Owner/admin organization roles receive `project:create`, `project:read` and
-`project:update`. Custom roles can delegate these statements individually.
-Members and auditors have no default project-management access in this slice.
-Grant-based visibility follows in STV-439/440. Instance owner/admin status alone
-does not grant organization access: a live, session-bound elevation is required
-unless the user already has the necessary organization membership. Banned users,
-impersonated sessions, expired sessions and removed members are rejected on the
-next request. Archived organizations remain readable but reject project mutations.
-When policy requires passkey step-up, mutations require recent session-bound proof.
+## Storage and credentials
 
-Slugs use lowercase letters/digits separated by single hyphens, at most 64
-characters; they are unique within each organization. Name is nonblank and at
-most 100 characters; description is at most 2000 characters. Renames preserve the
-project ID and organization ID. Create, update, archive and restore commit the
-project change and its chained audit event in the same D1 batch. Authorization
-denials are recorded durably.
+Verified cache JWTs choose `{orgId}/{projectId}/{hash}` from their signed claims.
+Query parameters can only confirm the org ID (`teamId`) or immutable org slug
+(`slug`); mismatches return 403. Identical hashes in separate projects remain
+separate objects. Tokens must obey current TTL, signing and binding policy. The
+exchange/CLI/API-key issuance paths remain separate M3 work. The signing secret
+must contain the `SigningKeySet` JSON described by `@repo/credentials`, and issued
+lifetimes must obey the current policy (900 seconds by default).
 
-Project retention is clamped to the bucket's deployment retention and the current
-instance/organization retention policy. Maximum artifact size is clamped to the
-serving upload capability and the current policy's quota. Omitted limits use the
-host defaults, subject to those ceilings. Reads calculate effective limits again,
-so tightening policy also affects existing project responses.
+Archive denies PUT with 403 while reads continue. Delete atomically persists a
+permanent tombstone, archives the project and disables trust policies. All project
+credentials fail immediately, including API-key principals when M3 adds issuance.
+The maintenance cron revokes the project's JWT epoch and deletes up to 1000 R2
+objects per tick. It resumes persisted cursors after failures, then removes grants,
+policies, rollups and the project row, retaining the tombstone and audit chain.
+Both organization deletion paths enqueue the same jobs before removing the parent.
+An upload rechecks access after writing and removes its object if deletion/archive
+raced the upload. Auth precedes edge-cache reads, so cached data cannot bypass a
+tombstone. Legacy shared-token requests retain their isolated single-level team
+namespace and cannot address a project prefix.
 
-## Remaining STV-438 work
+## Retention
 
-This is the management foundation, not the completed ticket or milestone:
+Every two minutes, maintenance sweeps one bounded page from the least recently
+scanned project. Cursors persist in D1 and rotate fairly across projects. It uses
+the current effective retention, preserving newer artifacts and other prefixes.
+The bucket-wide deployment lifecycle remains a maximum-age backstop.
 
-- Cache routing still uses the legacy shared-token/team namespace. M3's credential
-  resolver must bind every credential to one org/project and use
-  `{orgId}/{projectId}/{hash}`. Until then, project settings/archive state do not
-  control legacy cache traffic. Archived-project writes must be denied when
-  project-aware cache routing is installed.
-- Per-project retention is stored/clamped but does not yet install R2 lifecycle
-  rules or a sweeper. The existing bucket-wide deployment retention still applies.
-- `DELETE /projects/:id` returns 503 after authentication/access checks and leaves
-  the project intact. Confirmation, durable batched R2 cleanup, credential
-  revocation, trust-policy shutdown, outstanding JWT revocation and organization
-  deletion integration must ship together before deletion can be enabled.
-- Project grants, the complete principal/action decision service and the full
-  permission matrix follow in STV-439, STV-440 and STV-441 respectively.
+Native prefix rules are optional because the R2 Worker binding cannot configure
+bucket lifecycle. To enable them, set root `R2_LIFECYCLE_API_TOKEN` (account-scoped
+Workers R2 Storage Write), `R2_LIFECYCLE_ACCOUNT_ID`, and the physical Artifacts
+bucket name in `R2_LIFECYCLE_BUCKET` for the next explicitly requested deployment.
+The secret stays in Secrets Store. Create/save immediately reconciles the prefix
+rule; cron repairs drift after deployment and policy changes. Existing unrelated
+rules are preserved. At 1000 total rules, or without control-plane access, the
+sweeper enforces retention. API errors are logged and the sweeper continues.
 
-Validate with `bun run check` and `bun run test`. The focused tests cover real
-migrated SQLite services and signed-session HTTP requests, without cloud credentials
-or deployments.
+Cloudflare's [lifecycle API](https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/lifecycle/methods/update/)
+replaces the complete rule set; avoid concurrent manual lifecycle changes while
+reconciliation is active. Retention deletion is asynchronous, as with native R2
+lifecycle, and full scan latency grows with the number of prefixes/pages.
+
+Validate with `bun run check` and `bun run test`. Focused suites exercise migrated
+SQLite, signed session/JWT HTTP, failed R2 retry, prefix isolation, native rule
+capacity and retention cursors. They require no cloud credentials or deployment.
