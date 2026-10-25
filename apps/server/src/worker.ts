@@ -40,7 +40,9 @@ import {
   DatabaseLive,
   ReplayGuardLive,
   ProjectRepoLive,
+  TrustPolicyRepoLive,
   InstanceSettingsRepoLive,
+  InstanceSettingsRepo,
 } from "@repo/db";
 import { AuthorizationDatabaseLive, AuthorizationCeilings } from "@repo/authz";
 import {
@@ -53,7 +55,20 @@ import {
   ProjectRetentionRules,
 } from "@repo/projects";
 import { isProjectsPath, projectsRoute } from "./projects-route.ts";
-import { pruneOidcReplayIds } from "@repo/oidc";
+import {
+  pruneOidcReplayIds,
+  OidcExchangeLive,
+  OidcVerifierLive,
+  OidcVerifierConfig,
+  GitHubIssuerRegistry,
+  JwksCacheLive,
+  KvNamespace,
+  TrustPolicyMatcherLive,
+  ExchangeConfig,
+} from "@repo/oidc";
+import { RateLimiter as ExchangeRateLimiter, RateLimitUnavailable } from "@repo/ratelimit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { oidcRoute } from "./oidc-route.ts";
 import {
   AuthConfig,
   IdentityCeilings,
@@ -91,6 +106,7 @@ import { makeRetentionRules } from "./retention-rules.ts";
 import { authorizeProjectCache } from "./project-cache.ts";
 import {
   CacheTokenVerifierLive,
+  CacheTokenSignerLive,
   CacheTokenConfigLive,
   KeyStoreLive,
   SigningKeySecret,
@@ -208,7 +224,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const kv = yield* Cloudflare.KV.ReadWriteNamespace(CacheNamespace);
     const coordinatorNamespace = yield* Coordinator;
-    yield* RateLimiter;
+    const rateLimiter = yield* RateLimiter;
     const checkpointBucket = yield* Cloudflare.R2.ReadWriteBucket(AuditCheckpointBucket);
     const auditStream = yield* AuditBasin;
 
@@ -534,6 +550,70 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const projects = projectsRoute(Layer.mergeAll(authLayer, projectsLayer));
 
+    const oidcVerifierLayer = OidcVerifierLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FetchHttpClient.layer,
+          GitHubIssuerRegistry,
+          ReplayGuardLive,
+          JwksCacheLive.pipe(Layer.provide(Layer.effect(KvNamespace, kv.raw))),
+          Layer.effect(
+            OidcVerifierConfig,
+            Effect.gen(function* () {
+              const settings = yield* InstanceSettingsRepo;
+              const policy = yield* settings.policy("", authEnvironment.IDENTITY_CEILINGS ?? {});
+              return {
+                allowedIssuers: policy.allowedOidcIssuers,
+                maxTokenAgeSeconds: 600,
+                clockSkewSeconds: 30,
+              };
+            }),
+          ).pipe(Layer.provide(InstanceSettingsRepoLive)),
+        ),
+      ),
+    );
+    const oidc = oidcRoute(
+      OidcExchangeLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            oidcVerifierLayer,
+            TrustPolicyMatcherLive,
+            PolicyGuardrailsLive,
+            CacheTokenSignerLive.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  coordinatorLayer,
+                  CacheTokenConfigLive,
+                  KeyStoreLive.pipe(
+                    Layer.provide(Layer.effect(SigningKeySecret, signingSecret.raw)),
+                  ),
+                ),
+              ),
+            ),
+            auditLayer,
+            ProjectRepoLive,
+            TrustPolicyRepoLive,
+            InstanceSettingsRepoLive,
+            Layer.succeed(ExchangeConfig, authEnvironment.IDENTITY_CEILINGS ?? {}),
+            Layer.effect(
+              ExchangeRateLimiter,
+              Effect.gen(function* () {
+                const binding = yield* rateLimiter.raw;
+                return {
+                  allow: (key: string) =>
+                    Effect.tryPromise({
+                      try: () => binding.limit({ key }),
+                      catch: () => new RateLimitUnavailable({}),
+                    }).pipe(Effect.map((result) => result.success)),
+                };
+              }),
+            ),
+          ),
+        ),
+        Layer.provide(databaseLayer),
+      ),
+    );
+
     const report = capabilitiesRoute(capabilities, token).pipe(
       Effect.provide(authLayer),
       Effect.catch(() =>
@@ -548,6 +628,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const { pathname } = new URL(request.url, "http://localhost");
+
+        if (pathname === "/oidc/exchange") return yield* oidc;
 
         if (pathname === "/api/instance/capabilities") return yield* report;
 

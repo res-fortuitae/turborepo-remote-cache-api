@@ -62,7 +62,7 @@ packages may use external libraries explicitly declared in their manifests.
 | `@repo/authz`                  | Authorization: single policy decision point                                      | api-spec, db, auth                                                          | STV-439–441                            |
 | `@repo/projects`               | Project management, effective limits and audited mutations                       | api-spec, db, auth, authz, audit, deploy-config, oidc                       | STV-438, STV-487                       |
 | `@repo/credentials`            | CacheTokenSigner/Verifier, CredentialResolver, DPoP, KeyStore                    | api-spec, deploy-config, db, auth, coordinator                              | STV-442, STV-443, STV-445, STV-486     |
-| `@repo/oidc`                   | OidcVerifier, issuer registry, TrustPolicyMatcher, JwksCache                     | api-spec, deploy-config, db                                                 | STV-447–449, STV-451, STV-487, STV-491 |
+| `@repo/oidc`                   | OidcVerifier, issuer registry, TrustPolicyMatcher, JwksCache                     | api-spec, deploy-config, db, credentials, audit, ratelimit                  | STV-447–449, STV-451, STV-487, STV-491 |
 | `@repo/artifacts`              | ArtifactStore, EdgeCache, quotas, generation; R2Bucket and ExecutionContext tags | api-spec, deploy-config, db, authz, credentials, coordinator                | STV-476, STV-492, STV-504, STV-505     |
 | `@repo/analytics`              | AnalyticsEmitter/Query, rollups; stream and BasinSqlClient tags                  | api-spec, db                                                                | STV-462–465                            |
 | `@repo/client-core`            | exchange client, DPoP signer; HttpClient requirement                             | api-spec                                                                    | STV-484                                |
@@ -74,8 +74,9 @@ apps ordering. In particular **auth depends on audit, audit depends on db, and a
 must never import auth**. Actor information is passed as schema-defined data. This
 honors Auth's AuditLog requirement without a cycle. Coordinator and mailer are lower
 level capabilities. Audit and analytics don't import the domains that emit their
-events; shared event contracts belong in api-spec. OIDC exchange orchestration that
-needs credentials is composed at the application boundary. Add a cross-domain
+events; shared event contracts belong in api-spec. OIDC exchange orchestration lives in `@repo/oidc` (STV-449); the application
+provides its credentials, audit and rate-limit services. These explicit acyclic
+edges keep the use case testable and the Worker limited to transport and binding adaptation. Add a cross-domain
 requirement by revising this ADR and the explicit policy together; don't invert an
 edge or reach through another package's source.
 
@@ -162,4 +163,4 @@ live in api-spec (STV-427); shared retains compatibility re-exports and may depe
 only on api-spec. No new domain package may import those app implementations.
 Keep runtime behavior and infrastructure identity stable during each extraction.
 
-STV-487 adds the acyclic projects → oidc edge so every audited policy save and generated default runs the same pure guardrails as the policy tester. OIDC still has no authorization or audit dependency.
+STV-487 adds the acyclic projects → oidc edge so every audited policy save and generated default runs the same pure guardrails as the policy tester. OIDC has no authorization dependency. STV-449 adds explicit oidc → credentials, audit and ratelimit edges for the exchange use case; none of those packages depends on oidc or projects.
