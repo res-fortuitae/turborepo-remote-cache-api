@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage.tsx";
+import { ProjectPage } from "./pages/project/ProjectPage.tsx";
+import { ProjectsPage } from "./pages/ProjectsPage.tsx";
 import { GroupsPage } from "./pages/GroupsPage.tsx";
 import { MembersPage } from "./pages/MembersPage.tsx";
 import { RolesPage } from "./pages/RolesPage.tsx";
@@ -17,6 +19,12 @@ export interface Route {
 export const orgRoutes: ReadonlyArray<Route> = [
   { pattern: "", title: "Overview", render: () => <OverviewPage /> },
   { pattern: "/onboarding", title: "Get started", render: () => <OnboardingPage /> },
+  { pattern: "/projects", title: "Projects", render: () => <ProjectsPage /> },
+  {
+    pattern: "/projects/:project",
+    title: "Project",
+    render: (params) => <ProjectPage key={params.project} projectId={params.project!} />,
+  },
   { pattern: "/members", title: "Members", render: () => <MembersPage /> },
   { pattern: "/groups", title: "Groups", render: () => <GroupsPage /> },
   { pattern: "/roles", title: "Roles", render: () => <RolesPage /> },

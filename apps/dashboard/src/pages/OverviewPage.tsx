@@ -103,7 +103,12 @@ export function OverviewPage() {
               <ul className="flex flex-col divide-y">
                 {projects.data.items.map((project) => (
                   <li key={project.id} className="flex items-center justify-between gap-3 py-2.5">
-                    <span className="min-w-0 truncate text-sm font-medium">{project.name}</span>
+                    <a
+                      href={href(orgPath(org, `/projects/${encodeURIComponent(project.id)}`))}
+                      className="min-w-0 truncate text-sm font-medium hover:underline"
+                    >
+                      {project.name}
+                    </a>
                     <code className="truncate font-mono text-xs text-muted-foreground">
                       {project.slug}
                     </code>

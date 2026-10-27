@@ -72,6 +72,14 @@ export const ProjectStorage = Schema.Struct({
   objects: NonNegativeInteger,
   lastUploadAt: Schema.NullOr(Timestamp),
   reconciledAt: Schema.NullOr(Timestamp),
+  /** Set while durable deletion removes the project's artifacts. */
+  deletionRequestedAt: Schema.NullOr(Timestamp),
+  /** Effective ceilings: deployment limits tightened by instance and org policy. */
+  limits: Schema.Struct({
+    quotaBytes: PositiveInteger,
+    maxRetentionDays: PositiveInteger,
+    maxArtifactBytes: PositiveInteger,
+  }),
 });
 
 export const ProjectList = Schema.Struct({

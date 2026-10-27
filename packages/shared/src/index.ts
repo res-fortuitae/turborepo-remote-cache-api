@@ -18,6 +18,9 @@ export {
   ProjectGrants,
   ProjectList,
   ProjectStorage,
+  TrustPolicy,
+  TrustPolicyList,
+  TestTrustPoliciesResponse,
   UpdateProjectRequest,
 } from "@repo/api-spec";
 
