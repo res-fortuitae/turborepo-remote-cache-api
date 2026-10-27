@@ -1,4 +1,4 @@
-import { AuditEvent } from "@repo/api-spec";
+import { ArtifactOperationRecord, AuditEvent, CacheEventRecord } from "@repo/api-spec";
 import { AlchemyContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Output from "alchemy/Output";
@@ -15,6 +15,7 @@ export interface InfraSettings {
   readonly jurisdiction: "eu" | "fedramp" | undefined;
   readonly artifactRetentionDays: number;
   readonly auditHistoryEnabled?: boolean;
+  readonly analyticsInfrastructureEnabled?: boolean;
 }
 
 /**
@@ -194,6 +195,80 @@ const planAuditBasin = Effect.gen(function* () {
  */
 export const AuditBasin = Effect.suspend(() =>
   globalThis.__ALCHEMY_RUNTIME__ ? Effect.map(AuditStream, Option.some) : planAuditBasin,
+);
+
+export const CacheEventsStream = Cloudflare.Basin.Stream("CacheEventsStream", {
+  schema: CacheEventRecord,
+});
+export const ArtifactOpsStream = Cloudflare.Basin.Stream("ArtifactOpsStream", {
+  schema: ArtifactOperationRecord,
+});
+
+/** Fixed SQL only. Stream schemas reject invalid shapes; these predicates reject invalid values. */
+export const analyticsPipelineSql = (sink: string, stream: string, kind: "cache" | "artifact") => {
+  const columns =
+    kind === "cache"
+      ? "session_id, source, event, hash, duration_ms, (source = 'REMOTE' AND event = 'HIT') AS is_remote_hit"
+      : "operation, hash, status, bytes, edge_cache";
+  const valid =
+    kind === "cache"
+      ? "source IN ('LOCAL', 'REMOTE') AND event IN ('HIT', 'MISS') AND duration_ms >= 0"
+      : "operation IN ('GET', 'HEAD', 'PUT', 'DELETE') AND status >= 100 AND status <= 599 AND bytes >= 0 AND edge_cache IN ('HIT', 'MISS', 'BYPASS')";
+  return `INSERT INTO ${sink} SELECT id, ts, schemaVersion, org_id, project_id,
+    CASE WHEN lower(ci_provider) IN ('github', 'github-actions', 'github_actions') THEN 'github'
+      WHEN lower(ci_provider) IN ('gitlab', 'gitlab-ci') THEN 'gitlab'
+      WHEN lower(ci_provider) IN ('circleci', 'buildkite', 'bitbucket', 'vercel', 'aws', 'google', 'azure') THEN lower(ci_provider)
+      ELSE 'other' END AS ci_provider,
+    substring(ts, 1, 10) AS day, ${columns}
+    FROM ${stream} WHERE schemaVersion = 1 AND org_id <> '' AND project_id <> '' AND ${valid}`;
+};
+
+const planAnalyticsBasin = Effect.gen(function* () {
+  const { dev } = yield* AlchemyContext;
+  if (dev) return Option.none();
+  const { jurisdiction, analyticsInfrastructureEnabled } = yield* infraConfig;
+  if (analyticsInfrastructureEnabled !== true || jurisdiction !== undefined) return Option.none();
+  const token = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(Effect.orDie);
+  if (Option.isNone(token)) return Option.none();
+  const bucket = yield* Cloudflare.R2.Bucket("AnalyticsCatalog", {});
+  const catalog = yield* Cloudflare.Basin.Catalog("AnalyticsDataCatalog", {
+    bucket,
+    compaction: { state: "enabled", targetSizeMb: "128" },
+    snapshotExpiration: { state: "enabled", maxSnapshotAge: "7d", minSnapshotsToKeep: 10 },
+  });
+  const cacheEvents = yield* CacheEventsStream;
+  const artifactOps = yield* ArtifactOpsStream;
+  for (const [id, name, stream, kind] of [
+    ["CacheEvents", "cache_events", cacheEvents, "cache"],
+    ["ArtifactOps", "artifact_ops", artifactOps, "artifact"],
+  ] as const) {
+    // Sinks own table creation and automatically partition by DAY(__ingest_ts).
+    const sink = yield* Cloudflare.Basin.Sink(`${id}Table`, {
+      type: "basin_catalog",
+      catalog,
+      table: { namespace: "analytics", name },
+      token: token.value,
+      rollingPolicy: { intervalSeconds: 60, fileSizeBytes: 64 * 1024 * 1024 },
+    });
+    yield* Cloudflare.Basin.Pipeline(`${id}Pipeline`, {
+      sql: Output.all(sink.name, stream.name).pipe(
+        Output.map(([sinkName, streamName]) => analyticsPipelineSql(sinkName, streamName, kind)),
+      ),
+    });
+  }
+  return Option.some({ cacheEvents, artifactOps });
+});
+
+/** Infrastructure only: M7 enables emitters and analytics query capabilities separately. */
+export const AnalyticsBasin = Effect.suspend(() =>
+  globalThis.__ALCHEMY_RUNTIME__
+    ? Effect.gen(function* () {
+        return Option.some({
+          cacheEvents: yield* CacheEventsStream,
+          artifactOps: yield* ArtifactOpsStream,
+        });
+      })
+    : planAnalyticsBasin,
 );
 
 /** System of record: tenants, identities, credentials, audit and analytics rollups. */

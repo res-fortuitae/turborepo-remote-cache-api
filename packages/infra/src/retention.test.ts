@@ -6,6 +6,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import {
   ArtifactBucket,
+  AnalyticsBasin,
   AuditBasin,
   AuditCheckpointBucket,
   BackupBucket,
@@ -40,6 +41,7 @@ const declarations = (stage: string, configuredStages = stages, auditHistoryEnab
       yield* BackupBucket;
       yield* AuditCheckpointBucket;
       yield* AuditBasin;
+      yield* AnalyticsBasin;
       yield* SigningKey;
       yield* BetterAuthSecret;
       yield* GitHubOAuthSecret;
@@ -60,6 +62,7 @@ const declarations = (stage: string, configuredStages = stages, auditHistoryEnab
         jurisdiction: undefined,
         artifactRetentionDays: 30,
         auditHistoryEnabled,
+        analyticsInfrastructureEnabled: auditHistoryEnabled,
       }),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
@@ -92,6 +95,14 @@ const protectedResources = {
   AuditStream: "Cloudflare.Pipelines.Stream",
   AuditLogTable: "Cloudflare.Pipelines.Sink",
   AuditPipeline: "Cloudflare.Pipelines.Pipeline",
+  AnalyticsCatalog: "Cloudflare.R2.Bucket",
+  AnalyticsDataCatalog: "Cloudflare.R2.DataCatalog",
+  CacheEventsStream: "Cloudflare.Pipelines.Stream",
+  ArtifactOpsStream: "Cloudflare.Pipelines.Stream",
+  CacheEventsTable: "Cloudflare.Pipelines.Sink",
+  ArtifactOpsTable: "Cloudflare.Pipelines.Sink",
+  CacheEventsPipeline: "Cloudflare.Pipelines.Pipeline",
+  ArtifactOpsPipeline: "Cloudflare.Pipelines.Pipeline",
   SecretStore: "Cloudflare.SecretsStore",
   SigningKey: "Cloudflare.SecretsStore.Secret",
   BetterAuthSecret: "Cloudflare.SecretsStore.Secret",
@@ -137,6 +148,14 @@ test("D1-only plans never declare audit Basin resources even when tokens are con
     "AuditStream",
     "AuditLogTable",
     "AuditPipeline",
+    "AnalyticsCatalog",
+    "AnalyticsDataCatalog",
+    "CacheEventsStream",
+    "ArtifactOpsStream",
+    "CacheEventsTable",
+    "ArtifactOpsTable",
+    "CacheEventsPipeline",
+    "ArtifactOpsPipeline",
   ])
     expect(resources[name]).toBeUndefined();
   expect(resources.Database?.policy).toBe("retain");
