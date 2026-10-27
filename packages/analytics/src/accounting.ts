@@ -90,14 +90,20 @@ export const StorageAccountingLive = Layer.effect(
               ? db.delete(schema.artifactUsage).where(where)
               : db
                   .insert(schema.artifactUsage)
-                  .values({ orgId: scope.orgId, projectId: scope.projectId, hash, bytes: size })
+                  .values({
+                    orgId: scope.orgId,
+                    projectId: scope.projectId,
+                    hash,
+                    bytes: size,
+                    observedAt: Date.now(),
+                  })
                   .onConflictDoUpdate({
                     target: [
                       schema.artifactUsage.orgId,
                       schema.artifactUsage.projectId,
                       schema.artifactUsage.hash,
                     ],
-                    set: { bytes: size },
+                    set: { bytes: size, observedAt: Date.now() },
                   }),
           ])
           .pipe(

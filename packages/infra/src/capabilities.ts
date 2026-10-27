@@ -12,6 +12,7 @@ export interface CapabilityInputs {
   readonly workersPlan?: "free" | "paid" | undefined;
   readonly emailConfigured?: boolean;
   readonly catalogToken: boolean;
+  readonly sqlToken?: boolean;
   readonly features: {
     readonly emailSending?: boolean;
     readonly analytics?: boolean;
@@ -82,6 +83,15 @@ export const resolveCapabilities = (
       : (restriction ??
         (!input.catalogToken ? "BASIN_CATALOG_TOKEN is not configured." : undefined));
 
+  const analyticsReason =
+    input.features.analytics === false
+      ? "Disabled in deploy.config.ts."
+      : (restriction ??
+        (!input.catalogToken
+          ? "BASIN_CATALOG_TOKEN is not configured."
+          : !input.sqlToken
+            ? "BASIN_SQL_TOKEN is not configured."
+            : undefined));
   return {
     schemaVersion: 1,
     workersPlan,
@@ -101,16 +111,16 @@ export const resolveCapabilities = (
         "Workers Paid and Email Service enabled on a verified domain unlock transactional email.",
     },
     analytics: {
-      enabled: false,
+      enabled: analyticsReason === undefined,
       reason:
-        input.features.analytics === false
-          ? "Disabled in deploy.config.ts."
-          : (restriction ?? "Basin analytics integration is pending STV-462–465."),
+        analyticsReason ??
+        "Basin analytics streams and D1 rollups enabled; SQL token required for queries.",
       fallback:
         input.features.analytics === false
           ? "Analytics disabled."
           : "Lite analytics: hourly project counters in D1; no Iceberg history or drill-downs.",
-      upgrade: "Workers Paid unlocks Basin analytics when STV-462–465 is installed.",
+      upgrade:
+        "Workers Paid and a Basin Catalog token enable analytics streams. Configure BASIN_SQL_TOKEN for rollups and drill-downs.",
     },
     auditHistory: {
       enabled: auditReason === undefined,
@@ -136,7 +146,12 @@ export const resolveCapabilities = (
       upgrade:
         "Business or Enterprise on the serving zone unlocks requests over 100 MB, subject to its upload setting.",
     },
-    analyticsMode: input.features.analytics === false ? "disabled" : "lite",
+    analyticsMode:
+      input.features.analytics === false
+        ? "disabled"
+        : analyticsReason === undefined
+          ? "basin"
+          : "lite",
     auditRetentionDays: auditReason === undefined ? 90 : 365,
     warnings: [...(detected.warnings ?? [])],
   };

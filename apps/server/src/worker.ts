@@ -121,11 +121,20 @@ import {
   ArtifactOpEmitter,
   ArtifactOpEmitterD1Uploads,
   AnalyticsEmitter,
+  AnalyticsError,
   AnalyticsEmitterBasin,
   ArtifactOpEmitterBasin,
   AnalyticsSampling,
   CacheEventsStream,
   ArtifactOpsStream,
+  BasinSqlClient,
+  BasinSqlClientLive,
+  BasinSqlConfig,
+  AnalyticsRollups,
+  AnalyticsRollupsLive,
+  AnalyticsInventory,
+  StorageReconciliation,
+  StorageReconciliationLive,
   type AnalyticsScope,
   type ArtifactOperation,
   ActivityFlags,
@@ -140,6 +149,7 @@ import { CapabilityReport } from "@repo/shared";
 import {
   ArtifactBucket,
   AnalyticsBasin,
+  AnalyticsCatalogBucket,
   AuditBasin,
   AuditCheckpointBucket,
   BasinSqlToken,
@@ -185,6 +195,8 @@ const AuthEnvironment = Schema.Struct({
   ANALYTICS_SAMPLE_RATES: Schema.optional(
     Schema.fromJsonString(Schema.Record(Schema.String, Schema.Number)),
   ),
+  ANALYTICS_SQL_ACCOUNT: Schema.optional(Schema.String),
+  ANALYTICS_SQL_BUCKET: Schema.optional(Schema.String),
   AUDIT_SQL_ACCOUNT: Schema.optional(Schema.String),
   AUDIT_SQL_BUCKET: Schema.optional(Schema.String),
   MAX_ARTIFACT_BYTES: Schema.optional(Schema.NumberFromString),
@@ -301,6 +313,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const auditQueryBucket =
       !dev && capabilities.auditHistory.enabled ? yield* AuditCatalogBucket : undefined;
 
+    const analyticsQueryBucket =
+      !dev && Option.isSome(yield* AnalyticsBasin) ? yield* AnalyticsCatalogBucket : undefined;
     return {
       main: import.meta.url,
       assets: DashboardAssets,
@@ -313,6 +327,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
           : { cpuMs: config.limits.cpuMs },
       env: {
         ...env,
+        ANALYTICS_SQL_ACCOUNT: analyticsQueryBucket?.accountId,
+        ANALYTICS_SQL_BUCKET: analyticsQueryBucket?.bucketName,
         AUDIT_SQL_ACCOUNT: auditQueryBucket?.accountId,
         AUDIT_SQL_BUCKET: auditQueryBucket?.bucketName,
       },
@@ -430,6 +446,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const basinAnalyticsEnabled =
       capabilities.analytics.enabled &&
+      Boolean(authEnvironment.ANALYTICS_SQL_BUCKET) &&
       Option.isSome(cacheEventsWriter) &&
       Option.isSome(artifactOpsWriter);
     const samplingLayer = Layer.succeed(
@@ -525,6 +542,69 @@ export default class Api extends Cloudflare.Worker<Api>()(
         },
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
+    const analyticsSqlLayer =
+      basinAnalyticsEnabled &&
+      Option.isSome(auditSqlSecret) &&
+      authEnvironment.ANALYTICS_SQL_ACCOUNT &&
+      authEnvironment.ANALYTICS_SQL_BUCKET
+        ? BasinSqlClientLive.pipe(
+            Layer.provide(
+              Layer.effect(
+                BasinSqlConfig,
+                Effect.map(auditSqlSecret.value, (token) => ({
+                  accountId: authEnvironment.ANALYTICS_SQL_ACCOUNT!,
+                  bucket: authEnvironment.ANALYTICS_SQL_BUCKET!,
+                  token,
+                })),
+              ),
+            ),
+            Layer.provide(FetchHttpClient.layer),
+          )
+        : undefined;
+    if (analyticsSqlLayer) {
+      const rollupsLayer = AnalyticsRollupsLive.pipe(
+        Layer.provide(Layer.mergeAll(databaseLayer, analyticsSqlLayer)),
+      );
+      yield* Cloudflare.Workers.cron("5 * * * *", () =>
+        Effect.flatMap(AnalyticsRollups, (jobs) => jobs.hourly).pipe(
+          Effect.provide(rollupsLayer),
+          Effect.tapCause(Effect.logError),
+        ),
+      );
+      yield* Cloudflare.Workers.cron("15 2 * * *", () =>
+        Effect.flatMap(AnalyticsRollups, (jobs) => jobs.daily).pipe(
+          Effect.provide(rollupsLayer),
+          Effect.tapCause(Effect.logError),
+        ),
+      );
+    }
+    const reconciliationLayer = StorageReconciliationLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          databaseLayer,
+          StorageAccountingLive.pipe(Layer.provide(databaseLayer)),
+          Layer.effect(
+            AnalyticsInventory,
+            Effect.map(bucket.raw, (raw) => ({
+              list: (prefix: string, cursor?: string) =>
+                Effect.tryPromise(async () => {
+                  const page = await raw.list({ prefix, cursor, limit: 10 });
+                  return {
+                    objects: page.objects.map(({ key, size }) => ({ key, size })),
+                    ...(page.truncated ? { cursor: page.cursor } : {}),
+                  };
+                }).pipe(Effect.mapError((cause) => new AnalyticsError({ cause }))),
+            })),
+          ),
+        ),
+      ),
+    );
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      Effect.flatMap(StorageReconciliation, (job) => job.tick).pipe(
+        Effect.provide(reconciliationLayer),
+        Effect.tapCause(Effect.logError),
+      ),
+    );
     const auditStreamEnabled = capabilities.auditHistory.enabled && Option.isSome(auditWriter);
 
     // Without Basin, audit rows stay in D1 (see docs/data-residency.md).

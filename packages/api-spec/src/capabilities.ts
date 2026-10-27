@@ -16,7 +16,7 @@ export const CapabilityReport = Schema.Struct({
   analytics: Capability,
   auditHistory: Capability,
   directUploads: Capability,
-  analyticsMode: Schema.Literals(["lite", "disabled"]),
+  analyticsMode: Schema.Literals(["lite", "disabled", "basin"]),
   auditRetentionDays: Schema.Number,
   warnings: Schema.Array(Schema.String),
 });

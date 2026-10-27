@@ -1,0 +1,1 @@
+ALTER TABLE `artifact_usage` ADD `observed_at` integer DEFAULT 0 NOT NULL;

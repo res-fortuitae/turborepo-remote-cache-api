@@ -9,7 +9,7 @@ import {
   type CapabilityInputs,
 } from "./capabilities.ts";
 
-const input: CapabilityInputs = { dev: false, catalogToken: true, features: {} };
+const input: CapabilityInputs = { dev: false, catalogToken: true, sqlToken: true, features: {} };
 
 test("billing products and canceled Workers subscriptions do not grant Workers Paid", () => {
   expect(
@@ -45,13 +45,14 @@ test.each(["free", "unknown"] as const)(
   },
 );
 
-test("Workers Paid does not imply a paid zone or an installed integration", () => {
+test("Workers Paid enables Basin but does not imply a paid zone or configured email", () => {
   const report = resolveCapabilities(input, { workersPlan: "paid", zonePlan: "free" });
   expect(report.auditHistory.enabled).toBe(true);
   expect(report.auditRetentionDays).toBe(90);
   expect(report.directUploads.enabled).toBe(false);
   expect(report.emailSending.reason).toContain("No email sender configured");
-  expect(report.analytics.reason).toContain("STV-462");
+  expect(report.analytics.enabled).toBe(true);
+  expect(report.analyticsMode).toBe("basin");
 });
 
 test.each(["business", "enterprise"] as const)("%s does not imply Workers Paid", (zonePlan) => {
@@ -132,4 +133,14 @@ test("email sending requires both paid entitlement and explicit sender configura
       { workersPlan: "free", zonePlan: "business" },
     ).emailSending.enabled,
   ).toBe(false);
+});
+
+test("missing analytics SQL credentials retains lite mode on Paid", () => {
+  const report = resolveCapabilities(
+    { ...input, sqlToken: false },
+    { workersPlan: "paid", zonePlan: "business" },
+  );
+  expect(report.analytics.enabled).toBe(false);
+  expect(report.analyticsMode).toBe("lite");
+  expect(report.analytics.reason).toContain("BASIN_SQL_TOKEN");
 });

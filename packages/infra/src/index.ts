@@ -217,11 +217,13 @@ export const analyticsPipelineSql = (sink: string, stream: string, kind: "cache"
   return `INSERT INTO ${sink} SELECT id, event_id, ts, schemaVersion, org_id, project_id, credential_type, sample_rate,
     CASE WHEN lower(ci_provider) IN ('github', 'github-actions', 'github_actions') THEN 'github'
       WHEN lower(ci_provider) IN ('gitlab', 'gitlab-ci') THEN 'gitlab'
-      WHEN lower(ci_provider) IN ('circleci', 'buildkite', 'bitbucket', 'vercel', 'aws', 'google', 'azure') THEN lower(ci_provider)
+      WHEN lower(ci_provider) IN ('circleci', 'buildkite', 'bitbucket', 'vercel', 'aws', 'aws-eks', 'google', 'azure', 'custom', 'local') THEN lower(ci_provider)
       ELSE 'other' END AS ci_provider,
     substring(ts, 1, 10) AS day, ${columns}
     FROM ${stream} WHERE schemaVersion = 1 AND org_id <> '' AND project_id <> '' AND sample_rate > 0 AND sample_rate <= 1 AND ${valid}`;
 };
+
+export const AnalyticsCatalogBucket = Cloudflare.R2.Bucket("AnalyticsCatalog", {});
 
 const planAnalyticsBasin = Effect.gen(function* () {
   const { dev } = yield* AlchemyContext;
@@ -230,7 +232,7 @@ const planAnalyticsBasin = Effect.gen(function* () {
   if (analyticsInfrastructureEnabled !== true || jurisdiction !== undefined) return Option.none();
   const token = yield* Config.option(Config.Redacted("BASIN_CATALOG_TOKEN")).pipe(Effect.orDie);
   if (Option.isNone(token)) return Option.none();
-  const bucket = yield* Cloudflare.R2.Bucket("AnalyticsCatalog", {});
+  const bucket = yield* AnalyticsCatalogBucket;
   const catalog = yield* Cloudflare.Basin.Catalog("AnalyticsDataCatalog", {
     bucket,
     compaction: { state: "enabled", targetSizeMb: "128" },

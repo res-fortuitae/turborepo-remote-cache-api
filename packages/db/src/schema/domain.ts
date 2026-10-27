@@ -288,6 +288,7 @@ export const artifactUsage = sqliteTable(
     projectId: text("project_id").notNull(),
     hash: text().notNull(),
     bytes: integer().notNull(),
+    observedAt: integer("observed_at").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.hash] })],
 );
@@ -301,3 +302,37 @@ export const projectUsage = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.orgId, t.projectId] })],
 );
+
+/** Per-hour immutable aggregate replacements, split by source table and dimension. */
+export const usageHourly = sqliteTable(
+  "usage_hourly",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    hour: integer().notNull(),
+    source: text().notNull(),
+    dimension: text().notNull(),
+    metrics: text({ mode: "json" }).$type<Record<string, number>>().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.hour, t.source, t.dimension] })],
+);
+export const usageDaily = sqliteTable(
+  "usage_daily",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    day: integer().notNull(),
+    dimension: text().notNull(),
+    metrics: text({ mode: "json" }).$type<Record<string, number>>().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.day, t.dimension] })],
+);
+/** Resumable inventory work; totals are published only after the final page. */
+export const usageInventory = sqliteTable("usage_inventory", {
+  projectId: text("project_id").primaryKey(),
+  orgId: text("org_id").notNull(),
+  cursor: text(),
+  bytes: integer().notNull().default(0),
+  startedAt: integer("started_at").notNull(),
+  completedAt: integer("completed_at"),
+});

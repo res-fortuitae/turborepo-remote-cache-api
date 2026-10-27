@@ -42,6 +42,7 @@ export default Alchemy.Stack(
       Effect.orDie,
     );
 
+    const sqlToken = yield* Config.option(Config.Redacted("BASIN_SQL_TOKEN")).pipe(Effect.orDie);
     const capabilities = yield* detectCapabilities({
       dev,
       domain: workerDomain(config, stage),
@@ -50,6 +51,7 @@ export default Alchemy.Stack(
       features: config.features,
       emailConfigured: config.email !== undefined,
       catalogToken: Option.isSome(catalogToken),
+      sqlToken: Option.isSome(sqlToken),
     });
 
     return yield* Effect.gen(function* () {

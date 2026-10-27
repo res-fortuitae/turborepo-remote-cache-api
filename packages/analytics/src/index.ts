@@ -28,3 +28,10 @@ export {
   StorageAccounting,
   StorageAccountingLive,
 } from "./accounting.ts";
+export { BasinSqlClient, AnalyticsRollups, AnalyticsRollupsLive } from "./rollups.ts";
+export {
+  AnalyticsInventory,
+  StorageReconciliation,
+  StorageReconciliationLive,
+} from "./inventory.ts";
+export { BasinSqlConfig, BasinSqlClientLive } from "./sql-client.ts";
