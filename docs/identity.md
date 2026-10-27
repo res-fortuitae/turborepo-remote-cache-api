@@ -71,7 +71,10 @@ created, and the last group can be removed. `deploy.config.ts.groups` configures
 `maxGroups` (default 50) and `maxMembersPerGroup` (default 1,000).
 Native `/organization/create-team`, `update-team`, `remove-team`,
 `add-team-member`, `remove-team-member`, and list endpoints back the group UI.
-Group membership is constrained to organization membership. A group's ID is the
+Group membership is constrained to organization membership. Native `list-team-members` only answers members of that
+group, so `GET /organization/group-members?organizationId=&teamId=` lets any org
+member read the composition of any group in their org (the dashboard and access
+explanations use it). A group's ID is the
 `team` grant principal for M2 project RBAC, never another Turbo team slug.
 
 ## Organization administration roles
