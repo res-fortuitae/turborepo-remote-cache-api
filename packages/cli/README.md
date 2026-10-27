@@ -85,9 +85,11 @@ TURBO_API/TURBO_TOKEN. Other doctor checks follow in STV-489.
 
 ```sh
 tcache login --api https://cache.example.com
+# For unattended hosts, add --file-session to select private-file storage explicitly.
 tcache whoami
 tcache link --team my-org --project PROJECT_ID
 tcache exec -- turbo run build
+tcache exec --strict --write -- turbo run build # explicitly request developer writes
 tcache token --refresh # prints a secret; prefer exec
 tcache logout
 ```

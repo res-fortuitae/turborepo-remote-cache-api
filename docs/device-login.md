@@ -15,6 +15,9 @@ Sessions prefer the native OS credential store. If unavailable, login warns and
 falls back to `~/.config/tcache/session.json` (directory 0700, file 0600).
 No session or device secret is printed. Use an OS-encrypted home directory on
 shared machines. The CLI rejects symlink session files and insecure file modes.
+For unattended hosts, `tcache login --file-session --api https://cache.example.com`
+explicitly selects that private file without invoking a credential manager that
+may wait for an interactive OS prompt. OS credential storage remains the default.
 
 Device requests, including the requesting IP, live in D1. KV secondary storage is
 not involved in code issuance, decisions, polling intervals, or single-use

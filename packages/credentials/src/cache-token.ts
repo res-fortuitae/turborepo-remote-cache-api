@@ -1,4 +1,8 @@
-import { CoordinatorClient, CoordinatorClientTest, type CoordinatorError } from "@repo/coordinator";
+import {
+  CoordinatorClient,
+  CoordinatorClientTest,
+  type CoordinatorError,
+} from "@repo/coordinator/client";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";

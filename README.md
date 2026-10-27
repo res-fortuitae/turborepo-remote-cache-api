@@ -66,9 +66,17 @@ files there are not automatically loaded or executed by the current API.
 ```sh
 bun install
 bun run setup          # asks for domain, jurisdiction, edge cache, and stage names
-cp .env.example .env   # set TURBO_TOKEN and each secret to a long random string (e.g. `openssl rand -hex 32`)
+cp .env.example .env   # set TURBO_TOKEN and BETTER_AUTH_SECRET to long random strings
+bun run keygen --out /private/path/signing-key.json
+# Store that file's single-line JSON as CACHE_TOKEN_SIGNING_KEY in the root .env.
+# Keep the private key outside the repository; never commit it.
 bun run deploy         # first run prompts for Cloudflare login and bootstraps the state store
 ```
+
+The root dev, plan and deploy scripts validate the signing key before starting
+Alchemy. A random string is not a JWT signing key: it must be a private Ed25519
+SigningKeySet JSON. Existing malformed secrets must be replaced before running
+those scripts; no secret is silently regenerated or overwritten.
 
 Setup validates and creates config without overwriting it, then runs the API's
 `bootstrap` script when available. Secrets remain in the root `.env`; setup does
@@ -255,6 +263,8 @@ measurements, the 200-job k6 fleet workload and staging release gates.
 security fixes, residual risks and pre-launch validation gates.
 [The M8/M9 validation record](docs/m8-m9-validation.md) lists the stacked PRs,
 local checks and outstanding launch validation.
+[The STV-508 follow-up](docs/stv-508-validation.md) records real admin, CLI,
+cross-device cache, integrity and audit journeys, fixes found, and remaining gates.
 
 ## Instance capabilities
 

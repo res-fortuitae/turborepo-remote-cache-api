@@ -13,7 +13,10 @@ scope is `read`, including for project writers and admins. To request writes,
 pass `write: true`; both the effective `developerCacheWrites` policy and current
 project write permission must allow it. Instance admins can enable that policy;
 organization policy can only tighten its parent. Existing policies default to
-read-only. Every successful issuance is audited without the token.
+read-only. The CLI exposes this explicit request as
+`tcache exec --strict --write -- turbo run build`; it also works with `token`,
+`env`, and `proxy`. The option only changes developer issuance, not CI policies or
+API-key scopes. Every successful issuance is audited without the token.
 
 `ttlSeconds` is optional and bounded by 43,200 seconds (12 hours). The signer,
 instance and effective organization policy, and remaining session lifetime may

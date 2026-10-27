@@ -60,15 +60,18 @@ export const runAuthCommand = async (args: string[]) => {
     return 1;
   }
 
-  const runtime = makeAuthRuntime({
-    api: option(options, "--api"),
-    team: option(options, "--team"),
-    project: option(options, "--project"),
-    audience: option(options, "--audience"),
-    strict: options.includes("--strict") ? true : undefined,
-    boundTokens:
-      !["env", "ci-auth", "token"].includes(mode ?? "") && !options.includes("--unbound-tokens"),
-  });
+  const runtime = makeAuthRuntime(
+    {
+      api: option(options, "--api"),
+      team: option(options, "--team"),
+      project: option(options, "--project"),
+      audience: option(options, "--audience"),
+      strict: options.includes("--strict") ? true : undefined,
+      boundTokens:
+        !["env", "ci-auth", "token"].includes(mode ?? "") && !options.includes("--unbound-tokens"),
+    },
+    options.includes("--write"),
+  );
 
   let proxy: Awaited<ReturnType<typeof startProxy>>;
   let child: ReturnType<typeof Bun.spawn> | undefined;

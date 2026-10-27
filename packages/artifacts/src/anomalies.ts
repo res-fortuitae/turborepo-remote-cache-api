@@ -1,5 +1,5 @@
 import { AuditLog, type AuditInput } from "@repo/audit";
-import { CoordinatorClient } from "@repo/coordinator";
+import { CoordinatorClient } from "@repo/coordinator/client";
 import { Database, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import type { ExchangeIdentity } from "@repo/credentials";

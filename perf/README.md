@@ -93,5 +93,9 @@ See [the initial local report](results/2026-10-27.md). Release checks require
 `bun run check`, `bun run test`, `bun run dashboard:build` and `bun run test:stack`
 as well; load tests complement the functional/permission suites.
 
+[The follow-up validation](../docs/stv-508-validation.md) includes rerun metrics,
+isolated diagnostics and real macOS-to-OCI CLI/cache journeys. Its local results
+do not replace the deployed mixed-workload release gate.
+
 References: [k6 ramping VUs](https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/ramping-vus/),
 [k6 custom metrics](https://grafana.com/docs/k6/latest/using-k6/metrics/create-custom-metrics/).

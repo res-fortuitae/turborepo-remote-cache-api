@@ -22,6 +22,7 @@
     "check": "bun run check:boundaries && bun run db:check && bun run lint && bun run typecheck && bun run format:check",
     "plan": "bun apps/server/scripts/alchemy.ts plan",
     "setup": "bun apps/server/scripts/setup.ts",
+    "keygen": "bun apps/server/scripts/signing-key.ts",
     "check:boundaries": "bun scripts/check-boundaries.ts",
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:check": "bun run --cwd packages/db db:check",

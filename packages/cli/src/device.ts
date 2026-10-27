@@ -18,7 +18,7 @@ export const safeServer = (input: string) => {
     throw new Error("Use an HTTPS instance origin (HTTP is allowed on loopback).");
   return url.origin;
 };
-export const saveSession = async (api: string, token: string) => {
+export const saveSession = async (api: string, token: string, fileSession = false) => {
   const directory = configDirectory();
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const info = await lstat(directory);
@@ -26,12 +26,16 @@ export const saveSession = async (api: string, token: string) => {
   await chmod(directory, 0o700);
   const temporary = join(directory, `session-${crypto.randomUUID()}.tmp`);
   let credential: { api: string; token?: string; keychain?: boolean };
-  try {
-    await Bun.secrets.set({ service: "tcache", name: api, value: token, persist: "local" });
-    credential = { api, keychain: true };
-  } catch {
-    console.error("OS credential store unavailable; using a private session file.");
+  if (fileSession) {
     credential = { api, token };
+  } else {
+    try {
+      await Bun.secrets.set({ service: "tcache", name: api, value: token, persist: "local" });
+      credential = { api, keychain: true };
+    } catch {
+      console.error("OS credential store unavailable; using a private session file.");
+      credential = { api, token };
+    }
   }
   await writeFile(temporary, JSON.stringify(credential), { mode: 0o600, flag: "wx" });
   await rename(temporary, join(directory, "session.json"));
@@ -61,6 +65,7 @@ export const deviceLogin = async (
   server: string,
   output: (message: string) => void = console.error,
   signal?: AbortSignal,
+  fileSession = false,
 ) => {
   const api = safeServer(server);
   const post = (path: string, body: object) =>
@@ -114,7 +119,7 @@ export const deviceLogin = async (
       }),
     )(await result.json());
     if (result.ok && typeof value.access_token === "string") {
-      await saveSession(api, value.access_token);
+      await saveSession(api, value.access_token, fileSession);
       output("Signed in. Session saved privately.");
       return;
     }

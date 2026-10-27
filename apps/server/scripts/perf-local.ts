@@ -30,7 +30,7 @@ try {
       TURBO_TEAM: "benchmark",
       PERF_EXPECT_EDGE: "1",
       PERF_ENFORCE_SLOS: Bun.env.PERF_ENFORCE_SLOS || "0",
-      PERF_MULTIPART: "1",
+      PERF_MULTIPART: Bun.env.PERF_MULTIPART ?? "1",
       PERF_SCOPE:
         "local workerd/R2; synthetic scoped auth; no D1 authorization, quotas, OIDC or network geography",
       PERF_RAMP: Bun.env.PERF_RAMP || "2s",

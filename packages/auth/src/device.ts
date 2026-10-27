@@ -1,11 +1,7 @@
+import type { SessionReader } from "./session-reader.ts";
 import type { AuditLogService } from "@repo/audit";
 import { schema, type DatabaseDrizzle } from "@repo/db";
-import {
-  APIError,
-  createAuthEndpoint,
-  createAuthMiddleware,
-  getAuthoritativeSessionFromCtx,
-} from "better-auth/api";
+import { APIError, createAuthEndpoint, createAuthMiddleware } from "better-auth/api";
 import {
   deviceAuthorization,
   type DeviceAuthorizationGrant,
@@ -15,9 +11,13 @@ import * as Effect from "effect/Effect";
 import { z } from "zod";
 
 /** First-party public client. Device codes always use the database adapter, never KV. */
-export const devicePlugins = (db: DatabaseDrizzle, audit?: AuditLogService) => {
+export const devicePlugins = (
+  readSession: SessionReader,
+  db: DatabaseDrizzle,
+  audit?: AuditLogService,
+) => {
   const fresh = createAuthMiddleware(async (ctx) => {
-    const cached = await getAuthoritativeSessionFromCtx(ctx);
+    const cached = await readSession(ctx.headers);
     if (!cached) throw new APIError("UNAUTHORIZED");
     const [live] = await db
       .select({ user: schema.user, session: schema.session })

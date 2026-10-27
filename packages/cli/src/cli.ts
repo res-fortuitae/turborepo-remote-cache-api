@@ -46,6 +46,12 @@ const authCommands = ["exec", "env", "proxy", "proxy-stop", "token", "ci-auth"].
       format: textFlag("format"),
       state: textFlag("state"),
       refresh: Flag.Boolean("refresh").pipe(Flag.withDefault(false)),
+      write: Flag.Boolean("write").pipe(
+        Flag.withDefault(false),
+        Flag.withDescription(
+          "Request developer cache writes; requires instance policy and project write permission.",
+        ),
+      ),
       command: Argument.String("command").pipe(Argument.variadic()),
     },
     (value) =>
@@ -56,6 +62,7 @@ const authCommands = ["exec", "env", "proxy", "proxy-stop", "token", "ci-auth"].
           ...(value.format ? ["--format", value.format] : []),
           ...(value.state ? ["--state", value.state] : []),
           ...(value.refresh ? ["--refresh"] : []),
+          ...(value.write ? ["--write"] : []),
           ...(value.command.length ? ["--", ...value.command] : []),
         ]);
       }),
@@ -119,8 +126,26 @@ const admin = Command.make("admin").pipe(
 );
 export const cli = Command.make("tcache").pipe(
   Command.withSubcommands([
-    Command.make("login", { api: textFlag("api") }, ({ api }) =>
-      run(() => deviceLogin(api || Bun.env.TCACHE_API || Bun.env.TURBO_API || "")),
+    Command.make(
+      "login",
+      {
+        api: textFlag("api"),
+        fileSession: Flag.Boolean("file-session").pipe(
+          Flag.withDefault(false),
+          Flag.withDescription(
+            "Store the session in a private 0600 file instead of the OS credential manager.",
+          ),
+        ),
+      },
+      ({ api, fileSession }) =>
+        run(() =>
+          deviceLogin(
+            api || Bun.env.TCACHE_API || Bun.env.TURBO_API || "",
+            undefined,
+            undefined,
+            fileSession,
+          ),
+        ),
     ),
     Command.make("logout", {}, () => run(logout)),
     Command.make("whoami", {}, () => run(whoami)),
