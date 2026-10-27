@@ -136,6 +136,7 @@ export const ArtifactOpEmitterD1Uploads = Layer.effect(
   ArtifactOpEmitter,
   Effect.gen(function* () {
     const database = yield* Database;
+
     return {
       emit: (scope, operation) =>
         operation.method === "PUT" &&

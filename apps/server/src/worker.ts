@@ -1,3 +1,4 @@
+import { analyticsPath, analyticsRoute } from "./analytics-route.ts";
 import { auditPath, auditRoute } from "./audit-route.ts";
 import { basinAuditHistory } from "./audit-history.ts";
 import { AuditReaderLive, AuditHistory, AuditHistoryDisabled, AuditQueryError } from "@repo/audit";
@@ -127,7 +128,10 @@ import {
   AnalyticsSampling,
   CacheEventsStream,
   ArtifactOpsStream,
-  BasinSqlClient,
+  AnalyticsQueryLive,
+  AnalyticsDrilldowns,
+  AnalyticsDrilldownsLive,
+  AnalyticsQueryCache,
   BasinSqlClientLive,
   BasinSqlConfig,
   AnalyticsRollups,
@@ -1007,7 +1011,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
             Effect.tapCause(Effect.logError),
             Effect.catchCause(() => Effect.void),
           );
-        if (scope.credential?.credentialType !== "legacy" && capabilities.analytics.enabled)
+        if (
+          scope.credential?.credentialType !== "legacy" &&
+          capabilities.analyticsMode !== "disabled"
+        )
           yield* Effect.flatMap(AnalyticsActivity, (activity) =>
             activity.seen(context, operation.method === "GET" && operation.status === 200),
           ).pipe(
@@ -1143,7 +1150,22 @@ export default class Api extends Cloudflare.Worker<Api>()(
         function* (team, events, scope) {
           const emitter = yield* AnalyticsEmitter;
           const [orgId = team, projectId = orgId] = team.split("/");
-          yield* emitter.emit(scope ? analyticsScope(scope) : { orgId, projectId }, events);
+          const context = scope ? analyticsScope(scope) : { orgId, projectId };
+          if (
+            scope?.credential &&
+            scope.credential.credentialType !== "legacy" &&
+            capabilities.analyticsMode !== "disabled"
+          )
+            yield* Effect.flatMap(AnalyticsActivity, (activity) =>
+              activity.seen(
+                context,
+                events.some((event) => event.source === "REMOTE" && event.event === "HIT"),
+              ),
+            ).pipe(
+              Effect.provide(activityLayer),
+              Effect.catchCause(() => Effect.void),
+            );
+          yield* emitter.emit(context, events);
         },
         Effect.provide(analyticsLayer),
         Effect.tapCause(Effect.logError),
@@ -1334,6 +1356,43 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const drilldownLayer = analyticsSqlLayer
+      ? AnalyticsDrilldownsLive.pipe(
+          Layer.provide(analyticsSqlLayer),
+          Layer.provide(
+            Layer.effect(
+              AnalyticsQueryCache,
+              Effect.map(kv.raw, (raw) => ({
+                get: (key: string) => Effect.tryPromise(() => raw.get(key)),
+                put: (key: string, value: string, ttl: number) =>
+                  Effect.tryPromise(() => raw.put(key, value, { expirationTtl: ttl })),
+              })),
+            ),
+          ),
+        )
+      : Layer.succeed(AnalyticsDrilldowns, {
+          read: () =>
+            Effect.fail(
+              new AnalyticsError({ cause: "Basin drill-downs are unavailable in lite mode" }),
+            ),
+        });
+    const analytics = analyticsRoute.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          authLayer,
+          authorizationLayer,
+          ProjectRepoLive,
+          AnalyticsQueryLive,
+          drilldownLayer,
+        ).pipe(Layer.provide(databaseLayer)),
+      ),
+      Effect.catchCause(() =>
+        HttpServerResponse.json(
+          { message: "Analytics unavailable" },
+          { status: 503, headers: { "cache-control": "no-store" } },
+        ),
+      ),
+    );
     const report = capabilitiesRoute(capabilities, token).pipe(
       Effect.provide(authLayer),
       Effect.catch(() =>
@@ -1377,6 +1436,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (pathname === "/tokens/dev") return yield* developerTokens;
 
         if (pathname === "/api/instance/capabilities") return yield* report;
+
+        if (analyticsPath.test(pathname)) return yield* analytics;
 
         if (auditPath.test(pathname)) return yield* audit;
 

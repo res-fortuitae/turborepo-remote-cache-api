@@ -24,10 +24,12 @@ export const AnalyticsActivityLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const flags = yield* ActivityFlags;
+
     return {
       seen: (scope, hit) =>
         Effect.gen(function* () {
           const key = `analytics-activity:${scope.orgId}:${scope.projectId}:${hit ? "hit" : "seen"}`;
+
           if (yield* flags.get(key).pipe(Effect.catch(() => Effect.succeed(null)))) return;
           const now = yield* Clock.currentTimeMillis;
           yield* db.query("Analytics.activity", (db) =>
@@ -58,10 +60,12 @@ export class StorageAccounting extends Context.Service<
     ) => Effect.Effect<void, AnalyticsError>;
   }
 >()("@repo/analytics/StorageAccounting") {}
+
 export const StorageAccountingLive = Layer.effect(
   StorageAccounting,
   Effect.gen(function* () {
     const database = yield* Database;
+
     return {
       record: (scope, hash, bytes) => {
         const where = and(
@@ -69,11 +73,14 @@ export const StorageAccountingLive = Layer.effect(
           eq(schema.artifactUsage.projectId, scope.projectId),
           eq(schema.artifactUsage.hash, hash),
         );
+
         const totalWhere = and(
           eq(schema.projectUsage.orgId, scope.orgId),
           eq(schema.projectUsage.projectId, scope.projectId),
         );
+
         const size = bytes === null ? 0 : Math.max(0, Math.floor(bytes));
+
         return database
           .batch((db) => [
             db

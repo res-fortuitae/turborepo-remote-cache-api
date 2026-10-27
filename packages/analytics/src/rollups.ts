@@ -1,5 +1,5 @@
 import { Database, schema } from "@repo/db";
-import { and, eq, gte, lt } from "drizzle-orm";
+import { and, gte, lt } from "drizzle-orm";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { AnalyticsError } from "./emitter.ts";
 
@@ -11,6 +11,7 @@ export class BasinSqlClient extends Context.Service<
 >()("@repo/analytics/BasinSqlClient") {}
 
 const count = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
+
 export const RollupRow = Schema.Struct({
   org_id: Schema.NonEmptyString,
   project_id: Schema.NonEmptyString,
@@ -28,9 +29,11 @@ export const RollupRow = Schema.Struct({
   edgeHits: count,
   edgeMisses: count,
 });
+
 const decodeRows = Schema.decodeUnknownEffect(
   Schema.Array(RollupRow).check(Schema.isMaxLength(2_000)),
 );
+
 const fields = [
   "requests",
   "remoteHits",
@@ -44,9 +47,12 @@ const fields = [
   "edgeHits",
   "edgeMisses",
 ] as const;
+
 export type Metrics = Record<string, number>;
+
 export const addMetrics = (target: Metrics, source: Metrics) => {
   for (const field of fields) target[field] = (target[field] ?? 0) + (source[field] ?? 0);
+
   return target;
 };
 
@@ -61,10 +67,12 @@ export const rollupSql = (kind: "cache" | "artifact", from: number, to: number) 
     throw new Error("Invalid rollup window");
   const start = new Date(from).toISOString();
   const end = new Date(to).toISOString();
+
   const columns =
     kind === "cache"
       ? "session_id, source, event, duration_ms, repo_id, ref"
       : "operation, status, bytes, edge_cache";
+
   const metrics =
     kind === "cache"
       ? `SUM(CASE WHEN source = 'REMOTE' THEN 1.0/sample_rate ELSE 0 END) AS requests,
@@ -81,11 +89,13 @@ export const rollupSql = (kind: "cache" | "artifact", from: number, to: number) 
        0 AS "uniqueSessions", 0 AS "ciRequests", 0 AS "localRequests",
        SUM(CASE WHEN operation = 'GET' AND edge_cache = 'HIT' THEN 1.0/sample_rate ELSE 0 END) AS "edgeHits",
        SUM(CASE WHEN operation = 'GET' AND edge_cache = 'MISS' THEN 1.0/sample_rate ELSE 0 END) AS "edgeMisses"`;
+
   // Totals and provider/repository/ref dimensions share the deduplicated source CTE.
   const dimension =
     kind === "cache"
       ? `concat('provider:', ci_provider, '|repo:', coalesce(repo_id, ''), '|ref:', coalesce(ref, ''))`
       : `concat('provider:', ci_provider)`;
+
   return `WITH dedup AS (
     SELECT event_id, ts, org_id, project_id, ci_provider, sample_rate, ${columns}
     FROM analytics.${kind === "cache" ? "cache_events" : "artifact_ops"}
@@ -114,6 +124,7 @@ export const AnalyticsRollupsLive = Layer.effect(
   Effect.gen(function* () {
     const db = yield* Database;
     const sqlClient = yield* BasinSqlClient;
+
     const rebuildDaily = (from: number, to: number) =>
       Effect.gen(function* () {
         const rows = yield* db.query("Analytics.daily.read", (q) =>
@@ -122,10 +133,13 @@ export const AnalyticsRollupsLive = Layer.effect(
             .from(schema.usageHourly)
             .where(and(gte(schema.usageHourly.hour, from), lt(schema.usageHourly.hour, to))),
         );
+
         const grouped = new Map<string, typeof schema.usageDaily.$inferInsert>();
+
         for (const row of rows) {
           const day = Math.floor(row.hour / 86_400_000) * 86_400_000;
           const key = JSON.stringify([row.orgId, row.projectId, day, row.dimension]);
+
           const entry = grouped.get(key) ?? {
             orgId: row.orgId,
             projectId: row.projectId,
@@ -133,11 +147,14 @@ export const AnalyticsRollupsLive = Layer.effect(
             dimension: row.dimension,
             metrics: {},
           };
+
           addMetrics(entry.metrics, row.metrics);
           grouped.set(key, entry);
         }
+
         // Keep all totals and the top 20 dimensions per project/day. Replacing removes stale top-N rows.
         const totals = [...grouped.values()].filter((row) => row.dimension === "");
+
         const dimensions = [...grouped.values()]
           .filter((row) => row.dimension !== "")
           .sort(
@@ -146,13 +163,17 @@ export const AnalyticsRollupsLive = Layer.effect(
               (b.metrics.bytesServed ?? 0) -
               ((a.metrics.requests ?? 0) + (a.metrics.bytesServed ?? 0)),
           );
+
         const counts = new Map<string, number>();
+
         for (const row of dimensions) {
           const key = JSON.stringify([row.orgId, row.projectId, row.day]);
           const count = counts.get(key) ?? 0;
+
           if (count < 20) totals.push(row);
           counts.set(key, count + 1);
         }
+
         // A single transaction replaces the window, including groups that have become empty.
         yield* db.batch((q) => [
           q
@@ -163,21 +184,26 @@ export const AnalyticsRollupsLive = Layer.effect(
           ),
         ]);
       });
+
     return {
       hourly: Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         const to = Math.floor(now / 3_600_000) * 3_600_000;
         const from = to - 3 * 3_600_000;
+
         // Validate both complete responses before mutating either source's D1 window.
         const results = yield* Effect.forEach(
           ["cache", "artifact"] as const,
           (kind) => sqlClient.query(rollupSql(kind, from, to)).pipe(Effect.flatMap(decodeRows)),
           { concurrency: 1 },
         );
+
         const rows: (typeof schema.usageHourly.$inferInsert)[] = [];
+
         for (const [index, source] of (["cache", "artifact"] as const).entries()) {
           for (const row of results[index]!) {
             const hour = Date.parse(row.hour);
+
             if (!Number.isFinite(hour) || hour < from || hour >= to || hour % 3_600_000 !== 0)
               return yield* new AnalyticsError({ cause: "Invalid warehouse hour" });
             rows.push({
@@ -190,6 +216,7 @@ export const AnalyticsRollupsLive = Layer.effect(
             });
           }
         }
+
         yield* db.batch((q) => [
           q
             .delete(schema.usageHourly)

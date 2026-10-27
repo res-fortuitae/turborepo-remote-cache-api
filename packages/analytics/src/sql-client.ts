@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { AnalyticsError } from "./emitter.ts";
 import { BasinSqlClient } from "./rollups.ts";
@@ -12,6 +13,7 @@ export class BasinSqlConfig extends Context.Service<
     readonly token: Redacted.Redacted<string>;
   }
 >()("@repo/analytics/BasinSqlConfig") {}
+
 const decode = Schema.decodeUnknownEffect(
   Schema.Struct({
     success: Schema.Literal(true),
@@ -25,6 +27,7 @@ export const BasinSqlClientLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* BasinSqlConfig;
     const client = yield* HttpClient.HttpClient;
+
     return {
       query: (query) =>
         Effect.gen(function* () {
@@ -35,30 +38,41 @@ export const BasinSqlClientLive = Layer.effect(
             return yield* new AnalyticsError({
               cause: "Invalid analytics warehouse configuration",
             });
+
           const request = HttpClientRequest.post(
             `https://api.sql.cloudflarestorage.com/api/v1/accounts/${config.accountId}/basin-sql/query/${config.bucket}`,
           ).pipe(
             HttpClientRequest.bearerToken(config.token),
             HttpClientRequest.bodyJson({ query }),
           );
+
           const response = yield* client.execute(yield* request);
+
           if (response.status !== 200)
             return yield* new AnalyticsError({ cause: "Analytics warehouse unavailable" });
           const decoder = new TextDecoder();
           let size = 0;
+
           const text = yield* Stream.runFoldEffect(
             response.stream,
             () => "",
             (text, chunk) => {
               size += chunk.byteLength;
+
               return size > 8 * 1024 * 1024
                 ? Effect.fail(new AnalyticsError({ cause: "Warehouse response exceeds limit" }))
                 : Effect.succeed(text + decoder.decode(chunk, { stream: true }));
             },
           );
+
           const json = yield* Effect.try(() => JSON.parse(text + decoder.decode()));
+
           return (yield* decode(json)).result.rows;
         }).pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, {
+            redirect: "manual",
+            credentials: "omit",
+          }),
           Effect.timeout("30 seconds"),
           Effect.mapError(
             () => new AnalyticsError({ cause: "Analytics warehouse unavailable or invalid" }),

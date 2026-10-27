@@ -18,10 +18,20 @@ export const UsageMetrics = Schema.Struct({
   bytesUploaded: NonNegativeInteger,
   storageBytes: NonNegativeInteger,
   uniqueSessions: NonNegativeInteger,
+  ciRequests: NonNegativeInteger,
+  localRequests: NonNegativeInteger,
+  edgeHits: NonNegativeInteger,
+  edgeMisses: NonNegativeInteger,
+  hitRate: Schema.Number,
+  edgeCacheHitRate: Schema.Number,
 });
 
 export const UsagePoint = Schema.Struct({ ts: Timestamp, ...UsageMetrics.fields });
-export const UsageBreakdown = Schema.Struct({ id: Id, ...UsageMetrics.fields });
+export const UsageBreakdown = Schema.Struct({
+  id: Id,
+  kind: Schema.Literals(["org", "project", "dimension"]),
+  ...UsageMetrics.fields,
+});
 
 export const AnalyticsResponse = Schema.Struct({
   totals: UsageMetrics,
@@ -37,12 +47,15 @@ export const AnalyticsDrilldownQuery = Schema.Struct({
 });
 
 export const AnalyticsDrilldownRow = Schema.Struct({
+  ts: Schema.optional(Timestamp),
   hash: Schema.optional(Schema.String),
   ref: Schema.optional(Schema.String),
   requests: NonNegativeInteger,
   misses: NonNegativeInteger,
   durationMs: NonNegativeInteger,
   bytes: NonNegativeInteger,
+  edgeHits: Schema.optional(NonNegativeInteger),
+  edgeMisses: Schema.optional(NonNegativeInteger),
 });
 
 export const AnalyticsDrilldownResponse = Schema.Struct({
