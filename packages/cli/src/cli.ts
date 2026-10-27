@@ -5,7 +5,7 @@ import { deviceLogin } from "./device.ts";
 import { linkProject, logout, whoami, adminRequest } from "./account.ts";
 import { runAuthCommand } from "./commands.ts";
 import { adminPurge } from "./purge.ts";
-import { doctorServer, formatCapabilities } from "./index.ts";
+import { runDoctor } from "./doctor.ts";
 
 const textFlag = (name: string) => Flag.String(name).pipe(Flag.withDefault(""));
 const common = {
@@ -141,16 +141,11 @@ export const cli = Command.make("tcache").pipe(
         server: Flag.Boolean("server").pipe(Flag.withDefault(false)),
         api: textFlag("api"),
         json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+        policy: Flag.Boolean("policy").pipe(Flag.withDefault(false)),
+        project: textFlag("project"),
         url: Argument.String("url").pipe(Argument.withDefault("")),
       },
-      (options) =>
-        run(async () => {
-          const report = await doctorServer({
-            server: options.url || options.api || Bun.env.TCACHE_API || Bun.env.TURBO_API || "",
-            token: Bun.env.TURBO_TOKEN || "",
-          });
-          console.log(options.json ? JSON.stringify(report, null, 2) : formatCapabilities(report));
-        }),
+      (options) => run(() => runDoctor(options)),
     ),
     admin,
   ]),

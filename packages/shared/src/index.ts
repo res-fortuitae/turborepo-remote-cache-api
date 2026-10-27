@@ -7,3 +7,4 @@ export { Capability, CapabilityReport } from "@repo/api-spec";
 export { PurgeFilter, PurgeReport } from "@repo/api-spec";
 
 export { DeveloperTokenRequest, DeveloperTokenApi, ExchangeResponse } from "@repo/api-spec";
+export { HealthReport, SelfTestReport } from "@repo/api-spec";
