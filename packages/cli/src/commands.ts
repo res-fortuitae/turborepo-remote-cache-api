@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { TokenCache } from "@repo/client-core";
+import { TokenCache, CiProvider, ClientConfig } from "@repo/client-core";
 import { formatEnvironment, makeAuthRuntime, startProxy, turboEnvironment } from "./auth.ts";
 
 const option = (args: string[], name: string) => {
@@ -66,7 +66,8 @@ export const runAuthCommand = async (args: string[]) => {
     project: option(options, "--project"),
     audience: option(options, "--audience"),
     strict: options.includes("--strict") ? true : undefined,
-    boundTokens: mode !== "env" && !options.includes("--unbound-tokens"),
+    boundTokens:
+      !["env", "ci-auth", "token"].includes(mode ?? "") && !options.includes("--unbound-tokens"),
   });
 
   let proxy: Awaited<ReturnType<typeof startProxy>>;
@@ -93,13 +94,28 @@ export const runAuthCommand = async (args: string[]) => {
   };
 
   try {
-    if (mode === "env" || mode === "token") {
+    if (mode === "ci-auth") {
+      const eligible = await runtime.runPromise(
+        Effect.gen(function* () {
+          const provider = yield* CiProvider;
+          const config = yield* ClientConfig;
+          return (yield* provider.detect) !== undefined || config.apiKey !== undefined;
+        }),
+      );
+      if (!eligible) {
+        console.error(
+          "No CI identity or API key configured; developer sessions are not used by ci-auth.",
+        );
+        return 1;
+      }
+    }
+    if (mode === "env" || mode === "token" || mode === "ci-auth") {
       const credential = await runtime.runPromise(Effect.flatMap(TokenCache, (cache) => cache.get));
 
       if (credential === undefined) {
         console.error("No cache credential available; no environment emitted.");
 
-        return mode === "token" || options.includes("--strict") ? 1 : 0;
+        return ["token", "ci-auth"].includes(mode ?? "") || options.includes("--strict") ? 1 : 0;
       }
 
       console.log(

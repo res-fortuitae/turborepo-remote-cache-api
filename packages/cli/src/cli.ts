@@ -38,7 +38,7 @@ const flags = (value: {
   ...(value.strict ? ["--strict"] : []),
   ...(value.unbound ? ["--unbound-tokens"] : []),
 ];
-const authCommands = ["exec", "env", "proxy", "proxy-stop", "token"].map((mode) =>
+const authCommands = ["exec", "env", "proxy", "proxy-stop", "token", "ci-auth"].map((mode) =>
   Command.make(
     mode,
     {
