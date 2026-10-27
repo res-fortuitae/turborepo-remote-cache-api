@@ -1,3 +1,5 @@
+import { developerTokenRoute } from "./developer-token-route.ts";
+import { DeveloperTokensLive } from "@repo/credentials";
 import { PolicyGuardrailsLive } from "@repo/oidc";
 import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/artifacts";
 import { multipartRoute } from "./multipart-route.ts";
@@ -934,6 +936,31 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
     );
+    const tokenSignerLayer = CacheTokenSignerLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          coordinatorLayer,
+          CacheTokenConfigLive,
+          KeyStoreLive.pipe(Layer.provide(Layer.effect(SigningKeySecret, signingSecret.raw))),
+        ),
+      ),
+    );
+    const developerTokens = developerTokenRoute(
+      DeveloperTokensLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            authLayer,
+            authorizationLayer,
+            tokenSignerLayer,
+            auditLayer,
+            rateLimitLayer,
+            ProjectRepoLive,
+            InstanceSettingsRepoLive,
+          ),
+        ),
+        Layer.provide(databaseLayer),
+      ),
+    );
     const oidc = oidcRoute(
       OidcExchangeLive.pipe(
         Layer.provide(
@@ -942,17 +969,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
             TrustPolicyMatcherLive,
             PolicyGuardrailsLive,
-            CacheTokenSignerLive.pipe(
-              Layer.provide(
-                Layer.mergeAll(
-                  coordinatorLayer,
-                  CacheTokenConfigLive,
-                  KeyStoreLive.pipe(
-                    Layer.provide(Layer.effect(SigningKeySecret, signingSecret.raw)),
-                  ),
-                ),
-              ),
-            ),
+            tokenSignerLayer,
             auditLayer,
             ProjectRepoLive,
             TrustPolicyRepoLive,
@@ -1016,6 +1033,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
             );
           return yield* oidc;
         }
+
+        if (pathname === "/tokens/dev") return yield* developerTokens;
 
         if (pathname === "/api/instance/capabilities") return yield* report;
 

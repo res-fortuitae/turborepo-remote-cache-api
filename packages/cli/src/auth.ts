@@ -1,3 +1,4 @@
+import { DeveloperCredentialsLive } from "./developer.ts";
 import { BunFileSystem } from "@effect/platform-bun";
 import {
   CacheProxy,
@@ -8,7 +9,7 @@ import {
   ClientMessages,
   ClientCommand,
   ClientAuthError,
-  DeveloperCredentialsUnavailable,
+  ClientConfigLive,
   TokenCache,
   ProxyTransport,
   ProxySession,
@@ -22,7 +23,6 @@ export const makeAuthRuntime = (flags: ClientFlags = {}) => {
   const adapters = Layer.mergeAll(
     BunFileSystem.layer,
     FetchHttpClient.layer,
-    DeveloperCredentialsUnavailable,
     Layer.succeed(ClientEnvironment, { get: (name) => Bun.env[name] }),
     Layer.succeed(ClientOptions, { flags }),
     Layer.succeed(ClientMessages, {
@@ -85,7 +85,15 @@ export const makeAuthRuntime = (flags: ClientFlags = {}) => {
   );
 
   return ManagedRuntime.make(
-    CacheProxyLive.pipe(Layer.provideMerge(ClientCoreLive), Layer.provideMerge(adapters)),
+    CacheProxyLive.pipe(
+      Layer.provideMerge(ClientCoreLive),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          adapters,
+          DeveloperCredentialsLive.pipe(Layer.provide(ClientConfigLive), Layer.provide(adapters)),
+        ),
+      ),
+    ),
   );
 };
 

@@ -93,17 +93,19 @@ export const runAuthCommand = async (args: string[]) => {
   };
 
   try {
-    if (mode === "env") {
+    if (mode === "env" || mode === "token") {
       const credential = await runtime.runPromise(Effect.flatMap(TokenCache, (cache) => cache.get));
 
       if (credential === undefined) {
         console.error("No cache credential available; no environment emitted.");
 
-        return options.includes("--strict") ? 1 : 0;
+        return mode === "token" || options.includes("--strict") ? 1 : 0;
       }
 
       console.log(
-        formatEnvironment(turboEnvironment(credential), option(options, "--format") ?? "shell"),
+        mode === "token"
+          ? turboEnvironment(credential).TURBO_TOKEN
+          : formatEnvironment(turboEnvironment(credential), option(options, "--format") ?? "shell"),
       );
 
       return 0;

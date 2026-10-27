@@ -35,3 +35,19 @@ export const OidcApi = HttpApiGroup.make("oidc").add(
 export type ExchangeRequest = typeof ExchangeRequest.Type;
 
 export type ExchangeResponse = typeof ExchangeResponse.Type;
+
+export const DeveloperTokenRequest = Schema.Struct({
+  team: Id.check(Schema.isMaxLength(256)),
+  project: Id.check(Schema.isMaxLength(256)),
+  write: Schema.optional(Schema.Boolean),
+  ttlSeconds: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(43200)),
+  ),
+});
+export const DeveloperTokenApi = HttpApiGroup.make("developerTokens").add(
+  HttpApiEndpoint.post("issue", "/tokens/dev", {
+    payload: DeveloperTokenRequest,
+    success: ExchangeResponse,
+    error: ApiErrors,
+  }),
+);

@@ -54,7 +54,10 @@ export interface AuthService {
    */
   readonly requireFreshSession: (
     headers: Headers,
-  ) => Effect.Effect<AuthSession, AuthError | Unauthenticated | DatabaseError>;
+  ) => Effect.Effect<
+    AuthSession & { session: typeof schema.session.$inferSelect },
+    AuthError | Unauthenticated | DatabaseError
+  >;
   /** Revokes every session of the caller's user. */
   readonly revokeSessions: (headers: Headers) => Effect.Effect<void, AuthError>;
 }

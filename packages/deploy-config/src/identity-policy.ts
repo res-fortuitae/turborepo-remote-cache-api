@@ -23,6 +23,7 @@ export const InstancePolicy = Schema.Struct({
   allowedGithubOrgs: Schema.Array(Schema.NonEmptyString),
   allowedOidcIssuers: Schema.Array(Schema.NonEmptyString),
   maxTokenTtlSeconds: Positive,
+  developerCacheWrites: Schema.optional(Schema.Boolean),
   apiKeys: Schema.Literals(["allowed", "warn", "disallowed"]),
   maxApiKeyLifetimeDays: Positive,
   retentionDays: Positive,
@@ -120,6 +121,8 @@ export const tightenPolicy = (
     oidcWriteEnvironments: [
       ...intersect(parent.oidcWriteEnvironments ?? [], requested.oidcWriteEnvironments ?? []),
     ],
+    developerCacheWrites:
+      parent.developerCacheWrites === true && requested.developerCacheWrites === true,
     requireArtifactSigning: parent.requireArtifactSigning || requested.requireArtifactSigning,
     requireBoundTokens: parent.requireBoundTokens || requested.requireBoundTokens,
     requirePasskeyForAdmins: parent.requirePasskeyForAdmins || requested.requirePasskeyForAdmins,

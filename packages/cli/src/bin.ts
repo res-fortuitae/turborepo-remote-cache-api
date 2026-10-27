@@ -17,7 +17,7 @@ if (args[0] === "login") {
     console.error("Login failed. Check the instance URL and device approval, then retry.");
     process.exitCode = 1;
   }
-} else if (["exec", "proxy", "env", "proxy-stop"].includes(args[0] ?? "")) {
+} else if (["exec", "proxy", "env", "proxy-stop", "token"].includes(args[0] ?? "")) {
   process.exitCode = await runAuthCommand(args);
 } else if (args[0] === "admin" && args[1] === "purge") {
   try {
