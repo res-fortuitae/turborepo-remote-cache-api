@@ -14,6 +14,8 @@ import { errorMessage } from "../lib/api.ts";
 import { authClient } from "../lib/auth-client.ts";
 import { orgPath } from "../lib/org.tsx";
 import { navigate } from "../lib/router.tsx";
+import { BrandMark } from "../components/brand.tsx";
+import { Stepper } from "../components/stepper.tsx";
 
 export const slugify = (value: string) =>
   value
@@ -44,12 +46,17 @@ export function CreateOrgForm({
     const result = await authClient.organization.create({ name: name.trim(), slug: effectiveSlug });
 
     if (result.error || !result.data) {
-      setError(new Error(result.error?.message ?? "The organization could not be created."));
+      setError(
+        new Error(
+          result.error?.status === 403
+            ? "This instance only lets administrators create organizations. Ask an instance administrator to create one for you, or to invite you to an existing organization."
+            : (result.error?.message ?? "The organization could not be created."),
+        ),
+      );
       setBusy(false);
 
       return;
     }
-
     onCreated(result.data);
   }
 
@@ -113,6 +120,34 @@ export function NewOrgPage() {
         <CardFooter className="text-xs text-muted-foreground">
           Your instance policy may restrict who can create organizations.
         </CardFooter>
+      </Card>
+    </div>
+  );
+}
+
+/** First run: no organizations yet. Creating one continues into onboarding. */
+export function WelcomePage() {
+  return (
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-8 py-6">
+      <div className="flex flex-col gap-3">
+        <BrandMark className="size-8" />
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Welcome to your cache</h1>
+        <p className="text-sm leading-6 text-muted-foreground">
+          Four short steps: name your organization, create a project, connect CI or a laptop, and
+          watch for the first cache hit.
+        </p>
+      </div>
+      <Stepper steps={["Organization", "Project", "Connect", "First cache hit"]} current={0} />
+      <Card>
+        <CardHeader>
+          <CardTitle>Create your organization</CardTitle>
+          <CardDescription>
+            Usually your company or team. Members, projects and credentials belong to it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CreateOrgForm onCreated={(org) => navigate(orgPath(org, "/onboarding"))} />
+        </CardContent>
       </Card>
     </div>
   );

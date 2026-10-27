@@ -38,9 +38,11 @@ misses rebuild from D1; warm requests perform no D1 lookup. Verification does no
 call the plugin's verifier, which updates `lastRequest` even with rate limiting
 disabled in Better Auth 1.7.12. Plugin `remaining`, refill, request-count and
 last-request fields are untouched. Rate limits belong to the Workers binding
-(STV-446). A KV marker schedules background `lastUsedAt` updates at most once a
-minute per location; a conditional D1 update prevents concurrent locations from
-recording usage more than once a minute. This is sampling, not a usage ledger.
+(STV-446). A KV marker gates `lastUsedAt` updates to at most once a minute per
+location; a conditional D1 update prevents concurrent locations from recording
+usage more than once a minute. The Worker awaits that rare update inline, because
+Better Auth verifies keys outside the request's execution context. Sampling
+failures are logged and never reject a valid key. This is sampling, not a usage ledger.
 
 Normal revocation disables D1 and deletes its KV projection; remote locations can
 retain access for approximately 60 seconds. Policy changes have the same cache

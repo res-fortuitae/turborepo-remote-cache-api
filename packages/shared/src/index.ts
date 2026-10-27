@@ -17,5 +17,6 @@ export {
   ProjectGrant,
   ProjectGrants,
   ProjectList,
+  ProjectStorage,
   UpdateProjectRequest,
 } from "@repo/api-spec";

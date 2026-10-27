@@ -7,6 +7,7 @@ import { CanonicalOrigin } from "@repo/deploy-config";
 import {
   Project,
   ProjectList,
+  ProjectStorage,
   TrustPolicy,
   TrustPolicyList,
   TestTrustPoliciesResponse,
@@ -20,6 +21,7 @@ import { isProjectsPath, projectsRoute } from "../src/projects-route.ts";
 
 const decodeProject = Schema.decodeUnknownSync(Project);
 const decodePage = Schema.decodeUnknownSync(ProjectList);
+const decodeStorage = Schema.decodeUnknownSync(ProjectStorage);
 const decodeTrustPolicy = Schema.decodeUnknownSync(TrustPolicy);
 const decodeTrustPolicyList = Schema.decodeUnknownSync(TrustPolicyList);
 
@@ -149,6 +151,56 @@ test("project routes match the shared contract and serialize project lifecycle r
         })).status,
       ).toBe(202);
       expect((yield* serve(`/projects/${created.id}`)).status).toBe(403);
+    }),
+  ));
+
+test("storage route reports ledger totals and the first cache hit as ISO timestamps", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const json = (response: Response) => Effect.promise(() => response.json());
+      const created = decodeProject(
+        yield* json(
+          yield* serve("/orgs/org/projects", {
+            method: "POST",
+            body: { slug: "web", name: "Web" },
+          }),
+        ),
+      );
+      const storagePath = `/projects/${created.id}/storage`;
+
+      expect(isProjectsPath(storagePath)).toBe(true);
+      expect(created.firstHitAt).toBeNull();
+      expect(decodeStorage(yield* json(yield* serve(storagePath)))).toEqual({
+        projectId: created.id,
+        bytes: 0,
+        objects: 0,
+        lastUploadAt: null,
+        reconciledAt: null,
+      });
+
+      yield* db.batch((db) => [
+        db.insert(schema.artifactUsage).values([
+          { orgId: "org", projectId: created.id, hash: "a", bytes: 10, observedAt: 1_000 },
+          { orgId: "org", projectId: created.id, hash: "b", bytes: 30, observedAt: 5_000 },
+          // Same project ID under another org must not leak into totals.
+          { orgId: "other", projectId: created.id, hash: "c", bytes: 99, observedAt: 9_000 },
+        ]),
+        db.insert(schema.projectUsage).values({ orgId: "org", projectId: created.id, bytes: 40 }),
+        db.update(schema.project).set({ firstHitAt: 7_000, lastSeenAt: 8_000 }),
+      ]);
+
+      expect(decodeStorage(yield* json(yield* serve(storagePath)))).toMatchObject({
+        bytes: 40,
+        objects: 2,
+        lastUploadAt: new Date(5_000).toISOString(),
+      });
+      const project = decodeProject(yield* json(yield* serve(`/projects/${created.id}`)));
+
+      expect(project.firstHitAt).toBe(new Date(7_000).toISOString());
+      expect(project.lastSeenAt).toBe(new Date(8_000).toISOString());
+      expect((yield* serve(storagePath, { method: "POST", body: {} })).status).toBe(405);
+      expect((yield* serve(storagePath, { anonymous: true })).status).toBe(401);
     }),
   ));
 

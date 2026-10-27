@@ -17,7 +17,7 @@ import { Database, ProjectRepo, schema, type Project, type TrustPolicy } from "@
 import { PolicyGuardrails, type PolicyGuardrailSettings } from "@repo/oidc";
 import { AuthConfig, InstancePolicy, OidcAudience, tightenPolicy } from "@repo/deploy-config";
 import { ProjectRetentionRules, artifactPrefix } from "./maintenance.ts";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 
 /** Host ceilings include the bucket's deployment retention and upload capability. */
@@ -201,6 +201,8 @@ const projects = Effect.gen(function* () {
     ),
     createdAt: new Date(row.createdAt).toISOString(),
     archivedAt: row.archivedAt === null ? null : new Date(row.archivedAt).toISOString(),
+    firstHitAt: row.firstHitAt === null ? null : new Date(row.firstHitAt).toISOString(),
+    lastSeenAt: row.lastSeenAt === null ? null : new Date(row.lastSeenAt).toISOString(),
   });
 
   const locate = Effect.fn("Projects.locate")(function* (id: string) {
@@ -636,6 +638,47 @@ const projects = Effect.gen(function* () {
       yield* requirePermission(actor, "read", row.orgId, row.id);
 
       return present(row, yield* policyFor(row.orgId));
+    }),
+    /** Live totals from the upload-path ledger; reconciliation corrects drift daily. */
+    storage: Effect.fn("Projects.storage")(function* (actor: ProjectActor, id: string) {
+      const row = yield* locate(id);
+      yield* requirePermission(actor, "read", row.orgId, row.id);
+      const scope = and(
+        eq(schema.artifactUsage.orgId, row.orgId),
+        eq(schema.artifactUsage.projectId, row.id),
+      );
+      const [[objects], [usage]] = yield* Effect.all([
+        database.query("Projects.storageObjects", (db) =>
+          db
+            .select({
+              count: sql<number>`count(*)`,
+              lastUploadAt: sql<number | null>`max(${schema.artifactUsage.observedAt})`,
+            })
+            .from(schema.artifactUsage)
+            .where(scope),
+        ),
+        database.query("Projects.storageBytes", (db) =>
+          db
+            .select()
+            .from(schema.projectUsage)
+            .where(
+              and(
+                eq(schema.projectUsage.orgId, row.orgId),
+                eq(schema.projectUsage.projectId, row.id),
+              ),
+            ),
+        ),
+      ]);
+      const iso = (value: number | null | undefined) =>
+        value ? new Date(value).toISOString() : null;
+
+      return {
+        projectId: row.id,
+        bytes: Math.max(0, usage?.bytes ?? 0),
+        objects: objects?.count ?? 0,
+        lastUploadAt: iso(objects?.lastUploadAt),
+        reconciledAt: iso(usage?.reconciledAt),
+      };
     }),
     list: Effect.fn("Projects.list")(function* (
       actor: ProjectActor,

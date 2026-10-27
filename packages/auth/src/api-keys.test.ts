@@ -26,9 +26,19 @@ const cookie = async (token: string) => {
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(token));
   return `better-auth.session_token=${encodeURIComponent(`${token}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`)}`;
 };
-const testLayer = () => {
+const testLayer = (background: "record" | "throw" | "none" = "record") => {
   const epochs = new Map<string, number>();
   const pending: Promise<void>[] = [];
+  const runner =
+    background === "none"
+      ? Layer.empty
+      : Layer.succeed(ApiKeyBackground, {
+          run: (task) => {
+            // Mirrors a Worker execution context read outside its request handler.
+            if (background === "throw") throw new Error("outside request handler");
+            pending.push(task);
+          },
+        });
   return {
     epochs,
     pending,
@@ -45,11 +55,7 @@ const testLayer = () => {
                 return value;
               }),
           }),
-          Layer.succeed(ApiKeyBackground, {
-            run: (task) => {
-              pending.push(task);
-            },
-          }),
+          runner,
         ),
       ),
     ),
@@ -148,6 +154,29 @@ test("keys are scoped, hashed, shown once, org-owned, and verification never upd
       expect((yield* lookup.verify(key.key)).id).toBe(key.id);
     }).pipe(Effect.provide(state.layer)),
   );
+});
+
+test("usage sampling never rejects a valid key and records usage without a background runner", async () => {
+  for (const background of ["throw", "none"] as const) {
+    const state = testLayer(background);
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const { database, lookup, create } = yield* fixture;
+        const response = yield* create();
+        const key = yield* Effect.promise(async () => createdKey(await response.json()));
+
+        // The first verification of each minute takes the sampling path.
+        expect((yield* lookup.verify(key.key)).id).toBe(key.id);
+        expect((yield* lookup.verify(key.key)).id).toBe(key.id);
+        const [stamp] = yield* database.query("test.usage", (db) =>
+          db.select().from(schema.cacheApiKey),
+        );
+
+        // The conditional update has already started when the runner fails.
+        expect(stamp?.lastUsedAt).not.toBeNull();
+      }).pipe(Effect.provide(state.layer)),
+    );
+  }
 });
 
 test("creation rejects invalid scope, project, expiry, untrusted origin, and unauthorized callers", async () => {

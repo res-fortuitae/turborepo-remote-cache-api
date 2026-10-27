@@ -4,6 +4,7 @@ import {
   CacheScope,
   CiProvider,
   Id,
+  NonNegativeInteger,
   PaginationQuery,
   PositiveInteger,
   ProjectRole,
@@ -59,6 +60,18 @@ export const Project = Schema.Struct({
   maxArtifactBytes: PositiveInteger,
   createdAt: Timestamp,
   archivedAt: Schema.NullOr(Timestamp),
+  /** First successful cache read; drives onboarding's live check. */
+  firstHitAt: Schema.NullOr(Timestamp),
+  lastSeenAt: Schema.NullOr(Timestamp),
+});
+
+/** Ledger totals for a project's stored artifacts. */
+export const ProjectStorage = Schema.Struct({
+  projectId: Id,
+  bytes: NonNegativeInteger,
+  objects: NonNegativeInteger,
+  lastUploadAt: Schema.NullOr(Timestamp),
+  reconciledAt: Schema.NullOr(Timestamp),
 });
 
 export const ProjectList = Schema.Struct({
@@ -201,6 +214,11 @@ export const AdminApi = HttpApiGroup.make("admin")
     HttpApiEndpoint.get("getProject", "/projects/:id", {
       params: ProjectParams,
       success: Project,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.get("getProjectStorage", "/projects/:id/storage", {
+      params: ProjectParams,
+      success: ProjectStorage,
       error: ApiErrors,
     }),
     HttpApiEndpoint.patch("updateProject", "/projects/:id", {

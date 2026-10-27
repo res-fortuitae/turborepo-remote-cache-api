@@ -9,7 +9,7 @@ import { authClient, type Session } from "./lib/auth-client.ts";
 import { OrgProvider, orgPath } from "./lib/org.tsx";
 import { href, matchRoute, navigate, splitLocation, useLocation } from "./lib/router.tsx";
 import { DevicePage } from "./pages/DevicePage.tsx";
-import { NewOrgPage } from "./pages/NewOrgPage.tsx";
+import { NewOrgPage, WelcomePage } from "./pages/NewOrgPage.tsx";
 import { SignInPage } from "./pages/SignInPage.tsx";
 import { instanceRoutes, orgRoutes } from "./routes.tsx";
 
@@ -97,11 +97,18 @@ function Home({ session }: { readonly session: Session }) {
   const list = orgs.data ?? [];
   const target = list.find((org) => org.id === active) ?? list[0];
 
-  return <Redirect to={target ? orgPath(target) : "/new"} />;
+  return <Redirect to={target ? orgPath(target) : "/welcome"} />;
 }
 
 function SignedIn({ session, path }: { readonly session: Session; readonly path: string }) {
   if (path === "/") return <Home session={session} />;
+
+  if (path === "/welcome")
+    return (
+      <AppShell session={session} title="Welcome">
+        <WelcomePage />
+      </AppShell>
+    );
 
   if (path === "/new")
     return (
