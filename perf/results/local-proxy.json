@@ -1,0 +1,10 @@
+{
+  "bytes": 67108864,
+  "directMedianMs": 335.944125,
+  "proxyMedianMs": 331.4765000000002,
+  "throughputLossPercent": -1.3477953942435672,
+  "budgetPercent": 5,
+  "runtime": "1.4.3",
+  "platform": "darwin-arm64",
+  "scope": "local download paced at 250 MiB/s; 10 measured runs"
+}

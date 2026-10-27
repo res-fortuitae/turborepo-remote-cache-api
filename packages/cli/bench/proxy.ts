@@ -63,13 +63,18 @@ try {
   const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!;
   const d = median(direct);
   const p = median(proxied);
+  const loss = 100 * (1 - d / p);
+  const budget = Number(Bun.env.PERF_PROXY_BUDGET_PERCENT ?? 5);
   console.log(
     JSON.stringify(
       {
         bytes,
         directMedianMs: d,
         proxyMedianMs: p,
-        throughputLossPercent: 100 * (1 - d / p),
+        throughputLossPercent: loss,
+        budgetPercent: budget,
+        runtime: Bun.version,
+        platform: `${process.platform}-${process.arch}`,
         scope: paced
           ? "local download paced at 250 MiB/s; 10 measured runs"
           : "unpaced local loopback download, 10 measured runs",
@@ -78,6 +83,8 @@ try {
       2,
     ),
   );
+  if (!Number.isFinite(budget) || loss > budget)
+    throw new Error("Proxy throughput budget exceeded");
 } finally {
   proxy.stop();
   await runtime.dispose();

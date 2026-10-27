@@ -243,8 +243,13 @@ stack suites (`tests/stack.test.ts`) deploy the root `alchemy.run.ts` with
 Alchemy's `Test` harness: locally by default (workerd with local R2/D1/KV, the
 `alchemy dev` topology), or to a real stage with `ALCHEMY_TEST_DEV=0`, named by
 `ALCHEMY_TEST_STAGE` (default `test_$USER`). Set `NO_DESTROY=1` to keep it.
+Explicit local test runs enable the legacy-token fixture in memory, without
+changing the operator config; normal dev and deployed stages keep the configured flag.
 Deploy a real stage only when you intend to. All suites use unique team names
 and leave artifacts to expire through bucket retention.
+
+[Performance probes and release targets](perf/README.md) cover local JWT/exchange/proxy
+measurements, the 200-job k6 fleet workload and staging release gates.
 
 ## Instance capabilities
 

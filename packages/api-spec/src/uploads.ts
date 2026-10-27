@@ -10,7 +10,8 @@ export const MultipartCreate = Schema.Struct({
 });
 export const UploadedPart = Schema.Struct({
   partNumber: positive,
-  etag: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  // R2 upload-part ETags are opaque; local workerd can return more than 128 bytes.
+  etag: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
 });
 export const MultipartComplete = Schema.Struct({
   parts: Schema.Array(UploadedPart).check(Schema.isMaxLength(MAX_MULTIPART_PARTS)),
