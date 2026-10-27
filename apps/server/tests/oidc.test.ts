@@ -2,7 +2,12 @@
 import { expect, test } from "bun:test";
 import { ExchangeResponse } from "@repo/api-spec";
 import { AuditLogD1Only } from "@repo/audit";
-import { CacheTokensTest, CacheTokenVerifier, DpopVerifierLive } from "@repo/credentials";
+import {
+  CacheTokensTest,
+  CacheTokenVerifier,
+  DpopVerifierLive,
+  ExchangeAnomalies,
+} from "@repo/credentials";
 import {
   Database,
   ProjectRepoLive,
@@ -128,6 +133,7 @@ type Serve = (
 const scenario = (
   task: (serve: Serve, limit: (key: string) => void) => Effect.Effect<void, unknown, Env>,
   activeIssuer = issuer,
+  anomalyPort?: typeof ExchangeAnomalies.Service,
 ) => {
   let blocked = "";
 
@@ -138,6 +144,7 @@ const scenario = (
   const layer = OidcExchangeLive.pipe(
     Layer.provideMerge(deps(activeIssuer)),
     Layer.provide(rate),
+    Layer.provide(anomalyPort ? Layer.succeed(ExchangeAnomalies, anomalyPort) : Layer.empty),
     Layer.provideMerge(DatabaseTest),
     Layer.provideMerge(TestClock.layer()),
     Layer.provide(
@@ -512,3 +519,29 @@ test("exchange binds cache JWT to verified ephemeral key and rejects proof reuse
       expect((yield* serve(body(yield* token()))).status).toBe(403);
     }),
   ));
+
+test("anomaly containment denies a verified writer before issuing a cache token", () => {
+  const observations: boolean[] = [];
+  return scenario(
+    (serve) =>
+      Effect.gen(function* () {
+        const response = yield* serve(body(yield* token()));
+        expect(response.status).toBe(403);
+        expect(observations).toEqual([false]);
+        const rows = yield* auditRows;
+        expect(JSON.stringify(rows)).toContain("anomaly_containment");
+      }),
+    issuer,
+    {
+      checkWrite: (org, project, identity) =>
+        Effect.sync(() => {
+          expect([org, project, identity.repositoryId]).toEqual(["org", "p", "1"]);
+          return true;
+        }),
+      observe: (_org, _project, allowed) =>
+        Effect.sync(() => {
+          observations.push(allowed);
+        }),
+    },
+  );
+});

@@ -1,6 +1,11 @@
 import { ExchangeRequest, type ExchangeResponse } from "@repo/api-spec";
 import { AuditLog } from "@repo/audit";
-import { ArtifactSigning, CacheTokenSigner, DpopVerifier } from "@repo/credentials";
+import {
+  ArtifactSigning,
+  CacheTokenSigner,
+  DpopVerifier,
+  ExchangeAnomalies,
+} from "@repo/credentials";
 import { InstanceSettingsRepo, ProjectRepo, TrustPolicyRepo } from "@repo/db";
 import { CanonicalOrigin, OidcAudience, type IdentityCeilings } from "@repo/deploy-config";
 import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
@@ -93,6 +98,7 @@ const makeExchange = Effect.gen(function* () {
   const ceilings = yield* ExchangeConfig;
   const audiences = yield* OidcAudience;
   const api = yield* CanonicalOrigin;
+  const anomalies = yield* Effect.serviceOption(ExchangeAnomalies);
   const artifactSigning = yield* Effect.serviceOption(ArtifactSigning);
 
   return {
@@ -104,6 +110,7 @@ const makeExchange = Effect.gen(function* () {
       let verified: VerifiedOidcToken | undefined;
       let tenant: { team: string; project: string } | undefined;
       let diagnostics: Schema.JsonObject = {};
+      let trustedWrite = false;
 
       const record = (outcome: "allow" | "deny" | "error", reason?: string) =>
         audit
@@ -204,6 +211,7 @@ const makeExchange = Effect.gen(function* () {
         };
 
         if (!decision.matched) return yield* denied("policy_mismatch");
+        trustedWrite = decision.scope === "read write";
 
         if (
           context.dpop === undefined &&
@@ -224,6 +232,22 @@ const makeExchange = Effect.gen(function* () {
                     error.reason === "unavailable" ? unavailable() : denied(`dpop_${error.reason}`),
                   ),
                 );
+
+        if (trustedWrite && anomalies._tag === "Some") {
+          const values = Object.fromEntries(
+            [
+              ["provider", verified.issuer],
+              ["repositoryId", verified.claims.repository_id],
+              ["ref", verified.claims.ref],
+              ["jobWorkflowRef", verified.claims.job_workflow_ref],
+            ].filter(
+              (entry): entry is [string, string] =>
+                typeof entry[1] === "string" && entry[1].length <= 128,
+            ),
+          );
+          if (yield* anomalies.value.checkWrite(request.team, project.id, values))
+            return yield* denied("anomaly_containment");
+        }
 
         const signing =
           artifactSigning._tag === "Some"
@@ -309,7 +333,15 @@ const makeExchange = Effect.gen(function* () {
         } satisfies ExchangeResponse;
       }).pipe(Effect.mapError((error) => (error instanceof ExchangeError ? error : unavailable())));
 
+      const observe = (allowed: boolean) =>
+        tenant && anomalies._tag === "Some"
+          ? anomalies.value
+              .observe(tenant.team, tenant.project, allowed, context.ip, allowed && trustedWrite)
+              .pipe(Effect.mapError(unavailable))
+          : Effect.void;
       return yield* run.pipe(
+        Effect.tapError(() => observe(false)),
+        Effect.tap(() => observe(true)),
         Effect.tapError((error) => record(error.status === 503 ? "error" : "deny", error.reason)),
         Effect.tap(() => record("allow")),
       );

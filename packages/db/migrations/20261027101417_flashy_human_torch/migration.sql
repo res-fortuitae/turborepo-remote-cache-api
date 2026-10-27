@@ -1,0 +1,1 @@
+CREATE INDEX `artifact_operation_project_hash` ON `artifact_operation` (`project_id`,`hash`,`status`);

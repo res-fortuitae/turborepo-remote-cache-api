@@ -249,15 +249,19 @@ export const artifactPurgeJob = sqliteTable("artifact_purge_job", {
 });
 
 /** Upload provenance stays queryable before the full M7 analytics sink is enabled. */
-export const artifactOperation = sqliteTable("artifact_operation", {
-  status: integer().notNull().default(202),
-  id: text().primaryKey(),
-  orgId: text("org_id").notNull(),
-  projectId: text("project_id").notNull(),
-  hash: text().notNull(),
-  createdAt: integer("created_at").notNull(),
-  provenance: text({ mode: "json" }).$type<Readonly<Record<string, string>>>().notNull(),
-});
+export const artifactOperation = sqliteTable(
+  "artifact_operation",
+  {
+    status: integer().notNull().default(202),
+    id: text().primaryKey(),
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    hash: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+    provenance: text({ mode: "json" }).$type<Readonly<Record<string, string>>>().notNull(),
+  },
+  (t) => [index("artifact_operation_project_hash").on(t.projectId, t.hash, t.status)],
+);
 
 /** Mutable delivery state; immutable intent and resolution events live in audit_event. */
 export const authAuditIntent = sqliteTable(
@@ -412,4 +416,58 @@ export const quotaEviction = sqliteTable("quota_eviction", {
   removed: integer().notNull().default(0),
   removedBytes: integer("removed_bytes").notNull().default(0),
   startedAt: integer("started_at").notNull(),
+});
+
+export const anomalyConfig = sqliteTable("anomaly_config", {
+  projectId: text("project_id").primaryKey(),
+  enabled: integer({ mode: "boolean" }).notNull().default(true),
+  readOnlyOnAlert: integer("read_only_on_alert", { mode: "boolean" }).notNull().default(false),
+  revokeOnAlert: integer("revoke_on_alert", { mode: "boolean" }).notNull().default(false),
+  minHourlyWrites: integer("min_hourly_writes").notNull().default(100),
+  volumeMultiplier: integer("volume_multiplier").notNull().default(5),
+  maxExchangeIPs: integer("max_exchange_ips").notNull().default(20),
+});
+export const anomalyState = sqliteTable("anomaly_state", {
+  projectId: text("project_id").primaryKey(),
+  orgId: text("org_id").notNull(),
+  readOnly: integer("read_only", { mode: "boolean" }).notNull().default(false),
+  revocationPending: integer("revocation_pending", { mode: "boolean" }).notNull().default(false),
+  updatedAt: integer("updated_at").notNull(),
+});
+export const anomalyIdentity = sqliteTable(
+  "anomaly_identity",
+  {
+    projectId: text("project_id").notNull(),
+    kind: text().notNull(),
+    value: text().notNull(),
+    firstSeenAt: integer("first_seen_at").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    samples: integer().notNull().default(1),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.kind, t.value] })],
+);
+export const anomalyHour = sqliteTable(
+  "anomaly_hour",
+  {
+    projectId: text("project_id").notNull(),
+    orgId: text("org_id").notNull(),
+    hour: integer().notNull(),
+    writes: integer().notNull().default(0),
+    bytes: integer().notNull().default(0),
+    signed: integer().notNull().default(0),
+    unsigned: integer().notNull().default(0),
+    exchanges: integer().notNull().default(0),
+    denied: integer().notNull().default(0),
+    checked: integer({ mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.hour] })],
+);
+export const anomalyIncident = sqliteTable("anomaly_incident", {
+  id: text().primaryKey(),
+  orgId: text("org_id").notNull(),
+  projectId: text("project_id").notNull(),
+  code: text().notNull(),
+  detail: text().notNull(),
+  createdAt: integer("created_at").notNull(),
+  delivered: integer({ mode: "boolean" }).notNull().default(false),
 });

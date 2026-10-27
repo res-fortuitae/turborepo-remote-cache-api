@@ -105,6 +105,16 @@ const maintenance = Effect.gen(function* () {
               db
                 .delete(schema.artifactSigningSettings)
                 .where(eq(schema.artifactSigningSettings.projectId, job.projectId)),
+              db
+                .delete(schema.anomalyConfig)
+                .where(eq(schema.anomalyConfig.projectId, job.projectId)),
+              db
+                .delete(schema.anomalyState)
+                .where(eq(schema.anomalyState.projectId, job.projectId)),
+              db
+                .delete(schema.anomalyIdentity)
+                .where(eq(schema.anomalyIdentity.projectId, job.projectId)),
+              db.delete(schema.anomalyHour).where(eq(schema.anomalyHour.projectId, job.projectId)),
               db.delete(schema.project).where(eq(schema.project.id, job.projectId)),
               db
                 .update(schema.projectDeletion)
