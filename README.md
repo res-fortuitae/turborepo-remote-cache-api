@@ -83,7 +83,8 @@ See `deploy.config.example.ts` for the typed settings: production and staging
 domains, R2 jurisdiction, public GitHub App identifiers, retention and Worker CPU
 limits, edge cache, and stage names. Set `githubApp` and the root
 `GITHUB_OAUTH_CLIENT_SECRET` together to enable GitHub sign-in through Better Auth.
-See [GitHub sign-in and local OAuth checks](docs/github-sign-in.md).
+See [GitHub sign-in and local OAuth checks](docs/github-sign-in.md) and
+[CLI device login](docs/device-login.md).
 Credentials belong in the root `.env` or a secret store, never in config.
 
 Both organization paths are ignored in a fresh upstream checkout. In your fork,

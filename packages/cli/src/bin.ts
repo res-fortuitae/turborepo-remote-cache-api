@@ -1,11 +1,23 @@
 #!/usr/bin/env bun
+import { deviceLogin } from "./device.ts";
 import { runAuthCommand } from "./commands.ts";
 import { adminPurge } from "./purge.ts";
 import { doctorServer, formatCapabilities } from "./index.ts";
 
 const args = Bun.argv.slice(2);
 
-if (["exec", "proxy", "env", "proxy-stop"].includes(args[0] ?? "")) {
+if (args[0] === "login") {
+  try {
+    await deviceLogin(
+      args[args.indexOf("--api") + 1] && args.includes("--api")
+        ? args[args.indexOf("--api") + 1]!
+        : (Bun.env.TCACHE_API ?? Bun.env.TURBO_API ?? ""),
+    );
+  } catch {
+    console.error("Login failed. Check the instance URL and device approval, then retry.");
+    process.exitCode = 1;
+  }
+} else if (["exec", "proxy", "env", "proxy-stop"].includes(args[0] ?? "")) {
   process.exitCode = await runAuthCommand(args);
 } else if (args[0] === "admin" && args[1] === "purge") {
   try {

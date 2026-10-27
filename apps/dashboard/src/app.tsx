@@ -1,3 +1,4 @@
+import { DevicePage } from "./DevicePage.tsx";
 import { PurgePage } from "./PurgePage.tsx";
 import { CapabilitiesPage } from "./CapabilitiesPage.tsx";
 import { useEffect, useState } from "react";
@@ -130,6 +131,13 @@ export function App() {
   const origin = window.location.origin;
   const localCommand = `export TURBO_API=${origin}\nexport TURBO_TOKEN='<your-token>'\nexport TURBO_TEAM='<your-team>'\n\nbunx turbo run build`;
   const ciCommand = `- name: Build with remote cache\n  run: bunx turbo run build\n  env:\n    TURBO_API: ${origin}\n    TURBO_TOKEN: \u0024{{ secrets.TURBO_TOKEN }}\n    TURBO_TEAM: \u0024{{ vars.TURBO_TEAM }}`;
+
+  if (new URLSearchParams(window.location.search).get("view") === "device")
+    return (
+      <main className="mx-auto max-w-xl p-6">
+        <DevicePage />
+      </main>
+    );
 
   return (
     <div className="min-h-svh bg-background">

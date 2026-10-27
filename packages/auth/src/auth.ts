@@ -198,10 +198,11 @@ export const AuthLive: Layer.Layer<
         if (!path.startsWith("/api/auth/cache-keys/"))
           return yield* callBetterAuth("Auth.handler", () => auth.handler(request)).pipe(
             Effect.map((response) => {
-              if (response.status !== 429) return response;
+              if (response.status !== 429 && !path.startsWith("/api/auth/device")) return response;
               // Pinned Better Auth emits X-Retry-After; expose the standard header too.
               const headers = new Headers(response.headers);
-              headers.set("Retry-After", headers.get("x-retry-after") ?? "60");
+              if (response.status === 429)
+                headers.set("Retry-After", headers.get("x-retry-after") ?? "60");
               headers.set("Cache-Control", "no-store");
               return new Response(response.body, { status: response.status, headers });
             }),
