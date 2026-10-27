@@ -19,6 +19,7 @@ export const UploadTicket = Schema.Struct({
   generation: Schema.Int,
   expiresAt: Schema.Number,
   session: Schema.String,
+  quotaReservation: Schema.optional(Schema.String),
   provenance: Schema.Record(Schema.String, Schema.String),
 });
 export type UploadTicket = typeof UploadTicket.Type;
@@ -28,6 +29,7 @@ export interface MultipartOwner {
   credentialId: string;
   generation: number;
   maxBytes: number;
+  quotaReservation?: string;
 }
 export class MultipartSecret extends Context.Service<MultipartSecret, Redacted.Redacted<string>>()(
   "@repo/artifacts/MultipartSecret",
@@ -133,6 +135,7 @@ export const MultipartUploadsLive = Layer.effect(
           generation: owner.generation,
           expiresAt,
           session,
+          quotaReservation: owner.quotaReservation,
           provenance: Object.fromEntries(
             Object.entries(metadata).filter(([key]) =>
               [

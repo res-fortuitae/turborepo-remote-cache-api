@@ -94,6 +94,33 @@ export const ArtifactSigningStatus = Schema.Struct({
   ),
 });
 
+export const QuotaSettings = Schema.Struct({
+  storageBytes: Schema.NullOr(ProjectLimit),
+  bandwidthBytes: Schema.NullOr(ProjectLimit),
+  requests: Schema.NullOr(ProjectLimit),
+  onQuotaExceeded: Schema.Literals(["reject", "evict-oldest"]),
+});
+export const QuotaUsage = Schema.Struct({
+  storageBytes: NonNegativeInteger,
+  bandwidthBytes: NonNegativeInteger,
+  requests: NonNegativeInteger,
+  reservedBytes: NonNegativeInteger,
+});
+export const QuotaStatus = Schema.Struct({
+  org: Schema.Struct({ usage: QuotaUsage, limits: QuotaSettings }),
+  project: Schema.Struct({ usage: QuotaUsage, limits: QuotaSettings }),
+  overLimit: Schema.Boolean,
+  day: Timestamp,
+  eviction: Schema.NullOr(
+    Schema.Struct({
+      id: Id,
+      state: Schema.Literals(["scanning", "deleting", "complete"]),
+      removed: NonNegativeInteger,
+      removedBytes: NonNegativeInteger,
+    }),
+  ),
+});
+
 export const ProjectList = Schema.Struct({
   items: Schema.Array(Project),
   nextCursor: Schema.NullOr(Schema.String),

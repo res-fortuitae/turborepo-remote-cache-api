@@ -19,6 +19,8 @@ export {
   ProjectList,
   ProjectStorage,
   ArtifactSigningStatus,
+  QuotaSettings,
+  QuotaStatus,
   TrustPolicy,
   TrustPolicyList,
   TestTrustPoliciesResponse,

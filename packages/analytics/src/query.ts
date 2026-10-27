@@ -26,6 +26,8 @@ const decodeQuery = Schema.decodeUnknownEffect(QuerySchema);
 const decodeResponse = Schema.decodeUnknownEffect(AnalyticsResponse);
 
 const empty = (): Metrics => ({
+  evictions: 0,
+  evictedBytes: 0,
   requests: 0,
   remoteHits: 0,
   remoteMisses: 0,
@@ -235,9 +237,22 @@ export const AnalyticsQueryLive = Layer.effect(
           for (const row of lite) {
             const bucket = Math.floor(row.bucketStart / step) * step;
 
-            if (published.has(identity(row.orgId, row.projectId, row.bucketStart))) continue;
+            if (
+              published.has(identity(row.orgId, row.projectId, row.bucketStart)) &&
+              !["evictions", "evictedBytes"].includes(row.metric)
+            )
+              continue;
 
-            if (!["requests", "remoteHits", "remoteMisses", "timeSavedMs"].includes(row.metric))
+            if (
+              ![
+                "requests",
+                "remoteHits",
+                "remoteMisses",
+                "timeSavedMs",
+                "evictions",
+                "evictedBytes",
+              ].includes(row.metric)
+            )
               continue;
             add(row.orgId, row.projectId, bucket, { [row.metric]: row.value });
           }

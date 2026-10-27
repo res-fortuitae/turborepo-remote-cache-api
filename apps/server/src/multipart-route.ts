@@ -1,4 +1,4 @@
-import { MultipartUploads, uploadProvenance, type MultipartOwner } from "@repo/artifacts";
+import { Quotas, MultipartUploads, uploadProvenance, type MultipartOwner } from "@repo/artifacts";
 import { MultipartCreate, MultipartComplete } from "@repo/api-spec";
 import type { ArtifactOperation } from "@repo/analytics";
 import { Effect, Schema, Stream } from "effect";
@@ -58,6 +58,7 @@ export const multipartRoute = <R>(
       maxBytes: scope.maxUploadBytes,
     };
     const uploads = yield* MultipartUploads;
+    const quotas = yield* Effect.serviceOption(Quotas);
     if (!match[1] && request.method === "POST") {
       const body = yield* Schema.decodeUnknownEffect(MultipartCreate)(yield* readJson).pipe(
         Effect.mapError(() => bad("Invalid multipart creation request")),
@@ -74,9 +75,23 @@ export const multipartRoute = <R>(
       ] as const) {
         if (headers[header]) metadata[key] = headers[header];
       }
-      return yield* Response.json(yield* uploads.create(owner, body.hash, body.size, metadata), {
-        status: 201,
-      });
+      const reservation =
+        quotas._tag === "Some"
+          ? yield* quotas.value.reserve(
+              { orgId: owner.orgId, projectId: owner.projectId },
+              body.hash,
+              body.size,
+              86400000,
+            )
+          : undefined;
+      const created = yield* uploads
+        .create({ ...owner, quotaReservation: reservation }, body.hash, body.size, metadata)
+        .pipe(
+          Effect.tapError(() =>
+            reservation && quotas._tag === "Some" ? quotas.value.release(reservation) : Effect.void,
+          ),
+        );
+      return yield* Response.json(created, { status: 201 });
     }
     if (match[1]) {
       const ticket = yield* uploads.resolve(match[1], owner, match[4] === "abort");
@@ -90,6 +105,12 @@ export const multipartRoute = <R>(
           code: "signature_required",
           message: "Artifact signature tag required",
         });
+      if (quotas._tag === "Some" && !ticket.quotaReservation && match[4] !== "abort")
+        return yield* new ApiError({
+          status: 403,
+          code: "quota_reservation_required",
+          message: "Restart this upload to reserve quota capacity",
+        });
       if (match[2] && match[3] && request.method === "PUT")
         return yield* Response.json(
           yield* uploads.part(
@@ -101,6 +122,8 @@ export const multipartRoute = <R>(
         );
       if (match[4] === "abort" && request.method === "POST") {
         yield* uploads.abort(ticket);
+        if (ticket.quotaReservation && quotas._tag === "Some")
+          yield* quotas.value.release(ticket.quotaReservation);
         return Response.empty({ status: 204 });
       }
       if (match[4] === "complete" && request.method === "POST") {
@@ -108,6 +131,8 @@ export const multipartRoute = <R>(
           Effect.mapError(() => bad("Invalid multipart completion manifest")),
         );
         yield* uploads.complete(ticket, body.parts);
+        if (ticket.quotaReservation && quotas._tag === "Some")
+          yield* quotas.value.finish(ticket.quotaReservation, ticket.size);
         yield* recheck.pipe(
           Effect.flatMap((current) =>
             current.cacheGeneration === scope.cacheGeneration

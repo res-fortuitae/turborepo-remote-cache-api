@@ -54,6 +54,7 @@ export const dependencies: DependencyPolicy = {
     "@repo/ratelimit",
   ],
   "@repo/artifacts": [
+    "@repo/audit",
     "@repo/api-spec",
     "@repo/deploy-config",
     "@repo/db",

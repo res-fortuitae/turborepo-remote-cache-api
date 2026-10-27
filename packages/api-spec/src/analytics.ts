@@ -10,6 +10,8 @@ export const AnalyticsQuery = Schema.Struct({
 });
 
 export const UsageMetrics = Schema.Struct({
+  evictions: Schema.optional(NonNegativeInteger),
+  evictedBytes: Schema.optional(NonNegativeInteger),
   requests: NonNegativeInteger,
   remoteHits: NonNegativeInteger,
   remoteMisses: NonNegativeInteger,

@@ -1,3 +1,12 @@
+import { admitQuotaUpload } from "./quota-upload.ts";
+import { quotaPath, quotasRoute } from "./quotas-route.ts";
+import {
+  Quotas,
+  QuotasLive,
+  QuotaDefaults,
+  QuotaEviction,
+  QuotaEvictionLive,
+} from "@repo/artifacts";
 import { analyticsPath, analyticsRoute } from "./analytics-route.ts";
 import { auditPath, auditRoute } from "./audit-route.ts";
 import { basinAuditHistory } from "./audit-history.ts";
@@ -906,60 +915,108 @@ export default class Api extends Cloudflare.Worker<Api>()(
       }).pipe(Effect.provide(maintenanceLayer), Effect.tapCause(Effect.logError)),
     );
 
+    const quotasLayer = QuotasLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          auditLayer,
+          Layer.effect(
+            QuotaDefaults,
+            Effect.gen(function* () {
+              const settings = yield* InstanceSettingsRepo;
+              return {
+                storageBytes: (org: string) =>
+                  settings
+                    .policy(org, authEnvironment.IDENTITY_CEILINGS ?? {})
+                    .pipe(Effect.map((policy) => policy.quotaBytes)),
+              };
+            }),
+          ).pipe(Layer.provide(InstanceSettingsRepoLive)),
+        ),
+      ),
+      Layer.provide(databaseLayer),
+    );
+    const quotaSettings = quotasRoute.pipe(
+      Effect.provide(Layer.mergeAll(quotasLayer, authLayer, authorizationLayer)),
+      Effect.provide(databaseLayer),
+    );
+    const purgeInventoryLayer = Layer.effect(
+      PurgeInventory,
+      Effect.gen(function* () {
+        const raw = yield* bucket.raw;
+        const accounting = yield* StorageAccounting.pipe(
+          Effect.provide(StorageAccountingLive.pipe(Layer.provide(databaseLayer))),
+        );
+        const convert = (o: {
+          key: string;
+          etag: string;
+          size: number;
+          uploaded: Date;
+          customMetadata?: Record<string, string> | undefined;
+        }) => ({
+          key: o.key,
+          etag: o.etag,
+          size: o.size,
+          uploaded: o.uploaded.getTime(),
+          metadata: o.customMetadata ?? {},
+        });
+        const fail = () => new PurgeError({ message: "Purge storage or audit unavailable" });
+        return {
+          list: (prefix: string, cursor?: string) =>
+            Effect.tryPromise(async () => {
+              const page = await raw.list({
+                prefix,
+                cursor,
+                limit: 100,
+                include: ["customMetadata"],
+              });
+              return {
+                objects: page.objects.map(convert),
+                cursor: page.truncated ? page.cursor : undefined,
+              };
+            }).pipe(Effect.mapError(fail)),
+          head: (key: string) =>
+            Effect.tryPromise(() => raw.head(key)).pipe(
+              Effect.map((o) => (o ? convert(o) : null)),
+              Effect.mapError(fail),
+            ),
+          remove: (keys: readonly string[]) =>
+            keys.length
+              ? Effect.tryPromise(() => raw.delete([...keys])).pipe(
+                  Effect.andThen(recordDeleted(keys, accounting)),
+                  Effect.mapError(fail),
+                )
+              : Effect.void,
+        };
+      }),
+    );
+    const quotaEvictionLayer = QuotaEvictionLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          quotasLayer,
+          purgeInventoryLayer,
+          auditLayer,
+          Layer.effect(
+            ArtifactPurger,
+            Effect.map(CoordinatorClient, (coordinator) => ({
+              invalidate: coordinator.invalidateCache,
+              remove: () => Effect.die("Use the quota inventory"),
+            })),
+          ).pipe(Layer.provide(coordinatorLayer)),
+        ),
+      ),
+      Layer.provide(databaseLayer),
+    );
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      QuotaEviction.use((job) => job.tick).pipe(
+        Effect.provide(quotaEvictionLayer),
+        Effect.tapCause(Effect.logError),
+      ),
+    );
     const incidentLayer = IncidentPurgeLive.pipe(
       Layer.provide(
         Layer.mergeAll(
           PurgeJobsLive.pipe(Layer.provide(auditLayer), Layer.provide(databaseLayer)),
-          Layer.effect(
-            PurgeInventory,
-            Effect.gen(function* () {
-              const raw = yield* bucket.raw;
-              const accounting = yield* StorageAccounting.pipe(
-                Effect.provide(StorageAccountingLive.pipe(Layer.provide(databaseLayer))),
-              );
-              const convert = (o: {
-                key: string;
-                etag: string;
-                size: number;
-                uploaded: Date;
-                customMetadata?: Record<string, string> | undefined;
-              }) => ({
-                key: o.key,
-                etag: o.etag,
-                size: o.size,
-                uploaded: o.uploaded.getTime(),
-                metadata: o.customMetadata ?? {},
-              });
-              const fail = () => new PurgeError({ message: "Purge storage or audit unavailable" });
-              return {
-                list: (prefix: string, cursor?: string) =>
-                  Effect.tryPromise(async () => {
-                    const page = await raw.list({
-                      prefix,
-                      cursor,
-                      limit: 100,
-                      include: ["customMetadata"],
-                    });
-                    return {
-                      objects: page.objects.map(convert),
-                      cursor: page.truncated ? page.cursor : undefined,
-                    };
-                  }).pipe(Effect.mapError(fail)),
-                head: (key: string) =>
-                  Effect.tryPromise(() => raw.head(key)).pipe(
-                    Effect.map((o) => (o ? convert(o) : null)),
-                    Effect.mapError(fail),
-                  ),
-                remove: (keys: readonly string[]) =>
-                  keys.length
-                    ? Effect.tryPromise(() => raw.delete([...keys])).pipe(
-                        Effect.andThen(recordDeleted(keys, accounting)),
-                        Effect.mapError(fail),
-                      )
-                    : Effect.void,
-              };
-            }),
-          ),
+          purgeInventoryLayer,
           Layer.effect(
             ArtifactPurger,
             Effect.map(CoordinatorClient, (coordinator) => ({
@@ -1014,6 +1071,19 @@ export default class Api extends Cloudflare.Worker<Api>()(
                 .pipe(Effect.catchCause(() => Effect.succeed(null)))
             : null;
         const enriched = stored ? { ...operation, bytes: stored.size } : operation;
+        if (scope.credential?.credentialType !== "legacy")
+          yield* Quotas.use((quotas) =>
+            Effect.all([
+              operation.method === "PUT" && operation.status === 202
+                ? Effect.void
+                : quotas.observe(context, enriched.bytes ?? 0),
+              quotas.notify(context),
+            ]),
+          ).pipe(
+            Effect.provide(quotasLayer),
+            Effect.tapCause(Effect.logError),
+            Effect.catchCause(() => Effect.void),
+          );
         if (stored && operation.hash && scope.credential?.credentialType !== "legacy")
           yield* storageAccounting.record(context, operation.hash, stored.size).pipe(
             Effect.tapCause(Effect.logError),
@@ -1048,6 +1118,57 @@ export default class Api extends Cloudflare.Worker<Api>()(
       );
 
     const artifacts = artifactApi({
+      overQuota: (scope) =>
+        !scope.credential || scope.credential.credentialType === "legacy"
+          ? Effect.succeed(false)
+          : Quotas.use((quotas) =>
+              quotas
+                .status({ orgId: scope.credential!.orgId, projectId: scope.credential!.projectId })
+                .pipe(Effect.map((status) => status.overLimit)),
+            ).pipe(
+              Effect.provide(quotasLayer),
+              Effect.mapError(
+                () =>
+                  new ApiError({
+                    status: 503,
+                    code: "quota_unavailable",
+                    message: "Quota status unavailable",
+                  }),
+              ),
+            ),
+      withinUploadQuota: (scope, hash, size, upload) =>
+        admitQuotaUpload(
+          scope,
+          hash,
+          size,
+          authEnvironment.MAX_DIRECT_UPLOAD_BYTES ?? 100_000_000,
+          upload,
+          {
+            head: (key) =>
+              bucket.head(key).pipe(
+                Effect.mapError(
+                  () =>
+                    new ApiError({
+                      status: 503,
+                      code: "quota_storage",
+                      message: "Upload accounting unavailable",
+                    }),
+                ),
+              ),
+            remove: (key) =>
+              bucket.delete(key).pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  () =>
+                    new ApiError({
+                      status: 503,
+                      code: "quota_storage",
+                      message: "Upload cleanup unavailable",
+                    }),
+                ),
+              ),
+          },
+        ).pipe(Effect.provide(quotasLayer)),
       uploadChunked: (key, body, options) =>
         Effect.flatMap(bucket.raw, (raw) => uploadChunked(raw, key, body, options)),
       multipart: (scope, recheck) =>
@@ -1062,13 +1183,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
               scope.cacheGeneration,
             ),
         ).pipe(
-          Effect.provide(multipartLayer),
+          Effect.provide(Layer.mergeAll(multipartLayer, quotasLayer)),
           Effect.mapError((error) =>
             error instanceof ApiError
               ? error
               : new ApiError({
-                  status: 503,
-                  code: "multipart_unavailable",
+                  status: error._tag === "QuotaExceeded" ? 403 : 503,
+                  code: error._tag === "QuotaExceeded" ? "over_limit" : "multipart_unavailable",
                   message: "Multipart upload unavailable",
                 }),
           ),
@@ -1470,6 +1591,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             : HttpServerResponse.empty({ status: 405 });
         if (pathname === "/api/instance/selftest") return yield* selftest;
 
+        if (quotaPath.test(pathname)) return yield* quotaSettings;
         if (signingPath.test(pathname)) return yield* signingSettings;
         if (pathname === "/tokens/dev") return yield* developerTokens;
 

@@ -166,3 +166,5 @@ Keep runtime behavior and infrastructure identity stable during each extraction.
 STV-487 adds the acyclic projects → oidc edge so every audited policy save and generated default runs the same pure guardrails as the policy tester. OIDC has no authorization dependency. STV-449 adds explicit oidc → credentials, audit and ratelimit edges for the exchange use case; none of those packages depends on oidc or projects.
 
 Developer token issuance (STV-455) belongs to credentials. It depends on authz for the single project policy decision, audit for issuance records, and ratelimit for request bounds. These edges remain acyclic; neither auth nor authz depends on credentials.
+
+Quota admission and eviction in `@repo/artifacts` also depend on `@repo/audit` so eviction summaries and their durable job completion commit atomically.

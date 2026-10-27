@@ -35,6 +35,8 @@ const decodeRows = Schema.decodeUnknownEffect(
 );
 
 const fields = [
+  "evictions",
+  "evictedBytes",
   "requests",
   "remoteHits",
   "remoteMisses",
@@ -212,7 +214,12 @@ export const AnalyticsRollupsLive = Layer.effect(
               hour,
               source,
               dimension: row.dimension,
-              metrics: Object.fromEntries(fields.map((field) => [field, Math.round(row[field])])),
+              metrics: Object.fromEntries(
+                fields.map((field) => [
+                  field,
+                  field === "evictions" || field === "evictedBytes" ? 0 : Math.round(row[field]),
+                ]),
+              ),
             });
           }
         }

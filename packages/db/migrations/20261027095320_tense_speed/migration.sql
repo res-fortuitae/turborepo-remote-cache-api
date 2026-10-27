@@ -1,0 +1,1 @@
+ALTER TABLE `quota_eviction` ADD `lease_until` integer DEFAULT 0 NOT NULL;
