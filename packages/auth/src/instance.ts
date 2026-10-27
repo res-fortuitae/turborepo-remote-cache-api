@@ -501,16 +501,7 @@ export const instancePlugin = (
               (live.user.role !== "owner" || !body.reason)
             )
               throw new APIError("FORBIDDEN", { message: "Owner and reason required" });
-            // A durable intent is mandatory before Better Auth's nontransactional mutation.
-            await commit(
-              event(
-                live.user,
-                `instance${ctx.path.replaceAll("/", ".")}.requested`,
-                target?.id ?? "instance",
-                body.reason,
-              ),
-              () => [],
-            );
+            // The audited database adapter records intent and confirmation for native admin writes.
           }),
         },
       ],

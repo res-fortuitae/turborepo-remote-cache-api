@@ -231,54 +231,18 @@ export const organizationPlugins = (
               message: "Groups contain organization members only",
             });
         },
-        afterCreateTeam: async ({ team, organization: org, user }) => {
-          if (user) await record(event(user, org.id, "org.group.created", team.id));
-        },
-        afterUpdateTeam: async ({ team, organization: org, user }) => {
-          if (team) await record(event(user, org.id, "org.group.updated", team.id));
-        },
-        afterDeleteTeam: async ({ team, organization: org, user }) => {
-          if (user) await record(event(user, org.id, "org.group.deleted", team.id));
-        },
-        afterAddTeamMember: async ({ teamMember, organization: org }) => {
-          await record({
-            ...event(
-              { id: "better-auth", name: "Better Auth" },
-              org.id,
-              "org.group.member.added",
-              teamMember.id,
-            ),
-            actor: { type: "system", id: "better-auth", display: "Better Auth" },
-          });
-        },
-        afterRemoveTeamMember: async ({ teamMember, organization: org }) => {
-          await record({
-            ...event(
-              { id: "better-auth", name: "Better Auth" },
-              org.id,
-              "org.group.member.removed",
-              teamMember.id,
-            ),
-            actor: { type: "system", id: "better-auth", display: "Better Auth" },
-          });
-        },
+
         beforeCreateOrganization: async ({ organization: org }) => {
           if (!org.slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(org.slug) || org.slug.length > 64)
             throw new APIError("BAD_REQUEST", { message: "Invalid TURBO_TEAM slug" });
         },
-        afterCreateOrganization: async ({ organization: org, user }) => {
-          await record(event(user, org.id, "org.created", org.id));
-        },
+
         beforeUpdateOrganization: async ({ organization: org, member }) => {
           if (org.slug !== undefined)
             throw new APIError("BAD_REQUEST", { message: "TURBO_TEAM slug is immutable" });
           await activeOrg(member.organizationId);
         },
-        afterUpdateOrganization: async ({ organization: org, user, member }) => {
-          await record(
-            event(user, member.organizationId, "org.updated", org?.id ?? member.organizationId),
-          );
-        },
+
         beforeDeleteOrganization: async ({ organization: org, user }) => {
           await record(event(user, org.id, "org.delete.requested", org.id), (db) =>
             deleteOrganizationProjects(db, org.id, Date.now()),
@@ -305,17 +269,6 @@ export const organizationPlugins = (
 
           if (newRole.split(",").includes("owner"))
             throw new APIError("FORBIDDEN", { message: "Use organization ownership transfer" });
-        },
-        afterUpdateMemberRole: async ({ member, organization: org }) => {
-          await record({
-            ...event(
-              { id: "better-auth", name: "Better Auth" },
-              org.id,
-              "org.member.role",
-              member.id,
-            ),
-            actor: { type: "system", id: "better-auth", display: "Better Auth" },
-          });
         },
       },
     }),

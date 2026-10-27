@@ -52,6 +52,7 @@ import {
   MailerConsole,
 } from "@repo/mailer";
 import {
+  reconcileAuthAuditJob,
   apiKeyDigestJob,
   ApiKeyEpochs,
   ApiKeyBackground,
@@ -575,6 +576,16 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
       Layer.provide(databaseLayer),
+    );
+
+    yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
+      reconcileAuthAuditJob.pipe(
+        Effect.provide(
+          Layer.mergeAll(authLayer, auditLayer.pipe(Layer.provide(databaseLayer)), databaseLayer),
+        ),
+        Effect.provide(originLayer),
+        Effect.tapCause(Effect.logError),
+      ),
     );
 
     const cacheAuthorizationLayer = Layer.mergeAll(
