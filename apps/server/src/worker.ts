@@ -117,7 +117,23 @@ import {
   CustomOidcIssuers,
   resolveOriginSettings,
 } from "@repo/deploy-config";
-import { ArtifactOpEmitter, ArtifactOpEmitterD1Uploads, AnalyticsEmitter } from "@repo/analytics";
+import {
+  ArtifactOpEmitter,
+  ArtifactOpEmitterD1Uploads,
+  AnalyticsEmitter,
+  AnalyticsEmitterBasin,
+  ArtifactOpEmitterBasin,
+  AnalyticsSampling,
+  CacheEventsStream,
+  ArtifactOpsStream,
+  type AnalyticsScope,
+  type ArtifactOperation,
+  ActivityFlags,
+  AnalyticsActivity,
+  AnalyticsActivityLive,
+  StorageAccounting,
+  StorageAccountingLive,
+} from "@repo/analytics";
 import { Capabilities, DeploymentCapabilities, capabilityLayers } from "./capabilities.ts";
 import { capabilitiesRoute } from "./capabilities-route.ts";
 import { CapabilityReport } from "@repo/shared";
@@ -157,7 +173,7 @@ import {
   KeyStoreLive,
   SigningKeySecret,
 } from "@repo/credentials";
-import { ApiError, artifactApi } from "./api.ts";
+import { ApiError, artifactApi, type ArtifactScope } from "./api.ts";
 import { authRoute, isAuthPath } from "./auth.ts";
 import { workerDomain } from "./deploy-config.ts";
 import { loadDeployConfig } from "../scripts/config.ts";
@@ -166,6 +182,9 @@ import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
+  ANALYTICS_SAMPLE_RATES: Schema.optional(
+    Schema.fromJsonString(Schema.Record(Schema.String, Schema.Number)),
+  ),
   AUDIT_SQL_ACCOUNT: Schema.optional(Schema.String),
   AUDIT_SQL_BUCKET: Schema.optional(Schema.String),
   MAX_ARTIFACT_BYTES: Schema.optional(Schema.NumberFromString),
@@ -188,6 +207,7 @@ const AuthEnvironment = Schema.Struct({
 });
 
 interface DeploymentEnvironment {
+  ANALYTICS_SAMPLE_RATES: string;
   MAX_ARTIFACT_BYTES: string;
   MAX_DIRECT_UPLOAD_BYTES: string;
   RATE_LIMIT_STAGE: string;
@@ -236,6 +256,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      ANALYTICS_SAMPLE_RATES: JSON.stringify(config.analyticsSampleRates ?? {}),
       MAX_ARTIFACT_BYTES: String(config.limits.maxArtifactBytes ?? 10_000_000_000),
       MAX_DIRECT_UPLOAD_BYTES: String(
         Math.min(
@@ -315,10 +336,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const checkpointBucket = yield* Cloudflare.R2.ReadWriteBucket(AuditCheckpointBucket);
     const auditStream = yield* AuditBasin;
     const analyticsStreams = yield* AnalyticsBasin;
-    if (Option.isSome(analyticsStreams)) {
-      yield* Cloudflare.Basin.WriteStream(analyticsStreams.value.cacheEvents);
-      yield* Cloudflare.Basin.WriteStream(analyticsStreams.value.artifactOps);
-    }
+    const cacheEventsWriter = Option.isSome(analyticsStreams)
+      ? Option.some(yield* Cloudflare.Basin.WriteStream(analyticsStreams.value.cacheEvents))
+      : Option.none();
+    const artifactOpsWriter = Option.isSome(analyticsStreams)
+      ? Option.some(yield* Cloudflare.Basin.WriteStream(analyticsStreams.value.artifactOps))
+      : Option.none();
 
     const auditWriter = Option.isSome(auditStream)
       ? Option.some(yield* Cloudflare.Basin.WriteStream(auditStream.value))
@@ -405,6 +428,103 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(databaseLayer),
     );
 
+    const basinAnalyticsEnabled =
+      capabilities.analytics.enabled &&
+      Option.isSome(cacheEventsWriter) &&
+      Option.isSome(artifactOpsWriter);
+    const samplingLayer = Layer.succeed(
+      AnalyticsSampling,
+      authEnvironment.ANALYTICS_SAMPLE_RATES ?? {},
+    );
+    const analyticsLayer =
+      basinAnalyticsEnabled && Option.isSome(cacheEventsWriter)
+        ? AnalyticsEmitterBasin.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                samplingLayer,
+                Layer.succeed(CacheEventsStream, {
+                  // SAFETY: initialized binding captures its environment, as with the audit writer.
+                  send: (events) =>
+                    cacheEventsWriter.value.send([...events]) as Effect.Effect<void, unknown>,
+                }),
+              ),
+            ),
+          )
+        : selectedLayers;
+    const artifactAnalyticsLayer =
+      basinAnalyticsEnabled && Option.isSome(artifactOpsWriter)
+        ? ArtifactOpEmitterBasin.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                samplingLayer,
+                Layer.succeed(ArtifactOpsStream, {
+                  // SAFETY: initialized binding captures its environment, as with the audit writer.
+                  send: (events) =>
+                    artifactOpsWriter.value.send([...events]) as Effect.Effect<void, unknown>,
+                }),
+              ),
+            ),
+          )
+        : undefined;
+    const analyticsScope = (scope: ArtifactScope): AnalyticsScope => {
+      const credential = scope.credential;
+      const identity = credential?.principal.uploadIdentity;
+      return {
+        orgId:
+          credential?.credentialType === "legacy"
+            ? scope.prefix
+            : (credential?.orgId ?? scope.prefix),
+        projectId:
+          credential?.credentialType === "legacy"
+            ? scope.prefix
+            : (credential?.projectId ?? scope.prefix),
+        credentialType:
+          credential?.credentialType === "cacheJwt"
+            ? "jwt"
+            : (credential?.credentialType ?? "legacy"),
+        ...(credential
+          ? {
+              credentialId: credential.credentialId,
+              interactive: credential.subject.startsWith("user:"),
+            }
+          : {}),
+        ...(identity?.provider ? { ciProvider: identity.provider } : {}),
+        ...(identity?.repositoryId ? { repoId: identity.repositoryId } : {}),
+        ...(identity?.ref ? { ref: identity.ref } : {}),
+      };
+    };
+    const storageAccounting = {
+      record: (scope: AnalyticsScope, hash: string, bytes: number | null) =>
+        Effect.flatMap(StorageAccounting, (accounting) =>
+          accounting.record(scope, hash, bytes),
+        ).pipe(Effect.provide(StorageAccountingLive.pipe(Layer.provide(databaseLayer)))),
+    };
+    const activityLayer = AnalyticsActivityLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          databaseLayer,
+          Layer.effect(
+            ActivityFlags,
+            Effect.map(kv.raw, (activityKv) => ({
+              get: (key: string) => Effect.tryPromise(() => activityKv.get(key)),
+              put: (key: string, value: string, ttl: number) =>
+                Effect.tryPromise(() => activityKv.put(key, value, { expirationTtl: ttl })),
+            })),
+          ),
+        ),
+      ),
+    );
+    const recordDeleted = (keys: readonly string[], accounting: typeof StorageAccounting.Service) =>
+      Effect.forEach(
+        keys,
+        (key) => {
+          const [orgId, projectId, hash] = key.split("/");
+          return orgId && projectId && hash
+            ? accounting.record({ orgId, projectId }, hash, null)
+            : Effect.void;
+        },
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
     const auditStreamEnabled = capabilities.auditHistory.enabled && Option.isSome(auditWriter);
 
     // Without Basin, audit rows stay in D1 (see docs/data-residency.md).
@@ -656,6 +776,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
             ProjectStorage,
             Effect.gen(function* () {
               const raw = yield* bucket.raw;
+              const accounting = yield* StorageAccounting.pipe(
+                Effect.provide(StorageAccountingLive.pipe(Layer.provide(databaseLayer))),
+              );
               const coordinator = yield* CoordinatorClient;
 
               return {
@@ -668,7 +791,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
                       cursor: page.truncated ? page.cursor : undefined,
                     };
                   }),
-                delete: (keys: readonly string[]) => Effect.tryPromise(() => raw.delete([...keys])),
+                delete: (keys: readonly string[]) =>
+                  Effect.tryPromise(() => raw.delete([...keys])).pipe(
+                    Effect.andThen(recordDeleted(keys, accounting)),
+                  ),
                 revoke: (id: string) =>
                   coordinator
                     .revokeAll(`project:${id}`)
@@ -696,6 +822,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
             PurgeInventory,
             Effect.gen(function* () {
               const raw = yield* bucket.raw;
+              const accounting = yield* StorageAccounting.pipe(
+                Effect.provide(StorageAccountingLive.pipe(Layer.provide(databaseLayer))),
+              );
               const convert = (o: {
                 key: string;
                 etag: string;
@@ -731,7 +860,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
                   ),
                 remove: (keys: readonly string[]) =>
                   keys.length
-                    ? Effect.tryPromise(() => raw.delete([...keys])).pipe(Effect.mapError(fail))
+                    ? Effect.tryPromise(() => raw.delete([...keys])).pipe(
+                        Effect.andThen(recordDeleted(keys, accounting)),
+                        Effect.mapError(fail),
+                      )
                     : Effect.void,
               };
             }),
@@ -779,6 +911,47 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const emitOperation = (scope: ArtifactScope, operation: ArtifactOperation) =>
+      Effect.gen(function* () {
+        const context = analyticsScope(scope);
+        // Observe the stored size, including chunked/multipart uploads; repeated observations are idempotent.
+        const stored =
+          operation.method === "PUT" && operation.status === 202 && operation.hash
+            ? yield* bucket
+                .head(`${scope.prefix}/${operation.hash}`)
+                .pipe(Effect.catchCause(() => Effect.succeed(null)))
+            : null;
+        const enriched = stored ? { ...operation, bytes: stored.size } : operation;
+        if (stored && operation.hash && scope.credential?.credentialType !== "legacy")
+          yield* storageAccounting.record(context, operation.hash, stored.size).pipe(
+            Effect.tapCause(Effect.logError),
+            Effect.catchCause(() => Effect.void),
+          );
+        if (scope.credential?.credentialType !== "legacy" && capabilities.analytics.enabled)
+          yield* Effect.flatMap(AnalyticsActivity, (activity) =>
+            activity.seen(context, operation.method === "GET" && operation.status === 200),
+          ).pipe(
+            Effect.provide(activityLayer),
+            Effect.catchCause(() => Effect.void),
+          );
+        yield* Effect.all([
+          Effect.flatMap(ArtifactOpEmitter, (emitter) => emitter.emit(context, enriched)).pipe(
+            Effect.provide(ArtifactOpEmitterD1Uploads.pipe(Layer.provide(databaseLayer))),
+            Effect.tapCause(Effect.logError),
+            Effect.catchCause(() => Effect.void),
+          ),
+          artifactAnalyticsLayer
+            ? Effect.flatMap(ArtifactOpEmitter, (emitter) => emitter.emit(context, enriched)).pipe(
+                Effect.provide(artifactAnalyticsLayer),
+                Effect.catchCause(() => Effect.void),
+              )
+            : Effect.void,
+        ]);
+      }).pipe(
+        Effect.asVoid,
+        Effect.catchCause(() => Effect.void),
+      );
+
     const artifacts = artifactApi({
       uploadChunked: (key, body, options) =>
         Effect.flatMap(bucket.raw, (raw) => uploadChunked(raw, key, body, options)),
@@ -786,16 +959,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         multipartRoute(
           scope,
           recheck,
-          (scope, operation) =>
-            Effect.flatMap(ArtifactOpEmitter, (emitter) =>
-              emitter.emit(
-                { orgId: scope.credential!.orgId, projectId: scope.credential!.projectId },
-                operation,
-              ),
-            ).pipe(
-              Effect.provide(ArtifactOpEmitterD1Uploads.pipe(Layer.provide(databaseLayer))),
-              Effect.catch(() => Effect.void),
-            ),
+          (scope, operation) => execution.waitUntil(emitOperation(scope, operation)),
           (hash) =>
             EdgeCache.createArtifactCache(edgeCacheEnabled).remove(
               scope.prefix,
@@ -856,25 +1020,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
                 }),
           ),
         ),
-      emitArtifactOp: (scope, operation) =>
-        Effect.flatMap(ArtifactOpEmitter, (emitter) =>
-          emitter.emit(
-            {
-              orgId:
-                scope.credential?.credentialType === "legacy"
-                  ? scope.prefix
-                  : (scope.credential?.orgId ?? scope.prefix),
-              projectId:
-                scope.credential?.credentialType === "legacy"
-                  ? scope.prefix
-                  : (scope.credential?.projectId ?? scope.prefix),
-            },
-            operation,
-          ),
-        ).pipe(
-          Effect.provide(ArtifactOpEmitterD1Uploads.pipe(Layer.provide(databaseLayer))),
-          Effect.catch(() => Effect.void),
-        ),
+      emitArtifactOp: emitOperation,
       auditDenial: (error) =>
         Effect.gen(function* () {
           const audit = yield* AuditLog;
@@ -914,14 +1060,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
         authEnvironment.MAX_DIRECT_UPLOAD_BYTES ??
         (capabilities.directUploads.enabled ? 200_000_000 : 100_000_000),
       emitEvents: Effect.fn("Server.emitCacheEvents")(
-        function* (team, events) {
+        function* (team, events, scope) {
           const emitter = yield* AnalyticsEmitter;
           const [orgId = team, projectId = orgId] = team.split("/");
-          yield* emitter.emit({ orgId, projectId }, events);
+          yield* emitter.emit(scope ? analyticsScope(scope) : { orgId, projectId }, events);
         },
-        Effect.provide(selectedLayers),
+        Effect.provide(analyticsLayer),
         Effect.tapCause(Effect.logError),
-        Effect.catch(() => Effect.void),
+        Effect.catchCause(() => Effect.void),
       ),
     });
 

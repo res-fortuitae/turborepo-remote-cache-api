@@ -21,6 +21,8 @@ export const project = sqliteTable(
     maxArtifactBytes: integer("max_artifact_bytes"),
     createdAt: integer("created_at").notNull(),
     archivedAt: integer("archived_at"),
+    firstHitAt: integer("first_hit_at"),
+    lastSeenAt: integer("last_seen_at"),
   },
   (t) => [uniqueIndex("project_org_slug").on(t.orgId, t.slug)],
 );
@@ -277,3 +279,25 @@ export const authAuditIntent = sqliteTable(
 export const authAuditResolution = sqliteTable("auth_audit_resolution", {
   id: text().primaryKey(),
 });
+
+/** Object ledger makes repeated PUT accounting idempotent; totals update in the same batch. */
+export const artifactUsage = sqliteTable(
+  "artifact_usage",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    hash: text().notNull(),
+    bytes: integer().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.hash] })],
+);
+export const projectUsage = sqliteTable(
+  "project_usage",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    bytes: integer().notNull().default(0),
+    reconciledAt: integer("reconciled_at"),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId] })],
+);
