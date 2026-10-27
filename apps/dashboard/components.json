@@ -16,5 +16,8 @@
     "utils": "@repo/ui/lib/utils",
     "lib": "@/lib",
     "hooks": "@/hooks"
+  },
+  "registries": {
+    "@oidc": "https://ui.shadcn.com/oidc/r/{name}.json"
   }
 }

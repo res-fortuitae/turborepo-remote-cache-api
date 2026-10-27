@@ -21,6 +21,9 @@ export {
   TrustPolicy,
   TrustPolicyList,
   TestTrustPoliciesResponse,
+  TrustPolicyRequest,
+  AuditPage,
+  AuditEvent,
   UpdateProjectRequest,
 } from "@repo/api-spec";
 
