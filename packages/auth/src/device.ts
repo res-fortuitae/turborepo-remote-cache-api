@@ -92,7 +92,7 @@ export const devicePlugins = (db: DatabaseDrizzle, audit?: AuditLogService) => {
   const plugin = deviceAuthorization<DeviceAuthorizationGrant>({
     expiresIn: "5m",
     interval: "5s",
-    verificationUri: "/?view=device",
+    verificationUri: "/device",
     validateClient: (id) => id === "tcache",
     grant: {
       requestSchemaFields: {},

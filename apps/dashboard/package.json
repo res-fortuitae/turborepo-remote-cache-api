@@ -10,13 +10,15 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "dev": "bun --hot scripts/dev.ts",
-    "build": "bun scripts/build.ts"
+    "build": "bun scripts/build.ts",
+    "test": "bun test src"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@repo/shared": "workspace:*",
     "@repo/ui": "workspace:*",
+    "better-auth": "1.7.12",
     "effect": "^4.0.6",
     "lucide-react": "^1.61.0",
     "react": "^19.3.1",

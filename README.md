@@ -7,7 +7,7 @@ A self-hosted [Turborepo Remote Cache](https://turborepo.dev/docs/openapi) runni
 This Bun + Turborepo monorepo contains:
 
 - `apps/server`: existing Cloudflare Worker and R2 resource declarations.
-- `apps/dashboard`: React dashboard built with Bun HTML imports (authentication follows in STV-466).
+- `apps/dashboard`: React dashboard built with Bun HTML imports, served on the API origin ([guide](apps/dashboard/README.md)).
 - `packages/ui`: shared shadcn Mira components, theme tokens, and utilities ([guide](packages/ui/README.md)).
 - `packages/db`: Drizzle schemas, migrations, and composable database/repository layers ([guide](packages/db/README.md)).
 - `packages/projects`: authorized project management and transactional audit ([guide](docs/projects.md)).

@@ -405,6 +405,10 @@ export const DashboardAssets = {
     "/v0/spaces",
     "/registration/verify",
     "/login/oauth/*",
+    // Session-authenticated management APIs; dashboard routes live in the URL hash.
+    "/orgs/*",
+    "/projects/*",
+    "/instance/*",
   ],
 } satisfies Cloudflare.AssetsProps;
 

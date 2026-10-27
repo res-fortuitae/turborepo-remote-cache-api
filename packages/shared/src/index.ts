@@ -8,3 +8,14 @@ export { PurgeFilter, PurgeReport } from "@repo/api-spec";
 
 export { DeveloperTokenRequest, DeveloperTokenApi, ExchangeResponse } from "@repo/api-spec";
 export { HealthReport, SelfTestReport } from "@repo/api-spec";
+
+// Dashboard management contracts (STV-466).
+export {
+  CreateProjectRequest,
+  GrantRequest,
+  Project,
+  ProjectGrant,
+  ProjectGrants,
+  ProjectList,
+  UpdateProjectRequest,
+} from "@repo/api-spec";
