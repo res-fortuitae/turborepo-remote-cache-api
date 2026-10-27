@@ -20,3 +20,10 @@ export {
   ProjectStorage,
   UpdateProjectRequest,
 } from "@repo/api-spec";
+
+export {
+  builtInOrganizationRoles,
+  organizationPermissionCatalog,
+  type OrganizationPermissions,
+  type OrganizationResource,
+} from "@repo/api-spec";

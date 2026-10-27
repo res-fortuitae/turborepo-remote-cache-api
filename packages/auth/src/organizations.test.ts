@@ -193,6 +193,53 @@ test("groups are optional, role-free, scoped to org members, and respect configu
   );
 });
 
+test("org members can read any group's members; outsiders and other orgs cannot", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const db = yield* Database;
+      const owner = yield* seed("owner", "owner");
+      const member = yield* seed("member");
+      const outsider = yield* seed("outsider");
+      const orgResponse = yield* post(auth, owner, "create", { name: "Web", slug: "web" });
+      const org = responseOrg(yield* Effect.promise(() => orgResponse.json()));
+      yield* db.query("test.member", (db) =>
+        db.insert(schema.member).values({
+          id: "m-member",
+          organizationId: org.id,
+          userId: "member",
+          role: "member",
+          createdAt: new Date(),
+        }),
+      );
+      const groupResponse = yield* post(auth, owner, "create-team", {
+        organizationId: org.id,
+        name: "core",
+      });
+      const group = responseOrg(yield* Effect.promise(() => groupResponse.json()));
+      expect(
+        (yield* post(auth, owner, "add-team-member", { teamId: group.id, userId: "owner" })).status,
+      ).toBe(200);
+      const get = (headers: Headers, orgId: string) =>
+        auth.handler(
+          new Request(
+            `http://localhost/api/auth/organization/group-members?organizationId=${orgId}&teamId=${group.id}`,
+            { headers },
+          ),
+        );
+      // `member` is not in the group, which native list-team-members would refuse.
+      const listed = yield* get(member, org.id);
+
+      expect(listed.status).toBe(200);
+      expect(yield* Effect.promise(() => listed.json())).toEqual([
+        expect.objectContaining({ teamId: group.id, userId: "owner" }),
+      ]);
+      expect((yield* get(outsider, org.id)).status).toBe(403);
+      expect((yield* get(owner, "another-org")).status).toBeGreaterThanOrEqual(403);
+    }).pipe(Effect.provide(AuthTest)),
+  );
+});
+
 test("custom org roles work without conferring instance privileges or exceeding delegator permissions", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {

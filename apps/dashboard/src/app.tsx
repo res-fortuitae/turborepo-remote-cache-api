@@ -8,6 +8,7 @@ import { AppShell } from "./components/shell.tsx";
 import { authClient, type Session } from "./lib/auth-client.ts";
 import { OrgProvider, orgPath } from "./lib/org.tsx";
 import { href, matchRoute, navigate, splitLocation, useLocation } from "./lib/router.tsx";
+import { AcceptInvitationPage } from "./pages/AcceptInvitationPage.tsx";
 import { DevicePage } from "./pages/DevicePage.tsx";
 import { NewOrgPage, WelcomePage } from "./pages/NewOrgPage.tsx";
 import { SignInPage } from "./pages/SignInPage.tsx";
@@ -100,8 +101,23 @@ function Home({ session }: { readonly session: Session }) {
   return <Redirect to={target ? orgPath(target) : "/welcome"} />;
 }
 
-function SignedIn({ session, path }: { readonly session: Session; readonly path: string }) {
+function SignedIn({
+  session,
+  path,
+  params,
+}: {
+  readonly session: Session;
+  readonly path: string;
+  readonly params: URLSearchParams;
+}) {
   if (path === "/") return <Home session={session} />;
+
+  if (path === "/invitation")
+    return (
+      <AppShell session={session} title="Invitation">
+        <AcceptInvitationPage params={params} />
+      </AppShell>
+    );
 
   if (path === "/welcome")
     return (
@@ -159,7 +175,7 @@ function Standalone({ children }: { readonly children: ReactNode }) {
 export function App() {
   const location = useLocation();
   const session = authClient.useSession();
-  const { path } = splitLocation(location);
+  const { path, params } = splitLocation(location);
 
   // The CLI prints `/device`; `/?view=device` remains for older clients.
   if (
@@ -176,5 +192,5 @@ export function App() {
 
   if (!session.data) return <SignInPage />;
 
-  return <SignedIn session={session.data} path={path} />;
+  return <SignedIn session={session.data} path={path} params={params} />;
 }

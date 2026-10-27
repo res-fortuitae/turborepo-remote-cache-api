@@ -524,6 +524,50 @@ export const organizationPlugins = (
             return ctx.json({ invitation, url, delivered });
           },
         ),
+        // Native list-team-members only answers members of that team; administrators
+        // and access explanations need group composition for any group in the org.
+        listOrganizationGroupMembers: createAuthEndpoint(
+          "/organization/group-members",
+          {
+            method: "GET",
+            use: [fresh],
+            query: z.object({ organizationId: z.string(), teamId: z.string() }),
+          },
+          async (ctx) => {
+            const { organizationId, teamId } = ctx.query;
+            await activeOrg(organizationId);
+            const [caller] = await db
+              .select()
+              .from(schema.member)
+              .where(
+                and(
+                  eq(schema.member.organizationId, organizationId),
+                  eq(schema.member.userId, ctx.context.session.user.id),
+                ),
+              );
+
+            if (!caller) throw new APIError("FORBIDDEN");
+            const [group] = await db
+              .select()
+              .from(schema.team)
+              .where(
+                and(eq(schema.team.id, teamId), eq(schema.team.organizationId, organizationId)),
+              );
+
+            if (!group) throw new APIError("NOT_FOUND");
+
+            return ctx.json(
+              await db
+                .select({
+                  id: schema.teamMember.id,
+                  teamId: schema.teamMember.teamId,
+                  userId: schema.teamMember.userId,
+                })
+                .from(schema.teamMember)
+                .where(eq(schema.teamMember.teamId, teamId)),
+            );
+          },
+        ),
         organizationInvitationLink: createAuthEndpoint(
           "/organization/invitation-link",
           { method: "POST", use: [fresh], body: z.object({ invitationId: z.string() }) },

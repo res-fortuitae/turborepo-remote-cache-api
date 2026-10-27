@@ -20,6 +20,7 @@
     "@better-auth/api-key": "1.7.12",
     "@better-auth/core": "1.7.12",
     "@better-auth/passkey": "1.7.12",
+    "@repo/api-spec": "workspace:*",
     "@repo/audit": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/deploy-config": "workspace:*",
