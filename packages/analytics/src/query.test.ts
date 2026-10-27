@@ -202,3 +202,37 @@ test("timestamp spelling is canonicalized and KV outages cannot fail a successfu
     }).pipe(Effect.provide(layer)),
   );
 });
+
+test("storage history carries gauges forward, marks unknown buckets and isolates tenants", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((q) => [
+        q.insert(schema.projectUsage).values([
+          { ...scope, bytes: 50 },
+          { orgId: "foreign", projectId: "x", bytes: 999 },
+        ]),
+        q.insert(schema.rollup).values([
+          { ...scope, bucketStart: hour + 3600000, metric: "storageBytes", value: 100 },
+          { ...scope, bucketStart: hour + 7200000, metric: "storageBytes", value: 50 },
+          {
+            orgId: "foreign",
+            projectId: "x",
+            bucketStart: hour,
+            metric: "storageBytes",
+            value: 999,
+          },
+        ]),
+      ]);
+      const service = yield* AnalyticsQuery;
+      const result = yield* service.read(scope, query);
+      expect(result.series[0]?.storageObserved).toBe(false);
+      expect(result.series[1]).toMatchObject({ storageBytes: 100, storageObserved: true });
+      expect(result.series[2]).toMatchObject({ storageBytes: 50, storageObserved: true });
+      expect(result.series[3]?.storageBytes).toBe(50);
+      expect(result.totals.storageBytes).toBe(50);
+      const daily = yield* service.read(scope, { ...query, granularity: "day" });
+      expect(daily.series[0]?.storageBytes).toBe(50);
+    }).pipe(Effect.provide(AnalyticsQueryLive.pipe(Layer.provideMerge(DatabaseTest)))),
+  );
+});

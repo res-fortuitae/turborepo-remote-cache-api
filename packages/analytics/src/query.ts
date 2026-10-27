@@ -256,6 +256,31 @@ export const AnalyticsQueryLive = Layer.effect(
           for (let bucket = from; bucket < to; bucket += step)
             if (!series.has(bucket)) series.set(bucket, empty());
 
+          // Storage is a gauge, not a counter. Carry each project's last observed
+          // size forward within the range; never sum snapshots across hours.
+          const snapshots = lite
+            .filter((row) => row.metric === "storageBytes")
+            .sort((a, b) => a.bucketStart - b.bucketStart);
+          const latest = new Map<string, number>();
+          const observed = new Set<number>();
+          let snapshotIndex = 0;
+          for (const [bucket, metrics] of [...series.entries()].sort(([a], [b]) => a - b)) {
+            while (
+              snapshotIndex < snapshots.length &&
+              snapshots[snapshotIndex]!.bucketStart < bucket + step
+            ) {
+              const row = snapshots[snapshotIndex++]!;
+              latest.set(JSON.stringify([row.orgId, row.projectId]), row.value);
+            }
+            if (
+              storage.length > 0 &&
+              storage.every((row) => latest.has(JSON.stringify([row.orgId, row.projectId])))
+            ) {
+              metrics.storageBytes = [...latest.values()].reduce((sum, value) => sum + value, 0);
+              observed.add(bucket);
+            }
+          }
+
           return yield* decodeResponse({
             totals: rates(totals),
             series: [...series.entries()]
@@ -263,6 +288,7 @@ export const AnalyticsQueryLive = Layer.effect(
               .map(([bucket, metrics]) => ({
                 ts: new Date(bucket).toISOString(),
                 ...rates(metrics),
+                storageObserved: observed.has(bucket),
               })),
             breakdowns: [...breakdowns.values()]
               .sort(

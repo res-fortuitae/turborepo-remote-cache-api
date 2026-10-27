@@ -1,4 +1,4 @@
-import { Database, schema } from "@repo/db";
+import { Database, schema, type DatabaseQueries } from "@repo/db";
 import { and, eq, sql } from "drizzle-orm";
 import { Clock, Context, Effect, Layer } from "effect";
 import { AnalyticsError, type AnalyticsScope } from "./emitter.ts";
@@ -112,6 +112,7 @@ export const StorageAccountingLive = Layer.effect(
                     ],
                     set: { bytes: size, observedAt: Date.now() },
                   }),
+            storageSnapshot(db, scope, Date.now()),
           ])
           .pipe(
             Effect.asVoid,
@@ -121,3 +122,34 @@ export const StorageAccountingLive = Layer.effect(
     };
   }),
 );
+
+/** Insert-select observes the transaction's already updated total without a read/write race. */
+export const storageSnapshot = (db: DatabaseQueries, scope: AnalyticsScope, now: number) =>
+  db
+    .insert(schema.rollup)
+    .select(
+      db
+        .select({
+          orgId: schema.projectUsage.orgId,
+          projectId: schema.projectUsage.projectId,
+          bucketStart: sql<number>`${Math.floor(now / 3_600_000) * 3_600_000}`.as("bucket_start"),
+          metric: sql<string>`'storageBytes'`.as("metric"),
+          value: schema.projectUsage.bytes,
+        })
+        .from(schema.projectUsage)
+        .where(
+          and(
+            eq(schema.projectUsage.orgId, scope.orgId),
+            eq(schema.projectUsage.projectId, scope.projectId),
+          ),
+        ),
+    )
+    .onConflictDoUpdate({
+      target: [
+        schema.rollup.orgId,
+        schema.rollup.projectId,
+        schema.rollup.bucketStart,
+        schema.rollup.metric,
+      ],
+      set: { value: sql`excluded.value` },
+    });

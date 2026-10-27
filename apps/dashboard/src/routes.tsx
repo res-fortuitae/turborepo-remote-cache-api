@@ -1,3 +1,4 @@
+import { AnalyticsPage } from "./pages/AnalyticsPage.tsx";
 import { AuditPage } from "./pages/AuditPage.tsx";
 import { CredentialsPage } from "./pages/CredentialsPage.tsx";
 import type { ReactNode } from "react";
@@ -30,6 +31,7 @@ export const orgRoutes: ReadonlyArray<Route> = [
   { pattern: "/members", title: "Members", render: () => <MembersPage /> },
   { pattern: "/groups", title: "Groups", render: () => <GroupsPage /> },
   { pattern: "/roles", title: "Roles", render: () => <RolesPage /> },
+  { pattern: "/analytics", title: "Analytics", render: () => <AnalyticsPage /> },
   { pattern: "/audit", title: "Audit log", render: () => <AuditPage /> },
   { pattern: "/credentials", title: "Credentials", render: () => <CredentialsPage /> },
   { pattern: "/purge", title: "Purge artifacts", render: () => <PurgePage /> },

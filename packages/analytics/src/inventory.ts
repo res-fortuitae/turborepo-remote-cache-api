@@ -2,7 +2,7 @@ import { Database, schema } from "@repo/db";
 import { and, asc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Clock, Context, Effect, Layer } from "effect";
 import { AnalyticsError } from "./emitter.ts";
-import { StorageAccounting } from "./accounting.ts";
+import { StorageAccounting, storageSnapshot } from "./accounting.ts";
 
 export class AnalyticsInventory extends Context.Service<
   AnalyticsInventory,
@@ -138,6 +138,7 @@ export const StorageReconciliationLive = Layer.effect(
                     eq(schema.projectUsage.projectId, project.id),
                   ),
                 ),
+              storageSnapshot(q, { orgId: project.orgId, projectId: project.id }, now),
               q
                 .update(schema.usageInventory)
                 .set({ completedAt: now, cursor: null })
