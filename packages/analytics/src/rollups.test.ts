@@ -130,6 +130,10 @@ test("resumable inventory repairs expired objects and totals only after a comple
       yield* jobs.tick;
       const [usage] = yield* db.query("test.complete", (q) => q.select().from(schema.projectUsage));
       expect(usage?.bytes).toBe(30);
+      const snapshots = yield* db.query("test.storageHistory", (q) =>
+        q.select().from(schema.rollup),
+      );
+      expect(snapshots.find((snapshot) => snapshot.metric === "storageBytes")?.value).toBe(30);
       expect(usage?.reconciledAt).toBeGreaterThan(0);
       yield* jobs.tick;
       expect(

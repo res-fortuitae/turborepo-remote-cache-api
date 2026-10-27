@@ -26,7 +26,11 @@ export const UsageMetrics = Schema.Struct({
   edgeCacheHitRate: Schema.Number,
 });
 
-export const UsagePoint = Schema.Struct({ ts: Timestamp, ...UsageMetrics.fields });
+export const UsagePoint = Schema.Struct({
+  ts: Timestamp,
+  ...UsageMetrics.fields,
+  storageObserved: Schema.optional(Schema.Boolean),
+});
 export const UsageBreakdown = Schema.Struct({
   id: Id,
   kind: Schema.Literals(["org", "project", "dimension"]),

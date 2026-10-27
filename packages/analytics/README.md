@@ -105,8 +105,7 @@ before consulting a drill-down cache.
 Time-series ranges must use aligned UTC bucket boundaries and span at most 31 days.
 Missing buckets are zero-filled. Totals combine counts before deriving hit rates.
 `storageBytes` is the current reconciled estimate in totals and org/project
-breakdowns; historical series use zero because no historical storage snapshots
-exist. `uniqueSessions` retains the bucket-sum estimate described above. Results
+breakdowns; historical series now include hourly storage observations from ledger mutations and completed inventory reconciliation. Each bucket carries the last observation within the selected range; `storageObserved` is false until every project in scope has an observation. Unknown buckets must not be plotted as zero. Snapshots begin with this version and are estimates, not backfilled history. `uniqueSessions` retains the bucket-sum estimate described above. Results
 are capped at 100 breakdowns, ordered by combined served bytes and current storage.
 Instance breakdowns identify both orgs and projects with a `kind` field. Project
 breakdowns also include the stored provider/repository/ref dimensions.
