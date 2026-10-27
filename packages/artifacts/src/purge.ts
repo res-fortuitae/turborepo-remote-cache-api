@@ -1,4 +1,4 @@
-import { CoordinatorClient, type CoordinatorError } from "@repo/coordinator";
+import { CoordinatorClient, type CoordinatorError } from "@repo/coordinator/client";
 import { Context, Effect, Layer } from "effect";
 import { ArtifactStore, type ArtifactStorageError } from "./store.ts";
 

@@ -1,0 +1,12 @@
+{
+  "samples": 1000,
+  "warmup": 100,
+  "wallP95Ms": 0.06937500000003638,
+  "processCpuMeanMs": 0.10362099999999999,
+  "remoteEpochReads": 0,
+  "regressionBudgetMs": 2,
+  "sloTargetMs": 1,
+  "runtime": "1.4.3",
+  "platform": "darwin-arm64",
+  "scope": "Bun process CPU, real EdDSA JWT verification and real CoordinatorClient cache over an in-memory namespace; not Workers CPU"
+}

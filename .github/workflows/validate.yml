@@ -37,5 +37,7 @@ jobs:
           project: ${{ vars.TCACHE_PROJECT }}
       - run: bun run check
       - run: bun run test
+      - name: JWT hot-path performance smoke
+        run: bun run perf:smoke
   oidc-runner-lifecycle:
     uses: ./.github/workflows/oidc-runner-lifecycle.yml

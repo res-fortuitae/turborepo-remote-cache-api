@@ -200,7 +200,9 @@ export function checkBoundaries(root: string): string[] {
             target === "@repo/ui" &&
             /^@repo\/ui\/(components\/[a-z-]+|lib\/utils|styles\.css)$/.test(value);
           const publicRuntimePath =
-            value === "@repo/artifacts/cache" || value === "@repo/auth/api-key-warning";
+            value === "@repo/artifacts/cache" ||
+            value === "@repo/auth/api-key-warning" ||
+            value === "@repo/coordinator/client";
 
           if (
             target !== "@repo/config" &&
