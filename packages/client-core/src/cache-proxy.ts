@@ -59,6 +59,7 @@ const make = Effect.gen(function* () {
   const transport = yield* ProxyTransport;
   const session = yield* ProxySession;
   const signer = yield* DpopSigner;
+  // Only OIDC exchange binds credentials to this proxy key; developer tokens are bearer tokens.
   const stats = { hits: 0, misses: 0, uploads: 0, errors: 0, retries: 0 };
 
   const send: UploadSend = (path, method, body, headers, signal) =>
@@ -69,10 +70,10 @@ const make = Effect.gen(function* () {
       const url = new URL(path, config.api).href;
       headers.set(
         "authorization",
-        `${config.boundTokens && credential.source !== "apiKey" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
+        `${config.boundTokens && credential.source === "oidc" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
       );
 
-      if (config.boundTokens && credential.source !== "apiKey")
+      if (config.boundTokens && credential.source === "oidc")
         headers.set(
           "dpop",
           Redacted.value(yield* signer.proof({ url, method, accessToken: credential.token })),
@@ -146,10 +147,10 @@ const make = Effect.gen(function* () {
         const headers = headersFor(request.headers);
         headers.set(
           "authorization",
-          `${config.boundTokens && credential.source !== "apiKey" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
+          `${config.boundTokens && credential.source === "oidc" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
         );
 
-        if (config.boundTokens && credential.source !== "apiKey") {
+        if (config.boundTokens && credential.source === "oidc") {
           const proof = yield* signer.proof({
             url: target.href,
             method: request.method,

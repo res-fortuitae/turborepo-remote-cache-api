@@ -13,116 +13,132 @@ import {
   TokenCache,
 } from "./index.ts";
 
-test("large streaming proxy PUT uses bounded multipart parts with fresh DPoP and retries", async () => {
-  const size = 128 * 1024 * 1024 + 5;
-  const proofs = new Set<string>();
-  const sizes: number[] = [];
-  let failures = 1;
-  let completed = false;
+test.each(["oidc", "developer"] as const)(
+  "%s proxy reads and multipart uploads use the credential binding",
+  async (source) => {
+    const size = 128 * 1024 * 1024 + 5;
+    const proofs = new Set<string>();
+    const sizes: number[] = [];
+    let failures = 1;
+    let completed = false;
 
-  const transport = Layer.succeed(ProxyTransport, {
-    send: (request) =>
-      Effect.promise(async () => {
-        expect(request.headers.get("authorization")).toBe("DPoP cache-secret");
-        const proof = decodeJwt(request.headers.get("dpop")!);
-        expect(proof.htm).toBe(request.method);
-        expect(proof.htu).toBe(request.url);
-        expect(proofs.has(proof.jti!)).toBe(false);
-        proofs.add(proof.jti!);
-        const path = new URL(request.url).pathname;
-
-        if (path === "/v8/x/uploads")
-          return Response.json(
-            { id: "upload", partSize: MULTIPART_PART_BYTES, expiresAt: 9999999999 },
-            { status: 201 },
+    const transport = Layer.succeed(ProxyTransport, {
+      send: (request) =>
+        Effect.promise(async () => {
+          expect(request.headers.get("authorization")).toBe(
+            `${source === "oidc" ? "DPoP" : "Bearer"} cache-secret`,
           );
+          if (source === "oidc") {
+            const proof = decodeJwt(request.headers.get("dpop")!);
+            expect(proof.htm).toBe(request.method);
+            expect(proof.htu).toBe(request.url);
+            expect(proofs.has(proof.jti!)).toBe(false);
+            proofs.add(proof.jti!);
+          } else expect(request.headers.has("dpop")).toBe(false);
+          const path = new URL(request.url).pathname;
 
-        if (path.includes("/parts/")) {
-          let count = 0;
+          if (request.method === "GET") return new Response("cached artifact");
 
-          for await (const chunk of request.body!) count += chunk.length;
-          expect(count).toBe(Number(request.headers.get("content-length")));
+          if (path === "/v8/x/uploads")
+            return Response.json(
+              { id: "upload", partSize: MULTIPART_PART_BYTES, expiresAt: 9999999999 },
+              { status: 201 },
+            );
 
-          if (failures-- > 0) return new Response(null, { status: 503 });
-          sizes.push(count);
+          if (path.includes("/parts/")) {
+            let count = 0;
 
-          return Response.json({ partNumber: Number(path.split("/").at(-1)), etag: "etag" });
-        }
+            for await (const chunk of request.body!) count += chunk.length;
+            expect(count).toBe(Number(request.headers.get("content-length")));
 
-        if (path.endsWith("/complete")) {
-          completed = true;
+            if (failures-- > 0) return new Response(null, { status: 503 });
+            sizes.push(count);
 
-          return Response.json({ hash: "abc" }, { status: 202 });
-        }
+            return Response.json({ partNumber: Number(path.split("/").at(-1)), etag: "etag" });
+          }
 
-        throw new Error("unexpected path");
-      }),
-  });
+          if (path.endsWith("/complete")) {
+            completed = true;
 
-  const credential = {
-    source: "oidc" as const,
-    token: Redacted.make("cache-secret"),
-    api: "https://cache.test",
-    team: "org",
-    project: "p",
-    expiresAt: "2099-01-01T00:00:00Z",
-    scope: "read write" as const,
-  };
-  const layer = CacheProxyLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        transport,
-        DpopSignerLive,
-        Layer.succeed(ProxySession, { secret: Redacted.make("session") }),
-        Layer.succeed(ClientConfig, {
-          api: credential.api,
-          audience: credential.api,
-          team: "org",
-          project: "p",
-          strict: true,
-          boundTokens: true,
-          apiKeysAllowed: true,
+            return Response.json({ hash: "abc" }, { status: 202 });
+          }
+
+          throw new Error("unexpected path");
         }),
-        Layer.succeed(TokenCache, {
-          get: Effect.succeed(credential),
-          peek: Effect.succeed(credential),
-          clear: Effect.void,
-        }),
+    });
+
+    const credential = {
+      source,
+      token: Redacted.make("cache-secret"),
+      api: "https://cache.test",
+      team: "org",
+      project: "p",
+      expiresAt: "2099-01-01T00:00:00Z",
+      scope: "read write" as const,
+    };
+    const layer = CacheProxyLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          transport,
+          DpopSignerLive,
+          Layer.succeed(ProxySession, { secret: Redacted.make("session") }),
+          Layer.succeed(ClientConfig, {
+            api: credential.api,
+            audience: credential.api,
+            team: "org",
+            project: "p",
+            strict: true,
+            boundTokens: true,
+            apiKeysAllowed: true,
+          }),
+          Layer.succeed(TokenCache, {
+            get: Effect.succeed(credential),
+            peek: Effect.succeed(credential),
+            clear: Effect.void,
+          }),
+        ),
       ),
-    ),
-  );
-  let left = size;
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (left === 0) {
-        controller.close();
+    );
+    let left = size;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (left === 0) {
+          controller.close();
 
-        return;
-      }
+          return;
+        }
 
-      const length = Math.min(left, 1024 * 1024);
-      controller.enqueue(new Uint8Array(length));
-      left -= length;
-    },
-  });
-  const init: RequestInit & { duplex: "half" } = {
-    method: "PUT",
-    duplex: "half",
-    body,
-    headers: { authorization: "Bearer session", "content-length": String(size) },
-  };
-  const response = await Effect.runPromise(
-    Effect.gen(function* () {
-      const proxy = yield* CacheProxy;
+        const length = Math.min(left, 1024 * 1024);
+        controller.enqueue(new Uint8Array(length));
+        left -= length;
+      },
+    });
+    const init: RequestInit & { duplex: "half" } = {
+      method: "PUT",
+      duplex: "half",
+      body,
+      headers: { authorization: "Bearer session", "content-length": String(size) },
+    };
+    const response = await Effect.runPromise(
+      Effect.gen(function* () {
+        const proxy = yield* CacheProxy;
 
-      return yield* proxy.handle(new Request("http://127.0.0.1/v8/artifacts/abc", init));
-    }).pipe(Effect.provide(layer)),
-  );
-  expect(response.status).toBe(202);
-  expect(completed).toBe(true);
-  expect(sizes).toEqual([MULTIPART_PART_BYTES, MULTIPART_PART_BYTES, 5]);
-  expect(proofs.size).toBe(6);
-});
+        const read = yield* proxy.handle(
+          new Request("http://127.0.0.1/v8/artifacts/abc", {
+            headers: { authorization: "Bearer session" },
+          }),
+        );
+        expect(read.status).toBe(200);
+        expect(yield* Effect.promise(() => read.text())).toBe("cached artifact");
+        return yield* proxy.handle(new Request("http://127.0.0.1/v8/artifacts/abc", init));
+      }).pipe(Effect.provide(layer)),
+    );
+    expect(response.status).toBe(202);
+    expect(completed).toBe(true);
+    expect(sizes).toEqual([MULTIPART_PART_BYTES, MULTIPART_PART_BYTES, 5]);
+    expect(proofs.size).toBe(source === "oidc" ? 7 : 0);
+  },
+);
 
 test("multipart stream mismatch and denied part abort the authenticated session", async () => {
   const { uploadStream } = await import("./proxy-upload.ts");

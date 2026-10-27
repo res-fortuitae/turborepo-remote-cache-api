@@ -15,8 +15,9 @@ bun run --cwd packages/cli bench:startup
 
 `build` defaults to the host. `build linux-x64` chooses one target; `build:all`
 compiles Linux x64/arm64 glibc and musl, macOS x64/arm64, and Windows x64.
-Bun downloads the pinned target runtime during cross-compilation. No runtime
-package manager or install hook is needed to execute a binary. x64 Linux/Windows
+Bun downloads the pinned target runtime during cross-compilation. No Node/Bun
+installation or install hook is needed to execute a binary. Linux builds use the
+host runtime libraries; Alpine/musl hosts need `libstdc++` (`apk add libstdc++`). x64 Linux/Windows
 builds use baseline CPU targets. Default dotenv/bunfig/tsconfig/package autoloading
 is disabled in compiled executables. Explicit environment and repo link config
 remain supported. See [Bun executable documentation](https://bun.com/docs/bundler/executables).
