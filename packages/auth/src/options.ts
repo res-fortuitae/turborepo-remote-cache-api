@@ -12,6 +12,7 @@ import { readInstancePolicy, instancePlugin } from "./instance.ts";
 import { organizationPlugins } from "./organizations.ts";
 import { passkeyPlugins } from "./passkeys.ts";
 import { instanceAdmin } from "./instance-access.ts";
+import { devicePlugins } from "./device.ts";
 import { githubIdentityHooks } from "./github.ts";
 
 export type BetterAuthSecondaryStorage = NonNullable<BetterAuthOptions["secondaryStorage"]>;
@@ -155,6 +156,7 @@ export const makeBetterAuth = ({
         keyExpiration: { defaultExpiresIn: 30 * 86400, minExpiresIn: 1 / 86400, maxExpiresIn: 90 },
         enableSessionForAPIKeys: false,
       }),
+      ...devicePlugins(db, audit),
       instanceAdmin(),
       ...passkeyPlugins(db, config, audit),
       ...organizationPlugins(db, config, audit, sendInvitation),

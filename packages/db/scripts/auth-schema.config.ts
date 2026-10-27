@@ -3,6 +3,10 @@ import { passkey } from "@better-auth/passkey";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { organization } from "better-auth/plugins/organization";
+import {
+  deviceAuthorization,
+  type DeviceAuthorizationGrant,
+} from "better-auth/plugins/device-authorization";
 import { admin } from "better-auth/plugins/admin";
 import { magicLink } from "better-auth/plugins/magic-link";
 
@@ -25,6 +29,18 @@ export const auth = betterAuth({
   plugins: [
     apiKey({ references: "organization" }),
     passkey(),
+    deviceAuthorization<DeviceAuthorizationGrant>({
+      grant: {
+        requestSchemaFields: {},
+        deviceCodeSchemaFields: { requestIp: { type: "string", required: false } },
+        authorizeRequest: ({ request }) => ({
+          clientId: request.client_id ?? "tcache",
+          deviceCodeFields: {},
+        }),
+        assertSessionRedemption: () => {},
+        getVerificationContext: () => ({}),
+      },
+    }),
     organization({ dynamicAccessControl: { enabled: true }, teams: { enabled: true } }),
     admin(),
     magicLink({ storeToken: "hashed", sendMagicLink: async () => {} }),
