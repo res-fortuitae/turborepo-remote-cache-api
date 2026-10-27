@@ -18,6 +18,7 @@ import { authClient, type Session } from "../lib/auth-client.ts";
 import { navItems, type NavItem } from "../lib/nav.ts";
 import { orgPath, useOptionalOrg } from "../lib/org.tsx";
 import { href, navigate, splitLocation, useLocation } from "../lib/router.tsx";
+import { ElevationBanner } from "./ElevationBanner.tsx";
 import { BrandMark } from "./brand.tsx";
 import { ThemeToggle } from "./theme-toggle.tsx";
 
@@ -292,6 +293,7 @@ export function AppShell({
             tabIndex={-1}
             className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 outline-none md:px-8 lg:py-10"
           >
+            <ElevationBanner role={session.user.role} />
             {children}
           </main>
         </div>

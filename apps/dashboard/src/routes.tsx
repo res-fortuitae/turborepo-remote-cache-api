@@ -1,3 +1,4 @@
+import { InstancePage } from "./pages/InstancePage.tsx";
 import { AnalyticsPage } from "./pages/AnalyticsPage.tsx";
 import { AuditPage } from "./pages/AuditPage.tsx";
 import { CredentialsPage } from "./pages/CredentialsPage.tsx";
@@ -38,5 +39,12 @@ export const orgRoutes: ReadonlyArray<Route> = [
 ];
 
 export const instanceRoutes: ReadonlyArray<Route> = [
+  { pattern: "/instance", title: "Administration", render: () => <InstancePage /> },
+  { pattern: "/instance/audit", title: "Global audit", render: () => <AuditPage instance /> },
+  {
+    pattern: "/instance/analytics",
+    title: "Global analytics",
+    render: () => <AnalyticsPage instance />,
+  },
   { pattern: "/capabilities", title: "Capabilities", render: () => <CapabilitiesPage /> },
 ];
