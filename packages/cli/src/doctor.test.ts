@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { diagnosticClaims, localWarnings } from "./doctor.ts";
 import type { CapabilityReport } from "@repo/shared";
 import { doctorServer, formatCapabilities } from "./index.ts";
 
@@ -82,4 +83,40 @@ test.each([
   "https://example.com?token=x",
 ])("doctor rejects unsafe origin %s before sending credentials", async (server) => {
   await expect(doctorServer({ server, token: "test" })).rejects.toThrow();
+});
+
+test("doctor emits selected unverified claims and fixed runner warnings without secrets", () => {
+  const token =
+    "header." +
+    Buffer.from(
+      JSON.stringify({
+        iss: "https://issuer.test",
+        sub: "repo:org/repo",
+        aud: "https://cache.test",
+        exp: 1,
+        nbf: Date.now() / 1000 + 120,
+        access_token: "hidden",
+        secret: "hidden",
+        signature: "hidden",
+      }),
+    ).toString("base64url") +
+    ".secret-signature";
+  const claims = diagnosticClaims(token);
+  expect(claims?.sub).toBe("repo:org/repo");
+  expect(JSON.stringify(claims)).not.toContain("hidden");
+  expect(JSON.stringify(claims)).not.toContain("secret-signature");
+  const warnings = localWarnings(
+    {
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "pull_request_target",
+      RUNNER_ENVIRONMENT: "self-hosted",
+    },
+    claims,
+  );
+  expect(warnings.some((w) => w.includes("id-token: write"))).toBe(true);
+  expect(warnings.some((w) => w.includes("pull_request_target"))).toBe(true);
+  expect(warnings.some((w) => w.includes("ephemeral"))).toBe(true);
+  expect(warnings.some((w) => w.includes("expired"))).toBe(true);
+  expect(warnings.some((w) => w.includes("clock"))).toBe(true);
+  expect(diagnosticClaims("invalid")).toBeUndefined();
 });

@@ -43,3 +43,4 @@ export {
 } from "./uploads.ts";
 
 export { DeveloperTokenRequest, DeveloperTokenApi } from "./oidc.ts";
+export { HealthReport, SelfTestReport } from "./health.ts";

@@ -313,6 +313,8 @@ export const DashboardAssets = {
   notFoundHandling: "single-page-application",
   // Cache API paths never resolve to dashboard files.
   runWorkerFirst: [
+    "/healthz",
+    "/tokens/*",
     "/v8",
     "/v8/*",
     "/api",

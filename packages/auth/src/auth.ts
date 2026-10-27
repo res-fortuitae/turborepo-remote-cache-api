@@ -52,10 +52,11 @@ export interface AuthService {
    * Like `requireSession`, then confirms the session is still live in D1.
    * Use it for sensitive actions: admin changes, elevation, token issue.
    */
-  readonly requireFreshSession: (
-    headers: Headers,
-  ) => Effect.Effect<
-    AuthSession & { session: typeof schema.session.$inferSelect },
+  readonly requireFreshSession: (headers: Headers) => Effect.Effect<
+    AuthSession & {
+      session: typeof schema.session.$inferSelect;
+      user: typeof schema.user.$inferSelect;
+    },
     AuthError | Unauthenticated | DatabaseError
   >;
   /** Revokes every session of the caller's user. */

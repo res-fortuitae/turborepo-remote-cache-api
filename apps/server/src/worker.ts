@@ -1,3 +1,5 @@
+import { healthRoute } from "./health-route.ts";
+import { selftestRoute } from "./selftest-route.ts";
 import { developerTokenRoute } from "./developer-token-route.ts";
 import { DeveloperTokensLive } from "@repo/credentials";
 import { PolicyGuardrailsLive } from "@repo/oidc";
@@ -1000,6 +1002,45 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const health = healthRoute(
+      {
+        d1: Effect.gen(function* () {
+          const db = yield* DatabaseService;
+          return yield* db.query("health", (db) =>
+            db.select({ id: schema.user.id }).from(schema.user).limit(1),
+          );
+        }).pipe(Effect.provide(databaseLayer)),
+        r2: Effect.flatMap(bucket.raw, (raw) => Effect.tryPromise(() => raw.head("__healthz"))),
+        kv: Effect.flatMap(kv.raw, (raw) => Effect.tryPromise(() => raw.get("__healthz"))),
+        coordinator: Effect.flatMap(CoordinatorClient, (client) =>
+          client.cacheGeneration("__healthz", true),
+        ).pipe(Effect.provide(coordinatorLayer)),
+      },
+      {
+        analytics: capabilities.analytics.enabled,
+        auditHistory: capabilities.auditHistory.enabled,
+        directUploads: capabilities.directUploads.enabled,
+        emailSending: capabilities.emailSending.enabled,
+      },
+    );
+    const selftest = selftestRoute(bucket).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          authLayer,
+          auditLayer,
+          rateLimitLayer,
+          authConfig,
+          InstanceSettingsRepoLive,
+        ).pipe(Layer.provideMerge(databaseLayer)),
+      ),
+      Effect.catch(() =>
+        HttpServerResponse.json(
+          { code: "selftest_unavailable" },
+          { status: 503, headers: { "cache-control": "no-store" } },
+        ),
+      ),
+    );
+
     const report = capabilitiesRoute(capabilities, token).pipe(
       Effect.provide(authLayer),
       Effect.catch(() =>
@@ -1033,6 +1074,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
             );
           return yield* oidc;
         }
+
+        if (pathname === "/healthz")
+          return request.method === "GET"
+            ? yield* health
+            : HttpServerResponse.empty({ status: 405 });
+        if (pathname === "/api/instance/selftest") return yield* selftest;
 
         if (pathname === "/tokens/dev") return yield* developerTokens;
 
