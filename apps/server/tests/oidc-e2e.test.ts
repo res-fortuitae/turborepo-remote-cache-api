@@ -51,9 +51,9 @@ import { createArtifactCache } from "../src/edge-cache.ts";
 import { oidcApi } from "../src/oidc-route.ts";
 import { memoryBucket } from "./support/in-process.ts";
 
-/** Real signatures, database, signer, authz, HTTP, shipped Node24 Action and real Turbo.
+/** Real signatures, database, signer, authz, HTTP, CLI, shipped Node24 Action and real Turbo.
  * Only GitHub discovery/JWKS and R2 are local fixture adapters; nothing is deployed. */
-test("OIDC E2E: main writes, PR restores but cannot PUT, outside repo/expired identity denied", async () => {
+test("OIDC E2E: Action and CLI write/restore; PR writes and outside/expired identities denied", async () => {
   const directory = await mkdtemp(join(tmpdir(), "oidc-e2e-"));
   const workspace = join(directory, "workspace");
   await mkdir(workspace);
@@ -356,6 +356,37 @@ test("OIDC E2E: main writes, PR restores but cannot PUT, outside repo/expired id
 
     expect(rejectedPut.status).toBe(403);
 
+    // Exercise the actual CLI adapter as well as the shipped Action. No browser
+    // session or static API key participates in either CI exchange.
+    const cli = fileURLToPath(new URL("../../../packages/cli/src/bin.ts", import.meta.url));
+    const cliEnv = (idToken: string) => ({
+      ...Bun.env,
+      TCACHE_API: api,
+      TCACHE_TEAM: "org",
+      TCACHE_PROJECT: "p",
+      TCACHE_CI_PROVIDER: "custom",
+      TCACHE_ID_TOKEN: idToken,
+      TCACHE_API_KEY: undefined,
+    });
+    const cliWrite = await command(
+      ["bun", cli, "exec", "--strict", "--", turbo, "run", "build", "--cache=remote:w"],
+      cliEnv(await assertion("push")),
+    );
+    expect(cliWrite.code, cliWrite.stdout + cliWrite.stderr).toBe(0);
+    expect(cliWrite.stderr).toContain('"uploads":1');
+    await rm(join(workspace, "dist"), { recursive: true });
+    await rm(join(workspace, ".turbo"), { recursive: true, force: true });
+    const cliRead = await command(
+      ["bun", cli, "exec", "--strict", "--", turbo, "run", "build", "--cache=remote:r"],
+      cliEnv(await assertion("pull_request")),
+    );
+    expect(cliRead.code, cliRead.stdout + cliRead.stderr).toBe(0);
+    expect(cliRead.stdout).toContain("cache hit");
+    expect(cliRead.stderr).toContain('"uploads":0');
+    expect(await readFile(join(workspace, "dist/result.txt"), "utf8")).toBe(
+      "OIDC remote restore\n",
+    );
+
     for (const idToken of [await assertion("push", true), await assertion("push", false, true)]) {
       const response = await fetch(`${api}/oidc/exchange`, {
         method: "POST",
@@ -364,6 +395,16 @@ test("OIDC E2E: main writes, PR restores but cannot PUT, outside repo/expired id
       });
 
       expect(response.status).toBe(403);
+    }
+
+    for (const idToken of [await assertion("push", true), await assertion("push", false, true)]) {
+      const denied = await command(
+        ["bun", cli, "exec", "--strict", "--", "bun", "-e", 'console.log("must-not-run")'],
+        cliEnv(idToken),
+      );
+      expect(denied.code).toBe(1);
+      expect(denied.stdout).not.toContain("must-not-run");
+      expect(denied.stdout + denied.stderr).not.toContain(idToken);
     }
 
     const audit = await runtime.runPromise(

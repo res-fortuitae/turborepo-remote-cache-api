@@ -4,6 +4,10 @@ M4 acceptance has two independent layers: deterministic local security coverage,
 and workflows against the actual runner/optional existing preview. These workflows
 never provision or destroy infrastructure. STV-431 preview provisioning was canceled.
 
+See [the October 2026 OIDC verification record](oidc-validation.md) for the
+additional actual local root-stack probe, compiled CLI refresh/cache checks,
+live issuer metadata checks, and the precise real-provider validation boundary.
+
 ## Local security round trip
 
 ```sh
@@ -14,8 +18,10 @@ bun test scripts/oidc-runner-probe.test.ts
 The security suite signs GitHub-shaped assertions with a fixture RSA key, verifies
 through the real OIDC verifier/discovery contract, matches saved policies in real
 SQLite, exchanges into real signed/epoch cache JWTs, launches the committed Node 24
-Action daemon, and runs the actual Turbo binary over HTTP. Only GitHub discovery/
-JWKS and artifact storage use local adapters. No remote credentials are needed.
+Action daemon, also exercises the actual CLI adapter, and runs the actual Turbo
+binary over HTTP. Issuer discovery/JWKS, artifact storage, Coordinator transport,
+JWKS cache and the exchange-rate limiter use local test adapters. No remote
+credentials are needed.
 
 It proves all four cases:
 
@@ -26,6 +32,10 @@ It proves all four cases:
   rejected; durable audit records policy mismatch.
 - An expired, correctly signed CI assertion is rejected; durable audit records
   expiry rather than a different denial.
+
+The CLI independently writes and restores through the same bound exchange path.
+In strict mode, outside-repository and expired identities fail before the wrapped
+command executes; their assertions are not printed in CLI output.
 
 The runner probe launches a short-lived-token fixture in a detached process,
 starts the shipped Action in another process, then runs a later independent step

@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-10-27T12:47:48.120Z",
+  "scope": "Read-only public discovery and JWKS retrieval; no provider-issued assertion obtained",
+  "records": [
+    {
+      "issuer": "https://token.actions.githubusercontent.com",
+      "discoveryStatus": 200,
+      "jwksStatus": 200,
+      "keys": 4,
+      "algorithms": ["RS256"]
+    },
+    {
+      "issuer": "https://oidc.vercel.com",
+      "discoveryStatus": 200,
+      "jwksStatus": 200,
+      "keys": 2,
+      "algorithms": ["RS256"]
+    }
+  ]
+}
