@@ -62,3 +62,5 @@ export {
   ArtifactSigningError,
   ArtifactEncryptionSecret,
 } from "./artifact-signing.ts";
+export { ExchangeAnomalies } from "./exchange-anomalies.ts";
+export type { ExchangeIdentity } from "./exchange-anomalies.ts";

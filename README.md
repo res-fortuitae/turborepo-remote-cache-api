@@ -122,6 +122,8 @@ Organization-owned API keys and their management API are documented in
 for JWT/API-key routing, project isolation, and the opt-in legacy migration flag.
 [Request guards](docs/request-guards.md) documents credential/IP rate limits,
 organization policy ceilings, and batch/upload bounds.
+[Anomaly detection](docs/anomaly-detection.md) covers verified identity baselines,
+write/exchange signals, administrator alerts and optional read-only/revocation containment.
 [Upload provenance and incident response](docs/artifact-purge.md) covers dry-run
 filters, audited background purge jobs, the dashboard, and `tcache admin purge`.
 

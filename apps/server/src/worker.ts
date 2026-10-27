@@ -1,3 +1,6 @@
+import { Anomalies, AnomaliesLive } from "./anomalies.ts";
+import { anomalyPath, anomaliesRoute } from "./anomalies-route.ts";
+import { ExchangeAnomalies } from "@repo/credentials";
 import { admitQuotaUpload } from "./quota-upload.ts";
 import { quotaPath, quotasRoute } from "./quotas-route.ts";
 import {
@@ -915,6 +918,22 @@ export default class Api extends Cloudflare.Worker<Api>()(
       }).pipe(Effect.provide(maintenanceLayer), Effect.tapCause(Effect.logError)),
     );
 
+    const anomaliesLayer = AnomaliesLive.pipe(
+      Layer.provide(originLayer),
+      Layer.provide(Layer.mergeAll(auditLayer, coordinatorLayer, notificationsLayer)),
+      Layer.provide(databaseLayer),
+    );
+    const anomalySettings = anomaliesRoute.pipe(
+      Effect.provide(Layer.mergeAll(anomaliesLayer, authLayer, authorizationLayer)),
+      Effect.provide(databaseLayer),
+    );
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
+      Anomalies.use((a) => a.tick).pipe(
+        Effect.provide(anomaliesLayer),
+        Effect.tapCause(Effect.logError),
+      ),
+    );
+
     const quotasLayer = QuotasLive.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -1070,6 +1089,26 @@ export default class Api extends Cloudflare.Worker<Api>()(
                 .head(`${scope.prefix}/${operation.hash}`)
                 .pipe(Effect.catchCause(() => Effect.succeed(null)))
             : null;
+        if (
+          stored &&
+          operation.hash &&
+          scope.credential &&
+          scope.credential.credentialType !== "legacy"
+        )
+          yield* Anomalies.use((a) =>
+            a.write(
+              scope.credential!.orgId,
+              scope.credential!.projectId,
+              operation.hash!,
+              stored.size,
+              Boolean(stored.customMetadata?.tag),
+              scope.credential!.principal.uploadIdentity ?? {},
+            ),
+          ).pipe(
+            Effect.provide(anomaliesLayer),
+            Effect.tapCause(Effect.logError),
+            Effect.catchCause(() => Effect.void),
+          );
         const enriched = stored ? { ...operation, bytes: stored.size } : operation;
         if (scope.credential?.credentialType !== "legacy")
           yield* Quotas.use((quotas) =>
@@ -1204,6 +1243,16 @@ export default class Api extends Cloudflare.Worker<Api>()(
             !url.pathname.endsWith("/abort") &&
             scope.credential?.credentialType !== "legacy"
               ? Effect.gen(function* () {
+                  if (
+                    yield* Anomalies.use((a) => a.blocked(scope.credential!.projectId)).pipe(
+                      Effect.provide(anomaliesLayer),
+                    )
+                  )
+                    return yield* new ApiError({
+                      status: 403,
+                      code: "anomaly_containment",
+                      message: "Project writes are paused after a security alert",
+                    });
                   const db = yield* DatabaseService;
                   const [active] = yield* db.query("Purge.writeFence", (q) =>
                     q
@@ -1404,6 +1453,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
       OidcExchangeLive.pipe(
         Layer.provide(
           Layer.mergeAll(
+            Layer.effect(
+              ExchangeAnomalies,
+              Effect.map(Anomalies, (a) => ({ checkWrite: a.checkWrite, observe: a.observe })),
+            ).pipe(Layer.provide(anomaliesLayer)),
             oidcVerifierLayer,
             DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
             TrustPolicyMatcherLive,
@@ -1591,6 +1644,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             : HttpServerResponse.empty({ status: 405 });
         if (pathname === "/api/instance/selftest") return yield* selftest;
 
+        if (anomalyPath.test(pathname)) return yield* anomalySettings;
         if (quotaPath.test(pathname)) return yield* quotaSettings;
         if (signingPath.test(pathname)) return yield* signingSettings;
         if (pathname === "/tokens/dev") return yield* developerTokens;
