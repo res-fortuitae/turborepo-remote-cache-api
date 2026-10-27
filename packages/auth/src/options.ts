@@ -1,3 +1,5 @@
+import { bootstrapOwner } from "./bootstrap.ts";
+import * as Effect from "effect/Effect";
 import { auditedAdapter } from "./audit-adapter.ts";
 import { apiKey } from "@better-auth/api-key";
 import { schema, type DatabaseDrizzle } from "@repo/db";
@@ -8,7 +10,6 @@ import { bearer } from "better-auth/plugins/bearer";
 import { magicLink } from "better-auth/plugins/magic-link";
 import * as Redacted from "effect/Redacted";
 import type { AuditLogService } from "@repo/audit";
-import { and, eq, sql } from "drizzle-orm";
 import { APIError } from "better-auth/api";
 import { readInstancePolicy, instancePlugin } from "./instance.ts";
 import { organizationPlugins } from "./organizations.ts";
@@ -136,16 +137,8 @@ export const makeBetterAuth = ({
       user: {
         create: {
           after: async (user) => {
-            // One atomic UPDATE; concurrent first logins cannot both claim ownership.
-            await db
-              .update(schema.user)
-              .set({ role: "owner" })
-              .where(
-                and(
-                  eq(schema.user.id, user.id),
-                  sql`not exists (select 1 from user where role = 'owner')`,
-                ),
-              );
+            if (!audit) throw new APIError("SERVICE_UNAVAILABLE", { message: "Audit unavailable" });
+            await Effect.runPromise(bootstrapOwner(audit, user.id));
           },
         },
       },
