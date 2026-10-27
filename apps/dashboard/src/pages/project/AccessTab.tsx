@@ -20,9 +20,8 @@ import {
 import { EmptyState, ErrorState, LoadingRows } from "../../components/common.tsx";
 import { NativeSelect, useAction } from "../../components/forms.tsx";
 import { accessActions, explainAccess, type AccessAction } from "../../lib/access.ts";
-import { listGroupMembers, listGroups, listMembers, listRoles } from "../../lib/org-admin.ts";
-import { useOrg } from "../../lib/org.tsx";
 import {
+  accessDirectory,
   addGrant,
   listGrants,
   projectRoles,
@@ -40,29 +39,20 @@ export function AccessTab({
   readonly projectId: string;
   readonly archived: boolean;
 }) {
-  const org = useOrg();
   const grants = useResource(`grants:${projectId}`, (signal) => listGrants(projectId, signal));
-  const directory = useResource(`directory:${org.id}`, async (signal) => {
-    const [members, groups, roles] = await Promise.all([
-      listMembers(org.id, signal),
-      listGroups(org.id, signal),
-      listRoles(org.id, signal),
-    ]);
+  const directory = useResource(`directory:${projectId}`, async (signal) => {
+    const data = await accessDirectory(projectId, signal);
     const groupMembers = new Map(
-      await Promise.all(
-        groups.map(
-          async (group) =>
-            [
-              group.id,
-              new Set(
-                (await listGroupMembers(org.id, group.id, signal)).map((member) => member.userId),
-              ),
-            ] as const,
+      data.groups.map((group) => [
+        group.id,
+        new Set(
+          data.groupMembers
+            .filter((member) => member.teamId === group.id)
+            .map((member) => member.userId),
         ),
-      ),
+      ]),
     );
-
-    return { members: members.members, groups, roles, groupMembers };
+    return { ...data, groupMembers };
   });
   const [principal, setPrincipal] = useState("");
   const [role, setRole] = useState<ProjectRole>("cache:read");

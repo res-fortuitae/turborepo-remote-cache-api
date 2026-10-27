@@ -1,11 +1,11 @@
+import { QuotasTest, QuotaEvictionTest } from "./testing.ts";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun boundary runs real migrated SQLite quota transactions. */
 import { expect, test } from "bun:test";
 import { Database, schema } from "@repo/db";
-import { DatabaseTest } from "@repo/db/testing";
-import { AuditLogTest } from "@repo/audit/testing";
+
 import { Effect, Layer } from "effect";
 import { eq } from "drizzle-orm";
-import { Quotas, QuotasLive, QuotaDefaults, QuotaEviction, QuotaEvictionLive } from "./quotas.ts";
+import { Quotas, QuotaEviction } from "./quotas.ts";
 import { PurgeInventory, type PurgeObject } from "./incident.ts";
 import { ArtifactPurger } from "./purge.ts";
 const scope = { orgId: "o", projectId: "p" };
@@ -21,11 +21,7 @@ const event = {
   requestId: "r",
   metadata: {},
 };
-const layer = QuotasLive.pipe(
-  Layer.provideMerge(AuditLogTest),
-  Layer.provide(Layer.succeed(QuotaDefaults, { storageBytes: () => Effect.succeed(100) })),
-  Layer.provideMerge(DatabaseTest),
-);
+const layer = QuotasTest;
 const seed = Effect.gen(function* () {
   const db = yield* Database;
   yield* db.batch((q) => [
@@ -166,7 +162,7 @@ test("eviction scans all pages before deleting the oldest provenance and commits
       };
     }),
   );
-  const eviction = QuotaEvictionLive.pipe(
+  const eviction = QuotaEvictionTest.pipe(
     Layer.provide(inventory),
     Layer.provide(
       Layer.succeed(ArtifactPurger, {

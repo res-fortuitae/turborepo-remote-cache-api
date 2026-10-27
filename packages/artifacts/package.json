@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./cache": "./src/cache.ts"
+    "./cache": "./src/cache.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "typecheck": "bun check",
@@ -21,6 +22,7 @@
     "@repo/coordinator": "workspace:*",
     "@repo/credentials": "workspace:*",
     "@repo/db": "workspace:*",
+    "@repo/deploy-config": "workspace:*",
     "effect": "^4.0.6"
   },
   "devDependencies": {

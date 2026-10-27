@@ -1,4 +1,5 @@
-import { Anomalies, AnomaliesLive } from "./anomalies.ts";
+import { Alerts } from "@repo/mailer";
+import { Anomalies, AnomaliesLive, AnomalyAlerts, AnomalyDeliveryError } from "@repo/artifacts";
 import { anomalyPath, anomaliesRoute } from "./anomalies-route.ts";
 import { ExchangeAnomalies } from "@repo/credentials";
 import { admitQuotaUpload } from "./quota-upload.ts";
@@ -46,7 +47,7 @@ import {
   cacheAuthenticationFailureGuard,
   oidcExchangeGuard,
 } from "./request-guards.ts";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { type RuntimeContext, AlchemyContext } from "alchemy";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";
@@ -920,11 +921,31 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const anomaliesLayer = AnomaliesLive.pipe(
       Layer.provide(originLayer),
-      Layer.provide(Layer.mergeAll(auditLayer, coordinatorLayer, notificationsLayer)),
+      Layer.provide(
+        Layer.mergeAll(
+          auditLayer,
+          coordinatorLayer,
+          Layer.effect(
+            AnomalyAlerts,
+            Effect.map(Alerts, (alerts) => ({
+              notify: (alert) =>
+                alerts.notify(alert).pipe(Effect.mapError(() => new AnomalyDeliveryError({}))),
+            })),
+          ).pipe(Layer.provide(notificationsLayer)),
+        ),
+      ),
       Layer.provide(databaseLayer),
     );
     const anomalySettings = anomaliesRoute.pipe(
-      Effect.provide(Layer.mergeAll(anomaliesLayer, authLayer, authorizationLayer)),
+      Effect.provide(
+        Layer.mergeAll(
+          anomaliesLayer,
+          authLayer,
+          authorizationLayer,
+          InstanceSettingsRepoLive,
+          Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
+        ),
+      ),
       Effect.provide(databaseLayer),
     );
     yield* Cloudflare.Workers.cron("* * * * *", () =>
@@ -955,7 +976,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provide(databaseLayer),
     );
     const quotaSettings = quotasRoute.pipe(
-      Effect.provide(Layer.mergeAll(quotasLayer, authLayer, authorizationLayer)),
+      Effect.provide(
+        Layer.mergeAll(
+          quotasLayer,
+          authLayer,
+          authorizationLayer,
+          InstanceSettingsRepoLive,
+          Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
+        ),
+      ),
       Effect.provide(databaseLayer),
     );
     const purgeInventoryLayer = Layer.effect(

@@ -1,16 +1,10 @@
+import { ArtifactSigningTest } from "./testing.ts";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun boundary runs real migrated SQLite and Web Crypto. */
 import { expect, test } from "bun:test";
 import { Database, schema } from "@repo/db";
-import { DatabaseTest } from "@repo/db/testing";
-import { AuditLogTest } from "@repo/audit/testing";
-import { Effect, Layer, Redacted } from "effect";
-import {
-  ArtifactSigning,
-  ArtifactSigningLive,
-  ArtifactEncryptionSecret,
-  encryptArtifactKey,
-  decryptArtifactKey,
-} from "./artifact-signing.ts";
+
+import { Effect, Redacted } from "effect";
+import { ArtifactSigning, encryptArtifactKey, decryptArtifactKey } from "./artifact-signing.ts";
 
 const secret = "test-wrapping-secret-at-least-32-bytes";
 const event = {
@@ -26,13 +20,7 @@ const event = {
   requestId: "request",
   metadata: {},
 };
-const layer = ArtifactSigningLive.pipe(
-  Layer.provideMerge(AuditLogTest),
-  Layer.provide(
-    Layer.succeed(ArtifactEncryptionSecret, { get: Effect.succeed(Redacted.make(secret)) }),
-  ),
-  Layer.provideMerge(DatabaseTest),
-);
+const layer = ArtifactSigningTest;
 
 test("envelopes authenticate tenant, project and key ID and never contain plaintext", async () => {
   const key = "random-artifact-hmac-key-at-least-32-bytes";

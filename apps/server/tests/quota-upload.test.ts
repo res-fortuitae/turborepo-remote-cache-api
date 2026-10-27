@@ -1,6 +1,13 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun boundary validates real HTTP handling and SQLite reservations. */
 import { expect, test } from "bun:test";
-import { Quotas, QuotasLive, QuotaDefaults } from "@repo/artifacts";
+import {
+  Quotas,
+  QuotasLive,
+  QuotaDefaults,
+  QuotaUnavailable,
+  MultipartUploads,
+  type UploadTicket,
+} from "@repo/artifacts";
 import { AuditLogTest } from "@repo/audit/testing";
 import { Database, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
@@ -10,6 +17,7 @@ import { Effect, Layer, Redacted } from "effect";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
 import { ApiError, artifactApi, type ArtifactScope } from "../src/api.ts";
+import { multipartRoute } from "../src/multipart-route.ts";
 import { admitQuotaUpload } from "../src/quota-upload.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
 import { memoryBucket } from "./support/in-process.ts";
@@ -103,3 +111,100 @@ test("HTTP quota admission reports over_limit while stored reads keep working", 
     }).pipe(Effect.provide(layer), Effect.provideService(CanonicalOrigin, "http://localhost")),
   );
 });
+
+test.each(["accounting", "purge"] as const)(
+  "multipart completion cleans up when %s fails",
+  async (failure) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const db = yield* Database;
+        const quotas = yield* Quotas;
+        yield* db.batch((q) => [
+          q
+            .insert(schema.organization)
+            .values({ id: "o", name: "O", slug: "o", createdAt: new Date(0) }),
+          q
+            .insert(schema.project)
+            .values({ id: "p", orgId: "o", name: "P", slug: "p", createdAt: 0 }),
+        ]);
+        const reservation = yield* quotas.reserve({ orgId: "o", projectId: "p" }, "aa", 10);
+        const ticket: UploadTicket = {
+          uploadId: "upload",
+          key: "o/p/aa",
+          orgId: "o",
+          projectId: "p",
+          credentialId: "t",
+          hash: "aa",
+          size: 10,
+          generation: 0,
+          expiresAt: 9999999999999,
+          session: "session",
+          quotaReservation: reservation,
+          provenance: {},
+        };
+        let stored = false;
+        let invalidated = false;
+        let emitted = false;
+        const uploads: typeof MultipartUploads.Service = {
+          create: () => Effect.die("not used"),
+          resolve: () => Effect.succeed(ticket),
+          part: () => Effect.die("not used"),
+          abort: () => Effect.void,
+          complete: () =>
+            Effect.sync(() => {
+              stored = true;
+            }),
+          remove: () =>
+            Effect.sync(() => {
+              stored = false;
+            }),
+        };
+        const scope: ArtifactScope = {
+          prefix: "o/p",
+          credential,
+          maxUploadBytes: 100,
+          cacheGeneration: 0,
+        };
+        const result = yield* multipartRoute(
+          scope,
+          Effect.succeed(failure === "purge" ? { ...scope, cacheGeneration: 1 } : scope),
+          () =>
+            Effect.sync(() => {
+              emitted = true;
+            }),
+          () =>
+            Effect.sync(() => {
+              invalidated = true;
+            }),
+        ).pipe(
+          Effect.provideService(MultipartUploads, uploads),
+          Effect.provideService(Quotas, {
+            ...quotas,
+            finish:
+              failure === "accounting" ? () => Effect.fail(new QuotaUnavailable()) : quotas.finish,
+          }),
+          Effect.provideService(
+            Request.HttpServerRequest,
+            Request.fromWeb(
+              new globalThis.Request("http://localhost/v8/x/uploads/ticket/complete", {
+                method: "POST",
+                body: JSON.stringify({ parts: [{ partNumber: 1, etag: "etag" }] }),
+              }),
+            ),
+          ),
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+        expect(stored).toBe(false);
+        expect(invalidated).toBe(true);
+        expect(emitted).toBe(false);
+        expect(
+          (yield* quotas.status({ orgId: "o", projectId: "p" })).project.usage.storageBytes,
+        ).toBe(0);
+        expect(
+          (yield* quotas.status({ orgId: "o", projectId: "p" })).project.usage.reservedBytes,
+        ).toBe(0);
+      }).pipe(Effect.provide(layer)),
+    );
+  },
+);

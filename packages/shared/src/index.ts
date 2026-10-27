@@ -16,6 +16,7 @@ export {
   Project,
   ProjectGrant,
   ProjectGrants,
+  ProjectAccessDirectory,
   ProjectList,
   ProjectStorage,
   ArtifactSigningStatus,

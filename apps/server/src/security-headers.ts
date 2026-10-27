@@ -4,6 +4,8 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /** Also applied to asset responses by apps/dashboard/public/_headers. */
 export const SECURITY_HEADERS = {
+  "content-security-policy":
+    "default-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; font-src 'self' data:; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
   "referrer-policy": "no-referrer",

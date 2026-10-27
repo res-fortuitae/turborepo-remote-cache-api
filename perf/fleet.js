@@ -192,6 +192,7 @@ export function uploadMultipart() {
     "multipart create",
   ).json();
   const start = Date.now();
+  let completed = false;
   try {
     const parts = [];
     for (let n = 1; n <= 2; n++) {
@@ -215,6 +216,7 @@ export function uploadMultipart() {
       202,
       "multipart completion",
     );
+    completed = true;
     checked(
       http.head(`${api}/v8/artifacts/${hash}${query}`, requestParams("multipart_head")),
       200,
@@ -222,8 +224,13 @@ export function uploadMultipart() {
     );
     multipartMs.add(Date.now() - start);
   } finally {
-    // Abort is idempotent cleanup for an incomplete upload; completed tickets can return 403.
-    http.post(`${api}/v8/x/uploads/${created.id}/abort`, null, requestParams("multipart_cleanup"));
+    // Abort only unfinished sessions; a completed upload no longer needs cleanup.
+    if (!completed)
+      http.post(
+        `${api}/v8/x/uploads/${created.id}/abort`,
+        null,
+        requestParams("multipart_cleanup"),
+      );
   }
 }
 export function oidc() {

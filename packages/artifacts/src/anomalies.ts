@@ -1,11 +1,28 @@
 import { AuditLog, type AuditInput } from "@repo/audit";
 import { CoordinatorClient } from "@repo/coordinator";
 import { Database, schema } from "@repo/db";
-import { Alerts } from "@repo/mailer";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import type { ExchangeIdentity } from "@repo/credentials";
-import { and, eq, lt, desc, sql, inArray } from "drizzle-orm";
-import { Clock, Context, Effect, Layer } from "effect";
+import { and, eq, lt, desc, sql } from "drizzle-orm";
+import { Clock, Context, Effect, Layer, Schema } from "effect";
+
+export class AnomalyDeliveryError extends Schema.TaggedError<AnomalyDeliveryError>()(
+  "AnomalyDeliveryError",
+  {},
+) {}
+export class AnomalyAlerts extends Context.Service<
+  AnomalyAlerts,
+  {
+    readonly notify: (alert: {
+      readonly id: string;
+      readonly userId: string;
+      readonly to: string;
+      readonly kind: "anomaly";
+      readonly detail: string;
+      readonly consoleURL: string;
+    }) => Effect.Effect<void, AnomalyDeliveryError>;
+  }
+>()("@repo/artifacts/AnomalyAlerts") {}
 
 const HOUR = 3_600_000;
 const defaults = {
@@ -20,7 +37,7 @@ const makeAnomalies = Effect.gen(function* () {
   const db = yield* Database,
     audit = yield* AuditLog,
     coordinator = yield* CoordinatorClient,
-    alerts = yield* Alerts,
+    alerts = yield* AnomalyAlerts,
     origin = yield* CanonicalOrigin;
   const config = (projectId: string) =>
     db
@@ -381,17 +398,14 @@ const makeAnomalies = Effect.gen(function* () {
     for (const item of incidents) {
       const admins = yield* db.query("Anomaly.admins", (q) =>
         q
-          .select({ id: schema.user.id, email: schema.user.email })
+          .select({ id: schema.user.id, email: schema.user.email, role: schema.member.role })
           .from(schema.member)
           .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
-          .where(
-            and(
-              eq(schema.member.organizationId, item.orgId),
-              inArray(schema.member.role, ["owner", "admin"]),
-            ),
-          ),
+          .where(eq(schema.member.organizationId, item.orgId)),
       );
-      for (const admin of admins)
+      for (const admin of admins.filter((member) =>
+        member.role.split(",").some((role) => ["owner", "admin"].includes(role.trim())),
+      ))
         yield* alerts.notify({
           id: `${item.id}:${admin.id}`,
           userId: admin.id,

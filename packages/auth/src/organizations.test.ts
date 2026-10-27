@@ -313,3 +313,48 @@ test("custom org roles work without conferring instance privileges or exceeding 
     }).pipe(Effect.provide(AuthTest)),
   );
 });
+
+test("members can read their own custom permissions without ac:read or inspecting another organization", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const headers = yield* seed("custom");
+      const db = yield* Database;
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "own", name: "Own", slug: "own", createdAt: new Date(0) }),
+        q.insert(schema.member).values({
+          id: "custom-member",
+          userId: "custom",
+          organizationId: "own",
+          role: "manager",
+          createdAt: new Date(0),
+        }),
+        q.insert(schema.organizationRole).values({
+          id: "manager-role",
+          organizationId: "own",
+          role: "manager",
+          permission: JSON.stringify({ member: ["update"], project: ["create"] }),
+          createdAt: new Date(0),
+        }),
+      ]);
+      const get = (orgId: string, path = "my-permissions") =>
+        auth.handler(
+          new Request(`http://localhost/api/auth/organization/${path}?organizationId=${orgId}`, {
+            headers,
+          }),
+        );
+      const response = yield* get("own");
+      expect(response.status).toBe(200);
+      expect(yield* Effect.promise(() => response.json())).toEqual({
+        role: "manager",
+        permissions: { member: ["update"], project: ["create"] },
+      });
+      expect((yield* get("own", "list-roles")).status).toBe(403);
+      expect((yield* get("another")).status).toBe(403);
+      yield* db.query("test.remove", (q) => q.delete(schema.member));
+      expect((yield* get("own")).status).toBe(403);
+    }).pipe(Effect.provide(AuthTest)),
+  );
+});

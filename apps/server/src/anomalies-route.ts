@@ -1,4 +1,4 @@
-import { Auth, requirePasskeyProof } from "@repo/auth";
+import { Auth } from "@repo/auth";
 import { Authorization } from "@repo/authz";
 import { Database, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
@@ -6,8 +6,9 @@ import { Effect, Schema } from "effect";
 import { desc, eq } from "drizzle-orm";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
-import { Anomalies } from "./anomalies.ts";
+import { Anomalies } from "@repo/artifacts";
 import { readManagementJson } from "./projects-route.ts";
+import { requireAdminProof } from "./admin-proof.ts";
 export const anomalyPath = /^\/projects\/([^/]+)\/anomalies$/;
 const Settings = Schema.Struct({
   enabled: Schema.Boolean,
@@ -41,16 +42,7 @@ export const anomaliesRoute = Effect.gen(function* () {
   const anomalies = yield* Anomalies;
   if (request.method === "POST") {
     const input = yield* Schema.decodeUnknownEffect(Settings)(yield* readManagementJson(request));
-    const [settings] = yield* db.query("Anomaly.instancePolicy", (q) =>
-      q.select().from(schema.instanceSettings),
-    );
-    if (
-      settings?.settings.requirePasskeyForAdmins === true &&
-      ["owner", "admin"].includes(session.user.role ?? "")
-    )
-      yield* Effect.tryPromise(() =>
-        requirePasskeyProof(db.drizzle, session.session.id, session.user.id),
-      );
+    yield* requireAdminProof(project.orgId, session.user, session.session.id);
     const { resume, ...config } = input;
     yield* anomalies.configure(
       projectId,
@@ -87,6 +79,8 @@ export const anomaliesRoute = Effect.gen(function* () {
 }).pipe(
   Effect.catchTags({
     Unauthenticated: () => Response.json({ message: "Sign in required" }, { status: 401 }),
+    Forbidden: () =>
+      Response.json({ message: "Verify an administrator passkey first" }, { status: 403 }),
     AuthzError: () => Response.json({ message: "Administrator access required" }, { status: 403 }),
     SchemaError: () => Response.json({ message: "Invalid anomaly settings" }, { status: 400 }),
     BadRequest: () => Response.json({ message: "Invalid anomaly settings" }, { status: 400 }),

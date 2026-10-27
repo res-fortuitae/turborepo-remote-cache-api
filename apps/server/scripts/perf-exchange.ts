@@ -25,12 +25,12 @@ import {
 } from "@repo/oidc";
 import { ExchangeRateLimiter } from "@repo/ratelimit";
 import { CoordinatorClientTest } from "@repo/coordinator";
-import { Alerts } from "@repo/mailer";
+import { AnomalyAlerts } from "@repo/artifacts";
 import { Effect, Layer } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
-import { Anomalies, AnomaliesLive } from "../src/anomalies.ts";
+import { Anomalies, AnomaliesLive } from "@repo/artifacts";
 const api = "https://benchmark.invalid",
   issuer = GITHUB_ACTIONS_ISSUER;
 const keys = await generateKeyPair("RS256");
@@ -59,7 +59,7 @@ const anomalyLayer = AnomaliesLive.pipe(
     Layer.mergeAll(
       AuditLogD1Only,
       CoordinatorClientTest,
-      Layer.succeed(Alerts, { notify: () => Effect.void }),
+      Layer.succeed(AnomalyAlerts, { notify: () => Effect.void }),
       origin,
     ),
   ),

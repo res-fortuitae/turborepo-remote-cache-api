@@ -141,6 +141,33 @@ export const ProjectGrant = Schema.Struct({
 
 export const ProjectGrants = Schema.Array(ProjectGrant);
 
+/** Directory visible only to callers authorized to manage this project's grants. */
+export const ProjectAccessDirectory = Schema.Struct({
+  members: Schema.Array(
+    Schema.Struct({
+      id: Id,
+      userId: Id,
+      role: Schema.String,
+      createdAt: Timestamp,
+      user: Schema.Struct({
+        id: Id,
+        name: Schema.String,
+        email: Schema.String,
+        image: Schema.NullOr(Schema.String),
+      }),
+    }),
+  ),
+  groups: Schema.Array(Schema.Struct({ id: Id, name: Schema.String, createdAt: Timestamp })),
+  groupMembers: Schema.Array(Schema.Struct({ id: Id, teamId: Id, userId: Id })),
+  roles: Schema.Array(
+    Schema.Struct({
+      id: Id,
+      role: Schema.String,
+      permission: Schema.Struct({ project: Schema.Array(Schema.String) }),
+    }),
+  ),
+});
+
 const PolicyIssuer = Schema.NonEmptyString.check(
   Schema.makeFilter(
     (value: string) => {
@@ -278,6 +305,11 @@ export const AdminApi = HttpApiGroup.make("admin")
       params: ProjectParams,
       payload: DeleteProjectRequest,
       success: HttpApiSchema.Accepted,
+      error: ApiErrors,
+    }),
+    HttpApiEndpoint.get("getAccessDirectory", "/projects/:id/access-directory", {
+      params: ProjectParams,
+      success: ProjectAccessDirectory,
       error: ApiErrors,
     }),
     HttpApiEndpoint.get("listGrants", "/projects/:id/grants", {

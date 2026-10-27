@@ -17,6 +17,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const collection = /^\/orgs\/([^/]+)\/projects\/?$/;
 const item = /^\/projects\/([^/]+)\/?$/;
+const directoryPath = /^\/projects\/([^/]+)\/access-directory\/?$/;
 const storagePath = /^\/projects\/([^/]+)\/storage\/?$/;
 const grantsPath = /^\/projects\/([^/]+)\/grants(?:\/(user|team)\/([^/]+))?\/?$/;
 
@@ -57,6 +58,7 @@ export const isProjectsPath = (path: string) =>
   collection.test(path) ||
   item.test(path) ||
   storagePath.test(path) ||
+  directoryPath.test(path) ||
   grantsPath.test(path) ||
   policiesPath.test(path);
 
@@ -96,6 +98,15 @@ export const projectsApi = Effect.gen(function* () {
       try: () => decodeURIComponent(value),
       catch: () => new BadRequest({ message: "Invalid identifier" }),
     });
+
+  const directoryMatch = directoryPath.exec(url.pathname);
+  if (directoryMatch?.[1]) {
+    if (request.method !== "GET")
+      return HttpServerResponse.empty({ status: 405, headers: { allow: "GET" } });
+    return yield* HttpServerResponse.json(
+      yield* projects.accessDirectory(actor, yield* decodeId(directoryMatch[1])),
+    );
+  }
 
   const storageMatch = storagePath.exec(url.pathname);
 
