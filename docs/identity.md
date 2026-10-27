@@ -127,3 +127,21 @@ set `requirePasskeyForAdmins` to false in the singleton D1 instance policy row,
 retaining its other settings, re-enroll keys after a new GitHub sign-in, and
 re-enable the requirement. Preserve the audit history and record the recovery
 reason. There is no unauthenticated recovery endpoint.
+
+## Instance console
+
+The dashboard's Administration page exposes organization health and storage,
+user deactivation/ban/session controls, policy editing and passkey step-up.
+Auditors can inspect the organization directory and global audit/analytics;
+owner/admin roles manage settings and users. `/device` reviews and approves or
+denies CLI authorization codes before the session-gated dashboard.
+
+`GET /api/auth/instance/orgs` returns at most 100 organizations and a `nextCursor`;
+pass it as `cursor` to continue. Health fields include archive state, project
+count, reconciled storage and last cache activity.
+`GET /api/auth/instance/orgs/elevations` lists only the current live session's
+unexpired grants. Elevating again replaces that session's previous grant for
+the organization. `POST /api/auth/instance/orgs/leave` with `{ orgId }` ends those
+grants with an audit event; relinquishing access does not require new step-up.
+Elevation does not create membership, and native Better Auth organization
+administration APIs still require their documented membership permissions.

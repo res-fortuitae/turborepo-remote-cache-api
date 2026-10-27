@@ -71,7 +71,7 @@ export const revokeKey = (keyId: string) =>
 export const credentialPolicy = (org: string, signal?: AbortSignal) =>
   api<{
     readonly policy: {
-      readonly apiKeys: "allowed" | "disallowed";
+      readonly apiKeys: "allowed" | "warn" | "disallowed";
       readonly maxApiKeyLifetimeDays: number;
       readonly maxTokenTtlSeconds: number;
       readonly requireBoundTokens: boolean;

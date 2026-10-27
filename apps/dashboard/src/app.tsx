@@ -4,9 +4,11 @@ import { Compass } from "lucide-react";
 import { Button } from "@repo/ui/components/button";
 import { BrandMark } from "./components/brand.tsx";
 import { EmptyState, ErrorState } from "./components/common.tsx";
-import { AppShell } from "./components/shell.tsx";
+import { AppShell, isInstanceRole } from "./components/shell.tsx";
 import { authClient, type Session } from "./lib/auth-client.ts";
 import { OrgProvider, orgPath } from "./lib/org.tsx";
+import { elevations } from "./lib/instance.ts";
+import { useResource } from "./lib/use-resource.ts";
 import { href, matchRoute, navigate, splitLocation, useLocation } from "./lib/router.tsx";
 import { AcceptInvitationPage } from "./pages/AcceptInvitationPage.tsx";
 import { DevicePage } from "./pages/DevicePage.tsx";
@@ -57,6 +59,12 @@ function OrgArea({
   readonly rest: string;
 }) {
   const orgs = authClient.useListOrganizations();
+  const elevated = useResource(
+    isInstanceRole(session.user.role) && session.user.role !== "auditor"
+      ? `org-elevation:${slug}`
+      : null,
+    elevations,
+  );
 
   if (orgs.isPending && !orgs.data) return <Splash />;
 
@@ -66,7 +74,18 @@ function OrgArea({
         <ErrorState error={orgs.error} onRetry={() => void orgs.refetch()} />
       </AppShell>
     );
-  const org = orgs.data?.find((item) => item.slug === slug);
+  const org =
+    orgs.data?.find((item) => item.slug === slug) ??
+    elevated.data?.elevations.find(
+      (entry) => entry.organization.slug === slug && entry.expiresAt > Date.now(),
+    )?.organization;
+  if (
+    !org &&
+    elevated.status === "loading" &&
+    isInstanceRole(session.user.role) &&
+    session.user.role !== "auditor"
+  )
+    return <Splash />;
 
   if (!org) return <NotFound session={session} />;
 
@@ -75,7 +94,15 @@ function OrgArea({
 
     if (params)
       return (
-        <OrgProvider key={org.id} org={{ id: org.id, slug: org.slug, name: org.name }}>
+        <OrgProvider
+          key={org.id}
+          org={{
+            id: org.id,
+            slug: org.slug,
+            name: org.name,
+            elevated: !orgs.data?.some((memberOrg) => memberOrg.id === org.id),
+          }}
+        >
           <AppShell session={session} title={route.title}>
             {route.render(params)}
           </AppShell>
@@ -84,7 +111,15 @@ function OrgArea({
   }
 
   return (
-    <OrgProvider key={org.id} org={{ id: org.id, slug: org.slug, name: org.name }}>
+    <OrgProvider
+      key={org.id}
+      org={{
+        id: org.id,
+        slug: org.slug,
+        name: org.name,
+        elevated: !orgs.data?.some((memberOrg) => memberOrg.id === org.id),
+      }}
+    >
       <NotFound session={session} />
     </OrgProvider>
   );
@@ -149,6 +184,7 @@ function SignedIn({
   for (const route of instanceRoutes) {
     const params = matchRoute(route.pattern, path);
 
+    if (params && !isInstanceRole(session.user.role)) return <NotFound session={session} />;
     if (params)
       return (
         <AppShell session={session} title={route.title}>

@@ -18,7 +18,7 @@ import {
   createAuthMiddleware,
   getAuthoritativeSessionFromCtx,
 } from "better-auth/api";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { z } from "zod";
@@ -79,7 +79,11 @@ export const instancePlugin = (
     )
       throw new APIError("FORBIDDEN");
 
-    if (ctx.method === "POST" && (await readInstancePolicy(db, config)).requirePasskeyForAdmins)
+    if (
+      ctx.method === "POST" &&
+      ctx.path !== "/instance/orgs/leave" &&
+      (await readInstancePolicy(db, config)).requirePasskeyForAdmins
+    )
       await requirePasskeyProof(db, live.session.id, live.user.id);
 
     return { session: live };
@@ -182,9 +186,106 @@ export const instancePlugin = (
       ),
       listInstanceOrganizations: createAuthEndpoint(
         "/instance/orgs",
+        { method: "GET", use: [guard], query: z.object({ cursor: z.string().optional() }) },
+        async (ctx) => {
+          const page = await db
+            .select()
+            .from(schema.organization)
+            .where(ctx.query.cursor ? gt(schema.organization.id, ctx.query.cursor) : undefined)
+            .orderBy(asc(schema.organization.id))
+            .limit(101);
+          const organizations = page.slice(0, 100);
+          const ids = organizations.map((org) => org.id);
+          const [lifecycle, projects, usage] = ids.length
+            ? await Promise.all([
+                db
+                  .select()
+                  .from(schema.orgLifecycle)
+                  .where(inArray(schema.orgLifecycle.orgId, ids)),
+                db
+                  .select({
+                    orgId: schema.project.orgId,
+                    projects: count(),
+                    lastSeenAt: sql<number | null>`max(${schema.project.lastSeenAt})`,
+                  })
+                  .from(schema.project)
+                  .where(inArray(schema.project.orgId, ids))
+                  .groupBy(schema.project.orgId),
+                db
+                  .select({
+                    orgId: schema.projectUsage.orgId,
+                    bytes: sql<number>`sum(${schema.projectUsage.bytes})`,
+                  })
+                  .from(schema.projectUsage)
+                  .where(inArray(schema.projectUsage.orgId, ids))
+                  .groupBy(schema.projectUsage.orgId),
+              ])
+            : [[], [], []];
+          return ctx.json({
+            organizations: organizations.map((org) => ({
+              ...org,
+              archivedAt: lifecycle.find((row) => row.orgId === org.id)?.archivedAt ?? null,
+              projects: projects.find((row) => row.orgId === org.id)?.projects ?? 0,
+              lastSeenAt: projects.find((row) => row.orgId === org.id)?.lastSeenAt ?? null,
+              storageBytes: usage.find((row) => row.orgId === org.id)?.bytes ?? 0,
+            })),
+            nextCursor: page.length > 100 ? (organizations.at(-1)?.id ?? null) : null,
+          });
+        },
+      ),
+      listElevations: createAuthEndpoint(
+        "/instance/orgs/elevations",
         { method: "GET", use: [guard] },
         async (ctx) =>
-          ctx.json({ organizations: await db.select().from(schema.organization).limit(100) }),
+          ctx.json({
+            elevations: await db
+              .select({
+                id: schema.orgElevation.id,
+                orgId: schema.orgElevation.orgId,
+                reason: schema.orgElevation.reason,
+                expiresAt: schema.orgElevation.expiresAt,
+                organization: {
+                  id: schema.organization.id,
+                  name: schema.organization.name,
+                  slug: schema.organization.slug,
+                },
+              })
+              .from(schema.orgElevation)
+              .innerJoin(schema.organization, eq(schema.organization.id, schema.orgElevation.orgId))
+              .where(
+                and(
+                  eq(schema.orgElevation.userId, ctx.context.session.user.id),
+                  eq(schema.orgElevation.sessionId, ctx.context.session.session.id),
+                  gt(schema.orgElevation.expiresAt, Date.now()),
+                ),
+              )
+              .limit(100),
+          }),
+      ),
+      leaveElevation: createAuthEndpoint(
+        "/instance/orgs/leave",
+        { method: "POST", use: [guard], body: z.object({ orgId: z.string().min(1) }) },
+        async (ctx) => {
+          await commit(
+            {
+              ...event(ctx.context.session.user, "instance.org.leave", ctx.body.orgId),
+              scope: "org",
+              orgId: ctx.body.orgId,
+            },
+            (q) => [
+              q
+                .delete(schema.orgElevation)
+                .where(
+                  and(
+                    eq(schema.orgElevation.userId, ctx.context.session.user.id),
+                    eq(schema.orgElevation.sessionId, ctx.context.session.session.id),
+                    eq(schema.orgElevation.orgId, ctx.body.orgId),
+                  ),
+                ),
+            ],
+          );
+          return ctx.json({ success: true });
+        },
       ),
       createInstanceOrganization: createAuthEndpoint(
         "/instance/orgs/create",
@@ -265,7 +366,18 @@ export const instancePlugin = (
             metadata: { expiresAt: elevation.expiresAt },
           };
 
-          await commit(input, (db) => [db.insert(schema.orgElevation).values(elevation)]);
+          await commit(input, (db) => [
+            db
+              .delete(schema.orgElevation)
+              .where(
+                and(
+                  eq(schema.orgElevation.userId, elevation.userId),
+                  eq(schema.orgElevation.sessionId, elevation.sessionId),
+                  eq(schema.orgElevation.orgId, elevation.orgId),
+                ),
+              ),
+            db.insert(schema.orgElevation).values(elevation),
+          ]);
 
           return ctx.json({ elevation });
         },

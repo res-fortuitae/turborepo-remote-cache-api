@@ -26,6 +26,7 @@
       "name": "@repo/dashboard",
       "version": "0.0.0",
       "dependencies": {
+        "@better-auth/passkey": "1.7.12",
         "@fontsource-variable/inter": "^5.3.0",
         "@fontsource-variable/jetbrains-mono": "^5.3.0",
         "@repo/shared": "workspace:*",

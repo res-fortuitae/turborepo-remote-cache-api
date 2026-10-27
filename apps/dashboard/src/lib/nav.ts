@@ -33,6 +33,13 @@ export const navItems: ReadonlyArray<NavItem> = [
   { label: "Credentials", icon: KeyRound, path: "/credentials", section: "Security" },
   { label: "Purge artifacts", icon: Trash2, path: "/purge", section: "Security" },
   {
+    label: "Administration",
+    icon: ShieldCheck,
+    path: "/instance",
+    section: "Instance",
+    scope: "instance",
+  },
+  {
     label: "Capabilities",
     icon: Settings2,
     path: "/capabilities",

@@ -6,6 +6,7 @@ export interface Org {
   readonly id: string;
   readonly slug: string;
   readonly name: string;
+  readonly elevated?: boolean;
 }
 
 const OrgContext = createContext<Org | undefined>(undefined);
@@ -35,9 +36,9 @@ export function OrgProvider({
   const active = authClient.useActiveOrganization();
 
   useEffect(() => {
-    if (!active.isPending && active.data?.id !== org.id)
+    if (!org.elevated && !active.isPending && active.data?.id !== org.id)
       void authClient.organization.setActive({ organizationId: org.id });
-  }, [active.isPending, active.data?.id, org.id]);
+  }, [active.isPending, active.data?.id, org.id, org.elevated]);
 
   return <OrgContext.Provider value={org}>{children}</OrgContext.Provider>;
 }

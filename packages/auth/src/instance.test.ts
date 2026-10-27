@@ -14,6 +14,29 @@ const decodeOrgResponse = Schema.decodeUnknownSync(
   Schema.Struct({ organization: Schema.Struct({ id: Schema.String }) }),
 );
 
+const decodeOrganizations = Schema.decodeUnknownSync(
+  Schema.Struct({
+    organizations: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        projects: Schema.Number,
+        storageBytes: Schema.Number,
+        archivedAt: Schema.NullOr(Schema.Number),
+      }),
+    ),
+  }),
+);
+const decodeElevations = Schema.decodeUnknownSync(
+  Schema.Struct({
+    elevations: Schema.Array(
+      Schema.Struct({
+        reason: Schema.String,
+        organization: Schema.Struct({ slug: Schema.String }),
+      }),
+    ),
+  }),
+);
+
 const cookie = async (token: string) => {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -204,5 +227,70 @@ test("owner impersonation requires a reason and expires within five minutes", ()
       expect((sessions[0]?.expiresAt.getTime() ?? Infinity) - Date.now()).toBeLessThanOrEqual(
         300000,
       );
+    }),
+  ));
+
+test("instance org health and elevations are scoped to the live session and leaving is audited", () =>
+  scenario("admin", (auth, db, headers) =>
+    Effect.gen(function* () {
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "external", name: "External", slug: "external", createdAt: new Date() }),
+        q
+          .insert(schema.project)
+          .values({ id: "p", orgId: "external", slug: "p", name: "P", createdAt: 0 }),
+        q.insert(schema.projectUsage).values({ orgId: "external", projectId: "p", bytes: 42 }),
+      ]);
+      const listed = yield* auth.handler(request("/instance/orgs", headers));
+      expect(listed.status).toBe(200);
+      const body = yield* Effect.promise(async () => decodeOrganizations(await listed.json()));
+      expect(body.organizations[0]).toMatchObject({
+        id: "external",
+        projects: 1,
+        storageBytes: 42,
+        archivedAt: null,
+      });
+      expect(
+        (yield* auth.handler(
+          request("/instance/orgs/elevate", headers, {
+            orgId: "external",
+            reason: "Support",
+            ttlSeconds: 60,
+          }),
+        )).status,
+      ).toBe(200);
+      // Renewing replaces the same session's prior elevation rather than leaving hidden grants.
+      expect(
+        (yield* auth.handler(
+          request("/instance/orgs/elevate", headers, {
+            orgId: "external",
+            reason: "Renewed",
+            ttlSeconds: 120,
+          }),
+        )).status,
+      ).toBe(200);
+      const active = yield* auth.handler(request("/instance/orgs/elevations", headers));
+      const activeBody = yield* Effect.promise(async () => decodeElevations(await active.json()));
+      expect(activeBody.elevations).toHaveLength(1);
+      expect(activeBody.elevations[0]).toMatchObject({
+        reason: "Renewed",
+        organization: { slug: "external" },
+      });
+      expect(
+        (yield* auth.handler(request("/instance/orgs/leave", headers, { orgId: "external" })))
+          .status,
+      ).toBe(200);
+      const after = yield* auth.handler(request("/instance/orgs/elevations", headers));
+      expect(
+        (yield* Effect.promise(async () => decodeElevations(await after.json()))).elevations,
+      ).toHaveLength(0);
+      const audit = yield* db.query("test.leaveAudit", (q) =>
+        q.select().from(schema.auditEvent).where(eq(schema.auditEvent.orgId, "external")),
+      );
+      expect(audit.filter((row) => row.payload.action === "instance.org.leave")).toHaveLength(1);
+      expect(
+        yield* db.query("test.noMembership", (q) => q.select().from(schema.member)),
+      ).toHaveLength(0);
     }),
   ));
