@@ -36,6 +36,9 @@ export const dependencies: DependencyPolicy = {
     "@repo/deploy-config",
   ],
   "@repo/credentials": [
+    "@repo/authz",
+    "@repo/audit",
+    "@repo/ratelimit",
     "@repo/api-spec",
     "@repo/deploy-config",
     "@repo/db",

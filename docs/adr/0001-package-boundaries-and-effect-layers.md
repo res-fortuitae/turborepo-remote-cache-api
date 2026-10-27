@@ -61,7 +61,7 @@ packages may use external libraries explicitly declared in their manifests.
 | `@repo/auth`                   | Auth, identity and role definitions                                              | api-spec, deploy-config, db, mailer, audit, ratelimit                       | STV-432 and sub-issues                 |
 | `@repo/authz`                  | Authorization: single policy decision point                                      | api-spec, db, auth                                                          | STV-439–441                            |
 | `@repo/projects`               | Project management, effective limits and audited mutations                       | api-spec, db, auth, authz, audit, deploy-config, oidc                       | STV-438, STV-487                       |
-| `@repo/credentials`            | CacheTokenSigner/Verifier, CredentialResolver, DPoP, KeyStore                    | api-spec, deploy-config, db, auth, coordinator                              | STV-442, STV-443, STV-445, STV-486     |
+| `@repo/credentials`            | CacheTokenSigner/Verifier, CredentialResolver, DPoP, KeyStore                    | api-spec, deploy-config, db, auth, authz, audit, ratelimit, coordinator     | STV-442, STV-443, STV-445, STV-486     |
 | `@repo/oidc`                   | OidcVerifier, issuer registry, TrustPolicyMatcher, JwksCache                     | api-spec, deploy-config, db, credentials, audit, ratelimit                  | STV-447–449, STV-451, STV-487, STV-491 |
 | `@repo/artifacts`              | ArtifactStore, EdgeCache, quotas, generation; R2Bucket and ExecutionContext tags | api-spec, deploy-config, db, authz, credentials, coordinator                | STV-476, STV-492, STV-504, STV-505     |
 | `@repo/analytics`              | AnalyticsEmitter/Query, rollups; stream and BasinSqlClient tags                  | api-spec, db                                                                | STV-462–465                            |
@@ -164,3 +164,5 @@ only on api-spec. No new domain package may import those app implementations.
 Keep runtime behavior and infrastructure identity stable during each extraction.
 
 STV-487 adds the acyclic projects → oidc edge so every audited policy save and generated default runs the same pure guardrails as the policy tester. OIDC has no authorization dependency. STV-449 adds explicit oidc → credentials, audit and ratelimit edges for the exchange use case; none of those packages depends on oidc or projects.
+
+Developer token issuance (STV-455) belongs to credentials. It depends on authz for the single project policy decision, audit for issuance records, and ratelimit for request bounds. These edges remain acyclic; neither auth nor authz depends on credentials.

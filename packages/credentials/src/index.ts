@@ -54,3 +54,4 @@ export type { ResolvedCredential } from "./resolver.ts";
 
 export { DpopVerifier, DpopVerifierLive, DpopInvalid } from "./dpop.ts";
 export type { DpopVerification } from "./dpop.ts";
+export { DeveloperTokens, DeveloperTokensLive, DeveloperTokenError } from "./developer-token.ts";

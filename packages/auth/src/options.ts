@@ -3,6 +3,7 @@ import { schema, type DatabaseDrizzle } from "@repo/db";
 import type { AuthSettings } from "@repo/deploy-config";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { bearer } from "better-auth/plugins/bearer";
 import { magicLink } from "better-auth/plugins/magic-link";
 import * as Redacted from "effect/Redacted";
 import type { AuditLogService } from "@repo/audit";
@@ -156,6 +157,7 @@ export const makeBetterAuth = ({
         keyExpiration: { defaultExpiresIn: 30 * 86400, minExpiresIn: 1 / 86400, maxExpiresIn: 90 },
         enableSessionForAPIKeys: false,
       }),
+      bearer(),
       ...devicePlugins(db, audit),
       instanceAdmin(),
       ...passkeyPlugins(db, config, audit),
