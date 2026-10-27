@@ -1,3 +1,6 @@
+import { auditPath, auditRoute } from "./audit-route.ts";
+import { basinAuditHistory } from "./audit-history.ts";
+import { AuditReaderLive, AuditHistory, AuditHistoryDisabled, AuditQueryError } from "@repo/audit";
 import { healthRoute } from "./health-route.ts";
 import { selftestRoute } from "./selftest-route.ts";
 import { developerTokenRoute } from "./developer-token-route.ts";
@@ -124,6 +127,7 @@ import {
   AuditBasin,
   AuditCheckpointBucket,
   BasinSqlToken,
+  AuditCatalogBucket,
   BetterAuthSecret,
   CacheNamespace,
   DashboardAssets,
@@ -162,6 +166,8 @@ import * as EdgeCache from "./edge-cache.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 
 const AuthEnvironment = Schema.Struct({
+  AUDIT_SQL_ACCOUNT: Schema.optional(Schema.String),
+  AUDIT_SQL_BUCKET: Schema.optional(Schema.String),
   MAX_ARTIFACT_BYTES: Schema.optional(Schema.NumberFromString),
   MAX_DIRECT_UPLOAD_BYTES: Schema.optional(Schema.NumberFromString),
   RATE_LIMIT_STAGE: Schema.optional(Schema.String),
@@ -271,6 +277,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     if (config.githubApp !== undefined) env.GITHUB_CLIENT_ID = config.githubApp.clientId;
 
+    const auditQueryBucket =
+      !dev && capabilities.auditHistory.enabled ? yield* AuditCatalogBucket : undefined;
+
     return {
       main: import.meta.url,
       assets: DashboardAssets,
@@ -281,7 +290,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
         config.limits.cpuMs === undefined || capabilities.workersPlan !== "paid"
           ? undefined
           : { cpuMs: config.limits.cpuMs },
-      env,
+      env: {
+        ...env,
+        AUDIT_SQL_ACCOUNT: auditQueryBucket?.accountId,
+        AUDIT_SQL_BUCKET: auditQueryBucket?.bucketName,
+      },
     };
   }),
   Effect.gen(function* () {
@@ -328,7 +341,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const basinSecret = yield* BasinSqlToken;
 
-    if (Option.isSome(basinSecret)) yield* Cloudflare.SecretsStore.ReadSecret(basinSecret.value);
+    const auditSqlSecret = Option.isSome(basinSecret)
+      ? Option.some(yield* Cloudflare.SecretsStore.ReadSecret(basinSecret.value))
+      : Option.none();
 
     // Bound to the Worker as a secret at deploy time.
     const token = yield* Config.Redacted("TURBO_TOKEN");
@@ -1058,6 +1073,41 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    const historyLayer = !capabilities.auditHistory.enabled
+      ? AuditHistoryDisabled
+      : Option.isSome(auditSqlSecret) &&
+          authEnvironment.AUDIT_SQL_ACCOUNT &&
+          authEnvironment.AUDIT_SQL_BUCKET
+        ? Layer.unwrap(
+            Effect.map(auditSqlSecret.value, (secret) =>
+              basinAuditHistory(
+                authEnvironment.AUDIT_SQL_ACCOUNT!,
+                authEnvironment.AUDIT_SQL_BUCKET!,
+                secret,
+              ),
+            ),
+          )
+        : Layer.succeed(AuditHistory, {
+            read: () =>
+              Effect.fail(new AuditQueryError({ cause: "Audit history is not configured" })),
+          });
+    const audit = auditRoute.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          authLayer,
+          authorizationLayer,
+          auditLayer,
+          AuditReaderLive.pipe(Layer.provide(historyLayer)),
+        ).pipe(Layer.provide(databaseLayer)),
+      ),
+      Effect.catch(() =>
+        HttpServerResponse.json(
+          { message: "Audit unavailable" },
+          { status: 503, headers: { "cache-control": "no-store" } },
+        ),
+      ),
+    );
+
     const report = capabilitiesRoute(capabilities, token).pipe(
       Effect.provide(authLayer),
       Effect.catch(() =>
@@ -1101,6 +1151,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (pathname === "/tokens/dev") return yield* developerTokens;
 
         if (pathname === "/api/instance/capabilities") return yield* report;
+
+        if (auditPath.test(pathname)) return yield* audit;
 
         if (purgePath.test(pathname)) return yield* purge;
 

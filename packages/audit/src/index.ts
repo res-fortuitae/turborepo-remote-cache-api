@@ -44,3 +44,14 @@ export { MAX_DRAIN_BATCHES, dailyAuditJob, drainOutboxJob } from "./jobs.ts";
 export { AuditRetention } from "./audit-log.ts";
 
 export { AuditLogD1Only } from "./audit-log.ts";
+
+export {
+  AuditReader,
+  AuditReaderLive,
+  AuditHistory,
+  AuditHistoryDisabled,
+  AuditQueryError,
+  auditHistorySql,
+  validateAuditSelection,
+} from "./query.ts";
+export type { AuditSelection } from "./query.ts";

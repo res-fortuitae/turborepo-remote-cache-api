@@ -146,7 +146,7 @@ export const auditBasinEnabled = (settings: {
 }) => !settings.dev && settings.jurisdiction === undefined && settings.catalogToken;
 
 /** Iceberg catalog storage for audit only, so its access and retention stay separate from analytics. */
-const AuditCatalogBucket = Cloudflare.R2.Bucket("AuditCatalog", {});
+export const AuditCatalogBucket = Cloudflare.R2.Bucket("AuditCatalog", {});
 
 const planAuditBasin = Effect.gen(function* () {
   const { dev } = yield* AlchemyContext;

@@ -130,6 +130,8 @@ export const auditEvent = sqliteTable(
   },
   (t) => [
     index("audit_event_outbox").on(t.exportedAt, t.ts, t.id),
+    index("audit_event_org_time").on(t.orgId, t.ts, t.id),
+    index("audit_event_time").on(t.ts, t.id),
     uniqueIndex("audit_event_chain").on(t.chain, t.sequence),
   ],
 );

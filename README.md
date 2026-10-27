@@ -138,6 +138,9 @@ See [OIDC acceptance and runner probes](docs/oidc-e2e.md) for the four-case real
 Turbo suite, hosted runner workflow, optional existing-preview tests and CI dogfood
 configuration.
 
+Audit coverage and reconciliation are documented in [audit events](docs/audit-events.md).
+See [audit query and export](docs/audit-query.md) for scoped history and streaming downloads.
+
 ## Upstream releases
 
 Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`) with a matching
