@@ -23,6 +23,6 @@ impersonation. Decisions and their audit events commit in one D1 batch; a failed
 audit write cannot authorize a device. Browser approval retains Better Auth's
 origin and CSRF checks. IP and endpoint limits use the Rate Limiting binding.
 
-The initial approval view is `/?view=device`; it deliberately asks for code
-confirmation and an explicit decision. The broader instance console is tracked
-separately in STV-473.
+The approval view is `/device` (`/?view=device` still works for older clients);
+it deliberately asks for code confirmation and an explicit decision. The broader
+instance console is tracked separately in STV-473.

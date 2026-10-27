@@ -102,7 +102,19 @@ test("HTTP development responses do not advertise HSTS", async () => {
 test("reserved API paths bypass dashboard assets, including SPA navigation requests", () => {
   const rules = DashboardAssets.runWorkerFirst;
 
-  for (const path of ["/v8", "/v8/*", "/api", "/api/*", "/oidc", "/oidc/*", "/.well-known/*"]) {
+  for (const path of [
+    "/v8",
+    "/v8/*",
+    "/api",
+    "/api/*",
+    "/oidc",
+    "/oidc/*",
+    "/.well-known/*",
+    // Management APIs the dashboard calls; the SPA fallback would otherwise answer them.
+    "/orgs/*",
+    "/projects/*",
+    "/instance/*",
+  ]) {
     expect(rules).toContain(path);
   }
 

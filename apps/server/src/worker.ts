@@ -329,12 +329,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
         config.limits.cpuMs === undefined || capabilities.workersPlan !== "paid"
           ? undefined
           : { cpuMs: config.limits.cpuMs },
+      // workerd rejects bindings without a value, so local dev omits absent buckets.
       env: {
         ...env,
-        ANALYTICS_SQL_ACCOUNT: analyticsQueryBucket?.accountId,
-        ANALYTICS_SQL_BUCKET: analyticsQueryBucket?.bucketName,
-        AUDIT_SQL_ACCOUNT: auditQueryBucket?.accountId,
-        AUDIT_SQL_BUCKET: auditQueryBucket?.bucketName,
+        ...(analyticsQueryBucket && {
+          ANALYTICS_SQL_ACCOUNT: analyticsQueryBucket.accountId,
+          ANALYTICS_SQL_BUCKET: analyticsQueryBucket.bucketName,
+        }),
+        ...(auditQueryBucket && {
+          AUDIT_SQL_ACCOUNT: auditQueryBucket.accountId,
+          AUDIT_SQL_BUCKET: auditQueryBucket.bucketName,
+        }),
       },
     };
   }),
