@@ -67,6 +67,30 @@ describe.skipIf(!enabled)(`stack (${local ? "local" : "deployed"})`, () => {
     expect(await response.text()).toContain("Remote Cache dashboard");
   });
 
+  test("serves a CSP-compatible dashboard bundle with restricted script and network sources", async () => {
+    const response = await target().fetch("/");
+    const csp = response.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("script-src 'self';");
+    expect(csp).toContain("script-src-attr 'none'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("font-src 'self' data:");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).not.toContain("unsafe-eval");
+    const html = await response.text();
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const script of scripts) {
+      expect(script[2]?.trim()).toBe("");
+      const source = /src="([^"]+)"/.exec(script[1] ?? "")?.[1];
+      if (!source) throw new Error("Dashboard script must use a same-origin source");
+      const url = new URL(source, response.url);
+      expect(url.origin).toBe(new URL(response.url).origin);
+      const asset = await target().fetch(url.pathname);
+      expect(asset.status).toBe(200);
+      expect(asset.headers.get("content-type")).toContain("javascript");
+    }
+  });
+
   test("builds authentication with the Secrets Store binding", async () => {
     const response = await target().fetch("/api/auth/ok");
     expect(response.status).toBe(200);

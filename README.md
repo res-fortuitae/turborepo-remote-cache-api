@@ -251,6 +251,11 @@ and leave artifacts to expire through bucket retention.
 [Performance probes and release targets](perf/README.md) cover local JWT/exchange/proxy
 measurements, the 200-job k6 fleet workload and staging release gates.
 
+[Threat model and security review](docs/threat-model.md) records the STRIDE controls,
+security fixes, residual risks and pre-launch validation gates.
+[The M8/M9 validation record](docs/m8-m9-validation.md) lists the stacked PRs,
+local checks and outstanding launch validation.
+
 ## Instance capabilities
 
 Open **Capabilities** in the console (`/#capabilities`), or query

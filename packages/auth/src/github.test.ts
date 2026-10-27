@@ -1,3 +1,4 @@
+import { parseEnvelope, symmetricDecrypt } from "better-auth/crypto";
 import { RateLimiterTest } from "@repo/ratelimit";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun drives the public Effect service at the test boundary. */
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
@@ -18,6 +19,7 @@ const realFetch = globalThis.fetch;
 let github: Emulator;
 let restoreFetch = () => {};
 const calls: string[] = [];
+const issuedTokens: string[] = [];
 
 beforeAll(async () => {
   github = await createEmulator({
@@ -59,7 +61,19 @@ beforeAll(async () => {
           ? new Request(target, { method: input.method, headers: input.headers, body: input.body })
           : target;
 
-      return realFetch(forwarded, init);
+      return realFetch(forwarded, init).then(async (response) => {
+        if (url.pathname === "/login/oauth/access_token") {
+          const value = await response.clone().json();
+          if (
+            typeof value === "object" &&
+            value !== null &&
+            "access_token" in value &&
+            typeof value.access_token === "string"
+          )
+            issuedTokens.push(value.access_token);
+        }
+        return response;
+      });
     },
     { preconnect: realFetch.preconnect },
   );
@@ -71,6 +85,7 @@ beforeAll(async () => {
 afterEach(() => {
   github.reset();
   calls.length = 0;
+  issuedTokens.length = 0;
 });
 
 afterAll(async () => {
@@ -200,6 +215,23 @@ test("emulate.dev OAuth creates a secure session and persists the GitHub account
         githubLogin: "octocat",
         password: null,
       });
+      const stored = accounts[0]?.accessToken;
+      expect(typeof stored).toBe("string");
+      if (!stored) throw new Error("Missing encrypted provider token");
+      expect(stored).not.toBe(issuedTokens[0]);
+      expect(
+        yield* Effect.promise(() =>
+          symmetricDecrypt({
+            key: "emulate-auth-secret-0123456789abcdef0123456789",
+            data: parseEnvelope(stored)?.ciphertext ?? stored,
+          }),
+        ),
+      ).toBe(issuedTokens[0]!);
+      const audit = yield* database.query("test.auditTokens", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      expect(JSON.stringify(audit)).not.toContain(issuedTokens[0]!);
+      expect(JSON.stringify(audit)).not.toContain(stored);
       const auth = yield* Auth;
 
       const session = yield* auth.requireFreshSession(
@@ -220,7 +252,7 @@ test("returning GitHub sign-in refreshes stale login metadata without duplicatin
       yield* database.query("test.staleLogin", (db) =>
         db
           .update(schema.account)
-          .set({ githubLogin: "old-login" })
+          .set({ githubLogin: "old-login", accessToken: "gho_legacy-plaintext" })
           .where(eq(schema.account.providerId, "github")),
       );
       const response = yield* finish("octocat");
@@ -232,6 +264,8 @@ test("returning GitHub sign-in refreshes stale login metadata without duplicatin
 
       expect(accounts).toHaveLength(1);
       expect(accounts[0]?.githubLogin).toBe("octocat");
+      expect(accounts[0]?.accessToken).not.toBe("gho_legacy-plaintext");
+      expect(accounts[0]?.accessToken).not.toBe(issuedTokens.at(-1));
     }),
   );
 });

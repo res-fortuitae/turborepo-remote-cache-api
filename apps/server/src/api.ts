@@ -665,5 +665,8 @@ export const artifactApi = <R>({
           }),
         ),
     }),
+    // Only the tenant/generation-keyed Workers cache may retain artifact bytes.
+    // Public URLs do not encode credential scope, so downstream caches must not reuse them.
+    Effect.map((response) => HttpServerResponse.setHeader(response, "cache-control", "no-store")),
   );
 };

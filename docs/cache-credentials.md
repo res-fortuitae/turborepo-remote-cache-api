@@ -105,3 +105,12 @@ credential revocation epochs are unaffected. The project-deletion maintenance
 adapter also bumps generation when revoking the deleted project's credentials.
 Legacy migration namespaces retain generation zero; incident purge flows must use
 scoped credentials. Residency-disabled caching remains disabled.
+
+## Downstream HTTP caches
+
+Artifact API responses, including private edge-cache hits, use `Cache-Control:
+no-store`. The HTTP URL does not identify the credential-selected tenant, so a
+browser or intermediary must not reuse it across credentials. Only the internal
+Workers cache stores a cacheable copy under the tenant/project/generation key,
+after authorization. Older public responses can remain downstream for their
+previous one-hour TTL; invalidate them or wait out that window on upgrade.

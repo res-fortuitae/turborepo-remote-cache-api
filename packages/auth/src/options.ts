@@ -77,6 +77,7 @@ export const makeBetterAuth = ({
       defaultCookieAttributes: { httpOnly: true, sameSite: "lax", path: "/" },
     },
     account: {
+      encryptOAuthTokens: true,
       additionalFields: {
         // Stable GitHub id is already accountId; login is mutable profile metadata.
         githubLogin: { type: "string", required: false, input: false },

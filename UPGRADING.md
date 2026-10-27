@@ -6,6 +6,22 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Security hardening (STV-474)
+
+- Artifact API responses now use `Cache-Control: no-store`; scoped Workers edge
+  entries continue to cache privately. Invalidate any downstream caches or wait
+  out the prior one-hour public TTL before serving sensitive clients.
+- Worker and dashboard asset responses now include CSP. Scripts/network requests
+  are same-origin; GitHub avatars and bundled data fonts remain allowed. Inline
+  component styles are permitted; inline scripts and eval are blocked.
+- New GitHub OAuth access/refresh token writes are encrypted using the Better Auth
+  secret. This does not rewrite old rows or backups. Before launch, revoke old
+  provider tokens and reauthenticate users, or complete a controlled encryption
+  migration. Keep the root secret available for token and artifact-key decryption.
+- Patched transitive dependency overrides require the committed lockfile v3 and
+  Bun 1.4.3 or newer. Run frozen install, audit, check, tests and local stack tests.
+  See [the security review](docs/threat-model.md) for scope and launch gates.
+
 ### Quota admission and eviction (STV-476)
 
 - Apply the additive quota configuration, daily usage, upload reservation and
