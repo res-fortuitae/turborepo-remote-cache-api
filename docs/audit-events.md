@@ -35,3 +35,9 @@ request id and subsequent events. A confirmation failure can return an error aft
 the auth write committed; clients must inspect state before retrying. Failed writes
 can remain pending until the next reconciler run. Resolution receipts are retained
 for idempotency. No deployment is required for the unit tests.
+
+First-user ownership bootstrap is also an application-owned batch. Its
+`instance.owner.bootstrap.checked` event records the conditional ownership check,
+including when an owner already exists. An audit insert failure prevents the role
+change. Known failed update guards resolve as aborted; a successful single-row
+adapter result confirms the write without a second state read.

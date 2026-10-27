@@ -132,7 +132,16 @@ export const auditedAdapter = (
     for (const row of rows) intents.push(await begin(model, operation, row, values));
     // On failure leave the intents for state-based reconciliation, including partially applied bulk writes.
     const result = await run();
-    for (const intent of intents) await finish(intent, await resolve(intent));
+    for (const intent of intents) {
+      // A known failed guard must not be inferred successful from another writer's resulting state.
+      const committed =
+        operation === "update" && (result === null || result === 0)
+          ? false
+          : operation === "create" || (operation === "update" && typeof result === "object")
+            ? true
+            : await resolve(intent);
+      await finish(intent, committed);
+    }
     return result;
   };
   const snapshots = async (data: Parameters<DBAdapter["deleteMany"]>[0], single = false) => {

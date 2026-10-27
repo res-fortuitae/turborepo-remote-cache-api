@@ -29,7 +29,9 @@ test("Better Auth writes have durable intent, one terminal event, and no credent
       })({});
       const adapter = auditedAdapter(raw, database.drizzle, audit);
       const created = yield* Effect.promise(() =>
-        adapter.create<typeof user, { id: string }>({ model: "user", data: user }),
+        adapter.transaction((transaction) =>
+          transaction.create<typeof user, { id: string }>({ model: "user", data: user }),
+        ),
       );
       yield* Effect.promise(() =>
         adapter.update({
@@ -133,6 +135,41 @@ test("failed database mutation resolves to aborted without a committed event", (
       ).toHaveLength(1);
       expect(
         rows.filter((row) => JSON.stringify(row.payload).includes('"status":"aborted"')),
+      ).toHaveLength(1);
+    }).pipe(Effect.provide(layers), Effect.scoped),
+  ));
+
+test("a lost update guard is aborted even if another writer already established the requested state", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const database = yield* Database;
+      const audit = yield* AuditLog;
+      const raw = drizzleAdapter(database.drizzle, {
+        provider: "sqlite",
+        schema: { ...schema },
+        transaction: false,
+      })({});
+      const created = yield* Effect.promise(() =>
+        raw.create<typeof user, { id: string }>({ model: "user", data: user }),
+      );
+      // Simulate a guard losing to a writer that installed the identical requested value.
+      const guarded = auditedAdapter({ ...raw, update: async () => null }, database.drizzle, audit);
+      const result = yield* Effect.promise(() =>
+        guarded.update({
+          model: "user",
+          where: [{ field: "id", value: created.id }],
+          update: { name: user.name },
+        }),
+      );
+      expect(result).toBeNull();
+      const events = yield* database.query("test.audit", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      expect(
+        events.filter((row) => JSON.stringify(row.payload).includes('"status":"committed"')),
+      ).toHaveLength(0);
+      expect(
+        events.filter((row) => JSON.stringify(row.payload).includes('"status":"aborted"')),
       ).toHaveLength(1);
     }).pipe(Effect.provide(layers), Effect.scoped),
   ));
