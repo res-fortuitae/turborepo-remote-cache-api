@@ -1,14 +1,16 @@
+import type { SessionReader } from "./session-reader.ts";
 import { passkey } from "@better-auth/passkey";
 import type { AuditLogService } from "@repo/audit";
 import { schema, type DatabaseDrizzle } from "@repo/db";
 import type { AuthSettings } from "@repo/deploy-config";
-import { APIError, createAuthMiddleware, getAuthoritativeSessionFromCtx } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { and, eq, gt } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import { readInstancePolicy } from "./instance.ts";
 import { requirePasskeyProof } from "./passkey-proof.ts";
 
 export const passkeyPlugins = (
+  readSession: SessionReader,
   db: DatabaseDrizzle,
   config: AuthSettings,
   audit?: AuditLogService,
@@ -16,7 +18,7 @@ export const passkeyPlugins = (
   const verified = new WeakMap<object, { userId: string; sourceSessionId: string; at: number }>();
 
   const requireAdmin = createAuthMiddleware(async (ctx) => {
-    const cached = await getAuthoritativeSessionFromCtx(ctx);
+    const cached = await readSession(ctx.headers);
 
     if (!cached) throw new APIError("UNAUTHORIZED");
 
@@ -108,7 +110,7 @@ export const passkeyPlugins = (
         afterVerification: async ({ ctx, verification, clientData }) => {
           if (!verification.authenticationInfo.userVerified)
             throw new APIError("FORBIDDEN", { message: "Passkey user verification is required" });
-          const current = await getAuthoritativeSessionFromCtx(ctx);
+          const current = await readSession(ctx.headers);
 
           const [credential] = await db
             .select()

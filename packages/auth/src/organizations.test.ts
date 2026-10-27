@@ -62,6 +62,40 @@ const post = (auth: typeof Auth.Service, headers: Headers, path: string, body: S
     }),
   );
 
+test("CLI bearer sessions can create and list organizations through the HTTP handler", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      yield* seed("cli-owner", "owner");
+      const headers = new Headers({
+        authorization: "Bearer cli-owner",
+        origin: "http://localhost",
+        "content-type": "application/json",
+      });
+      expect((yield* post(auth, headers, "create", { name: "CLI", slug: "cli" })).status).toBe(200);
+      const response = yield* auth.handler(
+        new Request("http://localhost/api/auth/organization/list", { headers }),
+      );
+      expect(response.status).toBe(200);
+      const organizations = yield* Effect.promise(() => response.json());
+      expect(organizations).toMatchObject([{ slug: "cli" }]);
+      headers.set("authorization", "Bearer invalid-session");
+      expect(
+        (yield* auth.handler(
+          new Request("http://localhost/api/auth/organization/list", { headers }),
+        )).status,
+      ).toBe(401);
+      headers.set("authorization", "Bearer cli-owner");
+      const db = yield* Database;
+      yield* db.query("test.revokeCliSession", (db) => db.delete(schema.session));
+      expect(
+        (yield* auth.handler(
+          new Request("http://localhost/api/auth/organization/list", { headers }),
+        )).status,
+      ).toBe(401);
+    }).pipe(Effect.provide(AuthTest)),
+  ));
+
 test("org creation policy, immutable slug, signed recipient-bound single-use invitations", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {

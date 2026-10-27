@@ -1,0 +1,13 @@
+{
+  "passed": [
+    "UI organization creation through real HTTP",
+    "UI group creation",
+    "UI project creation",
+    "UI creates signed invitation with no email provider",
+    "UI recipient accepts signed invitation",
+    "UI audit loads real persisted credential events",
+    "UI project storage page"
+  ],
+  "errors": [],
+  "badResponses": []
+}

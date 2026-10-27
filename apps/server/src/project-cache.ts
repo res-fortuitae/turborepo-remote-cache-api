@@ -1,4 +1,4 @@
-import { CoordinatorClient } from "@repo/coordinator";
+import { CoordinatorClient } from "@repo/coordinator/client";
 import { Authorization, AuthorizationAudit, AuthorizationCeilings } from "@repo/authz";
 import { CredentialResolver, DpopVerifier, DpopInvalid } from "@repo/credentials";
 import { Database, InstanceSettingsRepo, schema } from "@repo/db";
@@ -155,7 +155,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
       if (team !== principal.org) return yield* denyTenant;
 
     for (const slug of url.searchParams.getAll("slug"))
-      if (slug !== row.org.slug) return yield* denyTenant;
+      if (slug !== row.org.slug && slug !== principal.org) return yield* denyTenant;
     const settings = yield* InstanceSettingsRepo;
     const ceilings = yield* AuthorizationCeilings;
     const policy = yield* settings.policy(principal.org, ceilings);

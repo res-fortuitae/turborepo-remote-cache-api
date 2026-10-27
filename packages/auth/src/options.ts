@@ -1,3 +1,4 @@
+import type { SessionReader } from "./session-reader.ts";
 import { bootstrapOwner } from "./bootstrap.ts";
 import * as Effect from "effect/Effect";
 import { auditedAdapter } from "./audit-adapter.ts";
@@ -60,7 +61,10 @@ export const makeBetterAuth = ({
 
   const identity = githubIdentityHooks();
 
-  return betterAuth({
+  let readSession: SessionReader = async () => null;
+  const sessionReader: SessionReader = (headers) => readSession(headers);
+
+  const auth = betterAuth({
     appName: "Turborepo Remote Cache",
     basePath: "/api/auth",
     baseURL: config.baseURL,
@@ -153,11 +157,11 @@ export const makeBetterAuth = ({
         enableSessionForAPIKeys: false,
       }),
       bearer(),
-      ...devicePlugins(db, audit),
+      ...devicePlugins(sessionReader, db, audit),
       instanceAdmin(),
-      ...passkeyPlugins(db, config, audit),
-      ...organizationPlugins(db, config, audit, sendInvitation),
-      instancePlugin(db, config, audit),
+      ...passkeyPlugins(sessionReader, db, config, audit),
+      ...organizationPlugins(sessionReader, db, config, audit, sendInvitation),
+      instancePlugin(sessionReader, db, config, audit),
       ...(config.magicLink === true
         ? [
             magicLink({
@@ -202,6 +206,10 @@ export const makeBetterAuth = ({
     ],
     telemetry: { enabled: false },
   });
+
+  readSession = (headers) =>
+    auth.api.getSession({ headers: headers ?? new Headers(), query: { disableCookieCache: true } });
+  return auth;
 };
 
 export type BetterAuthInstance = ReturnType<typeof makeBetterAuth>;

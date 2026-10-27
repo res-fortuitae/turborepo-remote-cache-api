@@ -1,0 +1,9 @@
+{
+  "samples": 100,
+  "warmup": 20,
+  "wallP95Ms": 1.01804199999998,
+  "targetMs": 300,
+  "runtime": "1.4.3",
+  "platform": "darwin-arm64",
+  "scope": "Real cached-JWKS OIDC verifier, replay/policy/audit/anomaly services, SQLite test D1 and in-memory Coordinator; no deployed network or Workers CPU"
+}

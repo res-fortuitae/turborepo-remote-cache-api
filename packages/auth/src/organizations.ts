@@ -1,3 +1,4 @@
+import type { SessionReader } from "./session-reader.ts";
 import type { AuditInput, AuditLogService } from "@repo/audit";
 import {
   schema,
@@ -15,12 +16,7 @@ import {
   hasOrganizationPermission,
   canDelegateOrganizationRole,
 } from "./organization-access.ts";
-import {
-  APIError,
-  createAuthEndpoint,
-  createAuthMiddleware,
-  getAuthoritativeSessionFromCtx,
-} from "better-auth/api";
+import { APIError, createAuthEndpoint, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
 import { and, eq, gt, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
@@ -29,6 +25,7 @@ import { readInstancePolicy } from "./instance.ts";
 import { signInviteLink, verifyInviteLink } from "./invite-link.ts";
 
 export const organizationPlugins = (
+  readSession: SessionReader,
   db: DatabaseDrizzle,
   config: AuthSettings,
   audit?: AuditLogService,
@@ -71,7 +68,7 @@ export const organizationPlugins = (
   };
 
   const fresh = createAuthMiddleware(async (ctx) => {
-    const cached = await getAuthoritativeSessionFromCtx(ctx);
+    const cached = await readSession(ctx.headers);
 
     if (!cached) throw new APIError("UNAUTHORIZED");
 
@@ -717,7 +714,7 @@ export const organizationPlugins = (
                 ].includes(ctx.path)
               )
                 throw new APIError("FORBIDDEN", { message: "Use signed organization invitations" });
-              const cached = await getAuthoritativeSessionFromCtx(ctx);
+              const cached = await readSession(ctx.headers);
 
               if (!cached) throw new APIError("UNAUTHORIZED");
 

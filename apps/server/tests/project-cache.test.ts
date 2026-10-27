@@ -118,6 +118,9 @@ test("JWT HTTP routing isolates identical hashes, rejects tenant spoofing, clamp
         );
 
       expect((yield* request(a, "PUT", "?slug=team", "A")).status).toBe(202);
+      // Turbo sends TURBO_TEAM as `slug` unless its value begins with `team_`.
+      // CLI links use the stable organization ID, including UUID organization IDs.
+      expect((yield* request(a, "GET", "?slug=org")).status).toBe(200);
       expect((yield* request(b, "PUT", "", "B")).status).toBe(202);
       expect(bucket.objects.size).toBe(2);
       expect([...bucket.objects.keys()]).toEqual(["org/a/abc", "org/b/abc"]);

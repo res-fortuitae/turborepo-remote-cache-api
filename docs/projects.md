@@ -30,8 +30,11 @@ to gain organization powers. Denials are audited and audit failure closes access
 ## Storage and credentials
 
 Verified cache JWTs choose `{orgId}/{projectId}/{hash}` from their signed claims.
-Query parameters can only confirm the org ID (`teamId`) or immutable org slug
-(`slug`); mismatches return 403. Identical hashes in separate projects remain
+Query parameters can only confirm the org ID (`teamId`) or the immutable org slug
+or ID (`slug`); mismatches return 403. Turbo sends `TURBO_TEAM` through `slug` when
+the value does not begin with `team_`, including UUID organization IDs saved by
+the CLI. Every supplied value must still match the credential's own tenant.
+Identical hashes in separate projects remain
 separate objects. Tokens must obey current TTL, signing and binding policy. The
 exchange/CLI/API-key issuance paths remain separate M3 work. The signing secret
 must contain the `SigningKeySet` JSON described by `@repo/credentials`, and issued

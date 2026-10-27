@@ -1,4 +1,4 @@
-import { DeveloperCredentialsLive } from "./developer.ts";
+import { developerCredentialsLive } from "./developer.ts";
 import { BunFileSystem } from "@effect/platform-bun";
 import {
   CacheProxy,
@@ -19,7 +19,7 @@ import {
 import { Effect, Layer, Redacted, ManagedRuntime } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
-export const makeAuthRuntime = (flags: ClientFlags = {}) => {
+export const makeAuthRuntime = (flags: ClientFlags = {}, developerWrites = false) => {
   const adapters = Layer.mergeAll(
     BunFileSystem.layer,
     FetchHttpClient.layer,
@@ -90,7 +90,10 @@ export const makeAuthRuntime = (flags: ClientFlags = {}) => {
       Layer.provideMerge(
         Layer.mergeAll(
           adapters,
-          DeveloperCredentialsLive.pipe(Layer.provide(ClientConfigLive), Layer.provide(adapters)),
+          developerCredentialsLive(developerWrites).pipe(
+            Layer.provide(ClientConfigLive),
+            Layer.provide(adapters),
+          ),
         ),
       ),
     ),

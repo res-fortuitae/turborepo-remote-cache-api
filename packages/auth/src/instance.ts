@@ -1,3 +1,4 @@
+import type { SessionReader } from "./session-reader.ts";
 import type { AuditLogService, AuditInput } from "@repo/audit";
 import {
   schema,
@@ -12,12 +13,7 @@ import {
   clampPolicy,
   type AuthSettings,
 } from "@repo/deploy-config";
-import {
-  APIError,
-  createAuthEndpoint,
-  createAuthMiddleware,
-  getAuthoritativeSessionFromCtx,
-} from "better-auth/api";
+import { APIError, createAuthEndpoint, createAuthMiddleware } from "better-auth/api";
 import { and, asc, count, eq, gt, inArray, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -40,6 +36,7 @@ export const readInstancePolicy = async (db: DatabaseDrizzle, config: AuthSettin
 };
 
 export const instancePlugin = (
+  readSession: SessionReader,
   db: DatabaseDrizzle,
   config: AuthSettings,
   audit?: AuditLogService,
@@ -55,7 +52,7 @@ export const instancePlugin = (
   };
 
   const guard = createAuthMiddleware(async (ctx) => {
-    const cached = await getAuthoritativeSessionFromCtx(ctx);
+    const cached = await readSession(ctx.headers);
 
     if (!cached) throw new APIError("UNAUTHORIZED");
 
@@ -548,7 +545,7 @@ export const instancePlugin = (
           matcher: (ctx: { path?: string }) => ctx.path?.startsWith("/admin/") === true,
           handler: createAuthMiddleware(async (ctx) => {
             // Re-check D1 even when the plugin is called through its native HTTP API.
-            const cached = await getAuthoritativeSessionFromCtx(ctx);
+            const cached = await readSession(ctx.headers);
 
             if (!cached) throw new APIError("UNAUTHORIZED");
 
