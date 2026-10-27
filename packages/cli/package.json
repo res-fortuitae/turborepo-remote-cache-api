@@ -15,7 +15,11 @@
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "test": "bun test src"
+    "test": "bun test src",
+    "build": "bun scripts/build.ts",
+    "build:all": "bun scripts/build.ts --all",
+    "package:release": "bun scripts/package.ts",
+    "bench:startup": "bun scripts/benchmark.ts"
   },
   "dependencies": {
     "@effect/platform-bun": "^4.0.6",

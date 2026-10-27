@@ -27,20 +27,23 @@ test("Effect CLI handles account, linking, permissions, and command exit codes w
     },
   });
   const execute = async (...args: string[]) => {
-    const child = Bun.spawn(["bun", bin, ...args], {
-      cwd: directory,
-      env: {
-        ...Bun.env,
-        HOME: directory,
-        TCACHE_API: undefined,
-        TURBO_API: undefined,
-        TCACHE_TEAM: undefined,
-        TCACHE_PROJECT: undefined,
-        TCACHE_API_KEY: undefined,
+    const child = Bun.spawn(
+      [...(Bun.env.TCACHE_TEST_BINARY ? [Bun.env.TCACHE_TEST_BINARY] : ["bun", bin]), ...args],
+      {
+        cwd: directory,
+        env: {
+          ...Bun.env,
+          HOME: directory,
+          TCACHE_API: undefined,
+          TURBO_API: undefined,
+          TCACHE_TEAM: undefined,
+          TCACHE_PROJECT: undefined,
+          TCACHE_API_KEY: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
       },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    );
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),

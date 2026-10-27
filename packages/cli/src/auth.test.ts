@@ -58,7 +58,15 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
     );
 
     const child = Bun.spawn(
-      ["bun", new URL("./bin.ts", import.meta.url).pathname, "exec", "--", "bun", script],
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY
+          ? [Bun.env.TCACHE_TEST_BINARY]
+          : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+        "exec",
+        "--",
+        "bun",
+        script,
+      ],
       {
         env: {
           ...Bun.env,
@@ -98,7 +106,14 @@ test("daemon state is private, later processes can reach it, authenticated stop 
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
 
   const child = Bun.spawn(
-    ["bun", new URL("./bin.ts", import.meta.url).pathname, "proxy", "--state", state],
+    [
+      ...(Bun.env.TCACHE_TEST_BINARY
+        ? [Bun.env.TCACHE_TEST_BINARY]
+        : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+      "proxy",
+      "--state",
+      state,
+    ],
     {
       env: {
         ...Bun.env,
@@ -129,7 +144,14 @@ test("daemon state is private, later processes can reach it, authenticated stop 
     expect(await later.exited).toBe(0);
 
     const stop = Bun.spawn(
-      ["bun", new URL("./bin.ts", import.meta.url).pathname, "proxy-stop", "--state", state],
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY
+          ? [Bun.env.TCACHE_TEST_BINARY]
+          : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+        "proxy-stop",
+        "--state",
+        state,
+      ],
       { stdout: "ignore", stderr: "ignore" },
     );
 
@@ -184,7 +206,14 @@ test("proxy refreshes in background and retries safe reads without replaying upl
   const state = join(directory, "session.json");
 
   const child = Bun.spawn(
-    ["bun", new URL("./bin.ts", import.meta.url).pathname, "proxy", "--state", state],
+    [
+      ...(Bun.env.TCACHE_TEST_BINARY
+        ? [Bun.env.TCACHE_TEST_BINARY]
+        : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+      "proxy",
+      "--state",
+      state,
+    ],
     {
       env: {
         ...Bun.env,
