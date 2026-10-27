@@ -17,13 +17,16 @@
   },
   "dependencies": {
     "@repo/api-spec": "workspace:*",
+    "@repo/audit": "workspace:*",
     "@repo/coordinator": "workspace:*",
     "@repo/credentials": "workspace:*",
+    "@repo/db": "workspace:*",
     "effect": "^4.0.6"
   },
   "devDependencies": {
     "@repo/config": "workspace:*",
     "@types/bun": "latest",
+    "drizzle-orm": "1.0.0-rc.5",
     "typescript": "^7"
   }
 }

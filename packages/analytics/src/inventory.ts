@@ -45,9 +45,12 @@ export const StorageReconciliationLive = Layer.effect(
             .from(schema.project)
             .leftJoin(schema.usageInventory, eq(schema.project.id, schema.usageInventory.projectId))
             .where(
-              or(
-                isNull(schema.usageInventory.completedAt),
-                lt(schema.usageInventory.completedAt, now - 86_400_000),
+              and(
+                or(
+                  isNull(schema.usageInventory.completedAt),
+                  lt(schema.usageInventory.completedAt, now - 86_400_000),
+                ),
+                sql`not exists (select 1 from quota_eviction where project_id = ${schema.project.id} and state != 'complete')`,
               ),
             )
             .orderBy(

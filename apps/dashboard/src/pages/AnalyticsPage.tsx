@@ -411,6 +411,7 @@ export function AnalyticsPage({ instance = false }: { readonly instance?: boolea
               ["CI / local", `${totals.ciRequests} / ${totals.localRequests}`],
               ["Edge hit rate", percent(totals.edgeCacheHitRate)],
               ["Uploaded", formatBytes(totals.bytesUploaded)],
+              ["Evictions", `${totals.evictions ?? 0} / ${formatBytes(totals.evictedBytes ?? 0)}`],
             ].map(([label, value]) => (
               <Card key={label}>
                 <CardHeader>

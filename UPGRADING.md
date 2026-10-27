@@ -6,6 +6,16 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Quota admission and eviction (STV-476)
+
+- Apply the additive quota configuration, daily usage, upload reservation and
+  eviction-job tables. Scoped writes now enforce effective storage ceilings at
+  organization and project scope. Existing reads continue while over quota.
+- Request/bandwidth budgets are optional and reset at midnight UTC. Configure
+  reject/evict-oldest under Project Settings; reject remains the default.
+- Existing multipart tickets without quota reservations must be restarted.
+  See [quotas](docs/quotas.md) for lease lifetimes, alerts and bounded eviction.
+
 ### Artifact signing (STV-475)
 
 - Apply the additive signing-key/settings tables and active-key unique index.

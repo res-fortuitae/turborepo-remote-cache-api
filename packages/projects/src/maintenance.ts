@@ -91,6 +91,14 @@ const maintenance = Effect.gen(function* () {
               db
                 .delete(schema.projectRetention)
                 .where(eq(schema.projectRetention.projectId, job.projectId)),
+              db.delete(schema.quotaConfig).where(eq(schema.quotaConfig.projectId, job.projectId)),
+              db
+                .delete(schema.quotaReservation)
+                .where(eq(schema.quotaReservation.projectId, job.projectId)),
+              db.delete(schema.quotaUsage).where(eq(schema.quotaUsage.projectId, job.projectId)),
+              db
+                .delete(schema.quotaEviction)
+                .where(eq(schema.quotaEviction.projectId, job.projectId)),
               db
                 .delete(schema.artifactSigningKey)
                 .where(eq(schema.artifactSigningKey.projectId, job.projectId)),

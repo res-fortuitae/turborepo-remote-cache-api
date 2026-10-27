@@ -359,3 +359,57 @@ export const artifactSigningSettings = sqliteTable("artifact_signing_settings", 
   projectId: text("project_id").primaryKey(),
   required: integer({ mode: "boolean" }).notNull().default(false),
 });
+
+export const quotaConfig = sqliteTable(
+  "quota_config",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull().default(""),
+    storageBytes: integer("storage_bytes"),
+    bandwidthBytes: integer("bandwidth_bytes"),
+    requests: integer(),
+    onQuotaExceeded: text("on_quota_exceeded", { enum: ["reject", "evict-oldest"] })
+      .notNull()
+      .default("reject"),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId] })],
+);
+export const quotaUsage = sqliteTable(
+  "quota_usage",
+  {
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    day: integer().notNull(),
+    requests: integer().notNull().default(0),
+    bandwidthBytes: integer("bandwidth_bytes").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.projectId, t.day] })],
+);
+export const quotaReservation = sqliteTable(
+  "quota_reservation",
+  {
+    id: text().primaryKey(),
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    hash: text().notNull(),
+    bytes: integer().notNull(),
+    transferBytes: integer("transfer_bytes").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [uniqueIndex("quota_active_hash").on(t.projectId, t.hash)],
+);
+export const quotaEviction = sqliteTable("quota_eviction", {
+  projectId: text("project_id").primaryKey(),
+  orgId: text("org_id").notNull(),
+  id: text().notNull(),
+  state: text({ enum: ["scanning", "deleting", "complete"] }).notNull(),
+  cursor: text(),
+  candidates: text({ mode: "json" })
+    .$type<Array<{ key: string; etag: string; size: number; uploaded: number }>>()
+    .notNull()
+    .default([]),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  removed: integer().notNull().default(0),
+  removedBytes: integer("removed_bytes").notNull().default(0),
+  startedAt: integer("started_at").notNull(),
+});

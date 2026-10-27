@@ -83,6 +83,21 @@ export interface ArtifactScope {
 }
 
 export interface ApiDependencies<R> {
+  readonly overQuota?: (scope: ArtifactScope) => Effect.Effect<boolean, ApiError, R>;
+  readonly withinUploadQuota?: (
+    scope: ArtifactScope,
+    hash: string,
+    bytes: number | undefined,
+    upload: Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      ApiError,
+      R | HttpServerRequest.HttpServerRequest
+    >,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    ApiError,
+    R | HttpServerRequest.HttpServerRequest
+  >;
   readonly uploadChunked?: (
     key: string,
     body: Stream.Stream<Uint8Array, unknown>,
@@ -181,6 +196,8 @@ const artifactHeaders = (size: number, meta: ArtifactMetadata) => {
 export const artifactApi = <R>({
   bucket,
   uploadChunked,
+  overQuota,
+  withinUploadQuota,
   multipart,
   token,
   edgeCacheEnabled,
@@ -499,7 +516,12 @@ export const artifactApi = <R>({
       if (segment === undefined) {
         if (method === "POST") return yield* query(team, scope.maxQueryHashes ?? 100);
       } else if (segment === "status") {
-        if (method === "GET") return yield* status;
+        if (method === "GET")
+          return overQuota
+            ? yield* HttpServerResponse.json({
+                status: (yield* overQuota(scope)) ? "over_limit" : "enabled",
+              })
+            : yield* status;
       } else if (segment === "events") {
         if (method === "POST") return yield* events(team, scope);
       } else {
@@ -511,14 +533,33 @@ export const artifactApi = <R>({
 
         if (method === "GET") return yield* download(team, segment, scope.cacheGeneration);
 
-        if (method === "PUT")
-          return yield* upload(
+        if (method === "PUT") {
+          const uploading = upload(
             team,
             segment,
             Math.min(scope.maxUploadBytes, maxUploadBytes),
             scope.cacheGeneration,
             provenance,
+          ).pipe(
+            Effect.provideService(ArtifactStore, yield* ArtifactStore),
+            Effect.provideService(CanonicalOrigin, yield* CanonicalOrigin),
+            Effect.mapError((error) =>
+              error instanceof ApiError
+                ? error
+                : new ApiError({ status: 500, code: "internal_error", message: "Storage error" }),
+            ),
           );
+          return yield* withinUploadQuota
+            ? withinUploadQuota(
+                scope,
+                segment,
+                request.headers["content-length"] === undefined
+                  ? undefined
+                  : Number(request.headers["content-length"]),
+                uploading,
+              )
+            : uploading;
+        }
       }
 
       return yield* new ApiError({

@@ -1,3 +1,4 @@
+import { QuotaCard } from "./QuotaCard.tsx";
 import { SigningCard } from "./SigningCard.tsx";
 import { useState } from "react";
 import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
@@ -80,6 +81,7 @@ export function SettingsTab({
 
   return (
     <div className="flex flex-col gap-6">
+      {canUpdate ? <QuotaCard projectId={project.id} /> : null}
       {canUpdate ? <SigningCard projectId={project.id} /> : null}
       <Card>
         <CardHeader>

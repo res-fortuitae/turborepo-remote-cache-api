@@ -47,3 +47,14 @@ export {
   MultipartError,
 } from "./multipart.ts";
 export type { MultipartOwner, UploadTicket } from "./multipart.ts";
+
+export {
+  Quotas,
+  QuotasLive,
+  QuotaDefaults,
+  QuotaExceeded,
+  QuotaUnavailable,
+  QuotaEviction,
+  QuotaEvictionLive,
+} from "./quotas.ts";
+export type { QuotaScope, QuotaSettings } from "./quotas.ts";
