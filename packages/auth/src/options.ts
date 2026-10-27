@@ -1,3 +1,4 @@
+import { auditedAdapter } from "./audit-adapter.ts";
 import { apiKey } from "@better-auth/api-key";
 import { schema, type DatabaseDrizzle } from "@repo/db";
 import type { AuthSettings } from "@repo/deploy-config";
@@ -179,7 +180,14 @@ export const makeBetterAuth = ({
         : []),
     ],
     // D1 has no interactive transactions; the SQLite adapter paths never need one.
-    database: drizzleAdapter(db, { provider: "sqlite", schema: { ...schema }, transaction: false }),
+    database: (options) =>
+      auditedAdapter(
+        drizzleAdapter(db, { provider: "sqlite", schema: { ...schema }, transaction: false })(
+          options,
+        ),
+        db,
+        audit,
+      ),
     secondaryStorage,
     session: {
       // KV can lag revocation by about 60 s, so D1 keeps every session.

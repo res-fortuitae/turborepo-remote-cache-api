@@ -1,3 +1,4 @@
+import { reconcileAuthAudit } from "./audit-adapter.ts";
 import { RateLimiter, betterAuthRateLimitStorage } from "@repo/ratelimit";
 import {
   ApiKeyLookup,
@@ -11,7 +12,7 @@ import { Database, schema, type DatabaseError } from "@repo/db";
 import { AuthConfig } from "@repo/deploy-config";
 import { invitationMessage, Mailer } from "@repo/mailer";
 import { isAPIError } from "better-auth/api";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lt } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -41,6 +42,7 @@ export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()("Unau
 }) {}
 
 export interface AuthService {
+  readonly reconcileAudit: Effect.Effect<number, AuthError>;
   /** Serves `/api/auth/*`. Better Auth turns its own errors into responses. */
   readonly handler: (request: Request) => Effect.Effect<Response, AuthError>;
   /** The session for these request headers. May come from the KV cache. */
@@ -258,6 +260,9 @@ export const AuthLive: Layer.Layer<
       );
 
     return Context.make(Auth, {
+      reconcileAudit: callBetterAuth("reconcileAudit", async () =>
+        reconcileAuthAudit((await auth.$context).adapter, database.drizzle, audit),
+      ),
       handler,
       getSession,
       requireSession,
@@ -277,3 +282,39 @@ export const AuthLive: Layer.Layer<
     );
   }),
 );
+
+/** Reuses the configured plugin adapter so reconciliation sees the same model mappings. */
+export const reconcileAuthAuditJob = Effect.gen(function* () {
+  const auth = yield* Auth;
+  const reconciled = yield* auth.reconcileAudit;
+  const database = yield* Database;
+  const audit = yield* AuditLog;
+  const expired = yield* database.query("Audit.expiredElevations", (db) =>
+    db
+      .select()
+      .from(schema.orgElevation)
+      .where(lt(schema.orgElevation.expiresAt, Date.now()))
+      .limit(100),
+  );
+  for (const elevation of expired) {
+    yield* audit.commit(
+      {
+        scope: "org",
+        orgId: elevation.orgId,
+        actor: { type: "system", id: "elevation-expiry", display: "Elevation expiry" },
+        action: "instance.org.elevation.ended",
+        target: { type: "elevation", id: elevation.id },
+        outcome: "allow",
+        ip: "",
+        userAgent: "",
+        requestId: crypto.randomUUID(),
+        metadata: { userId: elevation.userId, expiresAt: elevation.expiresAt },
+      },
+      (db) => [
+        db.insert(schema.authAuditResolution).values({ id: `elevation:${elevation.id}` }),
+        db.delete(schema.orgElevation).where(eq(schema.orgElevation.id, elevation.id)),
+      ],
+    );
+  }
+  return { reconciled, expiredElevations: expired.length };
+});

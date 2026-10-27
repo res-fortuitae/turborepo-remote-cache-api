@@ -31,3 +31,5 @@ export {
 } from "./api-keys.ts";
 
 export { apiKeyDigestJob } from "./api-key-digest.ts";
+
+export { reconcileAuthAuditJob } from "./auth.ts";

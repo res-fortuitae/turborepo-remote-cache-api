@@ -254,3 +254,24 @@ export const artifactOperation = sqliteTable("artifact_operation", {
   createdAt: integer("created_at").notNull(),
   provenance: text({ mode: "json" }).$type<Readonly<Record<string, string>>>().notNull(),
 });
+
+/** Mutable delivery state; immutable intent and resolution events live in audit_event. */
+export const authAuditIntent = sqliteTable(
+  "auth_audit_intent",
+  {
+    id: text().primaryKey(),
+    createdAt: integer("created_at").notNull(),
+    model: text().notNull(),
+    targetId: text("target_id").notNull(),
+    operation: text().notNull(),
+    fields: text({ mode: "json" }).$type<string[]>().notNull(),
+    digest: text(),
+    event: text().notNull(),
+  },
+  (t) => [index("auth_audit_intent_pending").on(t.createdAt)],
+);
+
+/** Exactly one terminal event per Better Auth intent, including overlapping cron runs. */
+export const authAuditResolution = sqliteTable("auth_audit_resolution", {
+  id: text().primaryKey(),
+});
