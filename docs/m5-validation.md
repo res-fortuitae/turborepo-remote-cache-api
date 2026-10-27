@@ -42,3 +42,10 @@ npm naming and source distribution licensing, configure protected signing/releas
 permissions and npm trusted publishers, and explicitly authorize publication.
 These external release activities remain deferred. Issues stay In Review while
 the implementation PRs await review; this record does not claim they were merged.
+
+GitHub CI blocker observed after opening the final PR: build and validation jobs
+failed before any steps started. GitHub's check annotations report that recent
+account payments failed or the spending limit must be increased. This affects the
+existing Validate/compatibility workflows and the new binary matrix. An account
+owner must resolve Actions billing/spending settings and rerun checks before the
+hosted/Windows validation can complete. No billing settings were changed.
