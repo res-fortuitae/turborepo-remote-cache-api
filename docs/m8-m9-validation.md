@@ -14,7 +14,7 @@ or production launch approval.
 | M9 signatures / quotas  | STV-475, STV-476        | [#70](https://github.com/StvyaSharma/turborepo-remote-cache-api/pull/70), [#71](https://github.com/StvyaSharma/turborepo-remote-cache-api/pull/71)                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | M9 anomaly detection    | STV-490                 | [#72](https://github.com/StvyaSharma/turborepo-remote-cache-api/pull/72)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | M9 performance probes   | STV-508                 | [#73](https://github.com/StvyaSharma/turborepo-remote-cache-api/pull/73)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| M9 threat model / fixes | STV-474                 | Branch `stvya/stv-474-threat-model-security-review`, based on #73                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| M9 threat model / fixes | STV-474                 | [#74](https://github.com/StvyaSharma/turborepo-remote-cache-api/pull/74), based on #73                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Each PR builds on the previous branch. Review/merge from the bottom of the stack.
 
@@ -58,11 +58,30 @@ latency targets. Local fixture operation success does not establish staging
 SLO compliance. Run the enforcing staging probe from a separate load generator
 on an authorized deployment before launch.
 
-No real hosted CI issuer, hosted release signing, deployed email delivery,
-independent penetration test or interactive browser walkthrough was performed.
+A targeted headless Chromium 1.64.1 walkthrough of the compiled production
+bundle passed five flows under the real production CSP: custom-role invitation
+visibility without `ac:read`, invitation submission and keyboard dismissal,
+project grant selection and effective-access explanation, project tab navigation,
+and mobile navigation opening/keyboard dismissal. No JavaScript or CSP errors
+were observed. API responses were synthetic; the backend permission/transaction
+checks run separately against migrated SQLite. This is not a full OAuth/passkey
+browser journey.
+
+Pre-merge independent standards/spec reviews found and fixed multipart quota
+cleanup, organization-tightened passkey policy, custom-role UI gating,
+project-admin directory authorization, and multi-role anomaly delivery. Regression
+cases cover the identified failures. The final hardening PR contains these fixes
+for the cumulative stack.
+
+The local Alchemy beta provider also exposed a concurrent Secrets Store gateway
+collision. A pinned dependency patch serializes its scoped gateway operations;
+see [patch notes](../patches/README.md). Storage identity is preserved.
+
+No real hosted CI issuer, hosted release signing, deployed email delivery or
+independent penetration test was performed.
 The local stack verifies the built assets and their CSP structurally. Existing
 OAuth rows/backups and pre-upgrade downstream cache entries need the operational
 remediation in [the security review](threat-model.md) and [upgrade notes](../UPGRADING.md).
 A maintainer must review the security findings/residual risks before launch.
 
-Model: gpt-6.1-sol · Agent: Codex · Harness: T3 Code/Codex · Timestamp: 2026-10-27T10:46:57Z
+Model: gpt-6.1-sol · Agent: Codex · Harness: T3 Code/Codex · Timestamp: 2026-10-27T11:26:00Z

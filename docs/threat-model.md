@@ -118,6 +118,34 @@ cannot exist. Representative advisories: [WebAuthn attestation](https://github.c
 [Lodash template injection](https://github.com/advisories/GHSA-r5fr-rjxr-66jc),
 [Undici decoding DoS](https://github.com/advisories/GHSA-xjj6-f33q-929c).
 
+**SEC-05 — High: incomplete multipart quota cleanup.** A completed R2 upload
+survived a failed quota-finalization transaction and could be read without being
+charged. The route now removes that upload session's object, invalidates the local
+copy, and releases its reservation on finalization failure. Authorization and
+purge-generation rechecks precede the quota commit. Regression tests inject both
+accounting and purge failures and assert no readable object, success event,
+reservation, or storage charge remains. Object removal failure remains a storage
+outage requiring inventory reconciliation; the request fails closed.
+
+**SEC-06 — Medium: organization-tightened administrator proof ignored.** Quota
+and anomaly settings read only instance settings. Signing, quota, and anomaly
+mutations now share an effective-policy proof check, including organization
+policy and deployment ceilings. The route regression verifies a policy tightened
+only at organization scope denies an unproved administrator and accepts fresh
+session-bound proof.
+
+**SEC-07 — Dashboard authorization and alert coverage.** Own effective permissions
+now come from a fresh-session endpoint that does not require `ac:read`. Project
+administrators receive an organization-scoped grant directory through project
+`grant` authorization; unrelated custom-role permissions are excluded. Tests
+cover custom roles without role-catalog access, revocation, and cross-organization
+isolation. Anomaly recipients parse comma-separated roles, so an administrator
+with an additional custom role receives the alert exactly once.
+
+Anomaly business rules now live in `@repo/artifacts`, with delivery supplied by a
+narrow host adapter. SQLite-backed Test layers cover quotas, eviction, signing,
+and anomaly detection independently of Cloudflare.
+
 ## Headers, credentials and operational assumptions
 
 Cookie configuration explicitly enables origin/CSRF checks even in tests, uses a

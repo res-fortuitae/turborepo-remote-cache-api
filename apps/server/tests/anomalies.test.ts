@@ -1,26 +1,31 @@
+import { AnomaliesTest } from "@repo/artifacts/testing";
 import { AuthTest } from "@repo/auth/testing";
+import { AuthorizationCeilings } from "@repo/authz";
 import { AuthorizationTest } from "@repo/authz/testing";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { anomaliesRoute } from "../src/anomalies-route.ts";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun entry point exercises migrated SQLite and real Effect layers. */
 import { expect, test } from "bun:test";
-import { Database, schema } from "@repo/db";
+import { Database, InstanceSettingsRepoLive, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
 import { AuditLogTest } from "@repo/audit/testing";
 import { CoordinatorClient, CoordinatorClientTest, CoordinatorError } from "@repo/coordinator";
-import { Alerts } from "@repo/mailer";
-import { CanonicalOrigin } from "@repo/deploy-config";
+import { AnomalyAlerts } from "@repo/artifacts";
+import { CanonicalOrigin, defaultInstancePolicy } from "@repo/deploy-config";
 import { Effect, Layer } from "effect";
 import { eq } from "drizzle-orm";
-import { Anomalies, AnomaliesLive } from "../src/anomalies.ts";
-const layer = AnomaliesLive.pipe(
-  Layer.provideMerge(CoordinatorClientTest),
-  Layer.provide(Layer.succeed(Alerts, { notify: () => Effect.void })),
-  Layer.provide(Layer.succeed(CanonicalOrigin, "https://cache.test")),
-  Layer.provideMerge(AuditLogTest),
-  Layer.provideMerge(DatabaseTest),
-);
+import { Anomalies, AnomaliesLive } from "@repo/artifacts";
+const tightenedPolicy = {
+  ...defaultInstancePolicy,
+  allowedEmailDomains: [...defaultInstancePolicy.allowedEmailDomains],
+  allowedGithubOrgs: [...defaultInstancePolicy.allowedGithubOrgs],
+  allowedOidcIssuers: [...defaultInstancePolicy.allowedOidcIssuers],
+  oidcWriteWorkflowRefs: [],
+  oidcWriteEnvironments: [],
+  requirePasskeyForAdmins: true,
+};
+const layer = AnomaliesTest;
 const seed = Effect.gen(function* () {
   const db = yield* Database;
   yield* db.batch((q) => [
@@ -168,7 +173,7 @@ test("failed revocation leaves a durable fence until the retry succeeds", async 
   );
   const recoveryLayer = AnomaliesLive.pipe(
     Layer.provideMerge(coordinatorLayer),
-    Layer.provide(Layer.succeed(Alerts, { notify: () => Effect.void })),
+    Layer.provide(Layer.succeed(AnomalyAlerts, { notify: () => Effect.void })),
     Layer.provide(Layer.succeed(CanonicalOrigin, "https://cache.test")),
     Layer.provideMerge(AuditLogTest),
     Layer.provideMerge(DatabaseTest),
@@ -199,6 +204,8 @@ test("management requires authentication, project administration and same-origin
     layer,
     AuthTest,
     AuthorizationTest,
+    InstanceSettingsRepoLive.pipe(Layer.provide(layer)),
+    Layer.succeed(AuthorizationCeilings, {}),
     Layer.succeed(CanonicalOrigin, "https://cache.test"),
   );
   await Effect.runPromise(
@@ -271,6 +278,30 @@ test("management requires authentication, project administration and same-origin
       expect((yield* serve("GET", true)).status).toBe(200);
       expect((yield* serve("POST", true, "https://attacker.test")).status).toBe(403);
       expect((yield* serve("POST", true)).status).toBe(200);
+      yield* db.batch((q) => [
+        q.update(schema.user).set({ role: "admin" }),
+        q.insert(schema.orgElevation).values({
+          id: "e",
+          userId: "u",
+          sessionId: "s",
+          orgId: "o",
+          reason: "test",
+          expiresAt: 9999999999999,
+        }),
+        q.insert(schema.organizationPolicy).values({
+          orgId: "o",
+          settings: tightenedPolicy,
+          updatedAt: 0,
+        }),
+      ]);
+      expect((yield* serve("POST", true)).status).toBe(403);
+      yield* db.query("test.proof", (q) =>
+        q
+          .insert(schema.passkeyProof)
+          .values({ sessionId: "s", userId: "u", verifiedAt: Date.now() }),
+      );
+      expect((yield* serve("POST", true)).status).toBe(200);
+      yield* db.query("test.unprove", (q) => q.delete(schema.passkeyProof));
       yield* db.query("test.demote", (q) => q.update(schema.member).set({ role: "member" }));
       expect((yield* serve("POST", true)).status).toBe(403);
     }).pipe(Effect.provide(routeLayer)),
@@ -327,5 +358,62 @@ test("established UTC hours alert on out-of-hours writes and ignore changing run
       );
       expect(rows.map((row) => row.code)).toEqual(["unusual_hour"]);
     }).pipe(Effect.provide(layer)),
+  );
+});
+
+test("anomaly delivery includes comma-separated administrator roles and excludes ordinary members", async () => {
+  const recipients: string[] = [];
+  const deliveryLayer = AnomaliesLive.pipe(
+    Layer.provide(CoordinatorClientTest),
+    Layer.provide(
+      Layer.succeed(AnomalyAlerts, {
+        notify: (alert) =>
+          Effect.sync(() => {
+            recipients.push(alert.userId);
+          }),
+      }),
+    ),
+    Layer.provide(Layer.succeed(CanonicalOrigin, "https://cache.test")),
+    Layer.provide(AuditLogTest),
+    Layer.provideMerge(DatabaseTest),
+  );
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const db = yield* Database;
+      yield* db.batch((q) => [
+        q.insert(schema.user).values(
+          ["admin", "member"].map((id) => ({
+            id,
+            name: id,
+            email: `${id}@example.com`,
+            createdAt: new Date(0),
+            updatedAt: new Date(0),
+          })),
+        ),
+        q.insert(schema.member).values([
+          {
+            id: "admin-member",
+            userId: "admin",
+            organizationId: "o",
+            role: "custom, admin",
+            createdAt: new Date(0),
+          },
+          {
+            id: "ordinary",
+            userId: "member",
+            organizationId: "o",
+            role: "member",
+            createdAt: new Date(0),
+          },
+        ]),
+      ]);
+      const anomalies = yield* Anomalies;
+      yield* anomalies.checkWrite("o", "p", { provider: "old" });
+      yield* anomalies.checkWrite("o", "p", { provider: "new" });
+      yield* anomalies.tick;
+      yield* anomalies.tick;
+      expect(recipients).toEqual(["admin"]);
+    }).pipe(Effect.provide(deliveryLayer)),
   );
 });

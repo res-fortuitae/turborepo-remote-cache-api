@@ -769,3 +769,48 @@ test("guardrails protect direct saves and updates, audit overrides and use tight
       ]);
     }),
   ));
+
+test("project administrators get an organization-scoped access directory without ac:read", () =>
+  run(
+    Effect.gen(function* () {
+      const projects = yield* Projects;
+      const project = yield* projects.create(actor, "a", { slug: "directory", name: "Directory" });
+      const db = yield* Database;
+      yield* db.batch((q) => [
+        q.update(schema.member).set({ role: "member" }),
+        q.insert(schema.projectGrant).values({
+          projectId: project.id,
+          principalType: "user",
+          principalId: "u",
+          role: "project:admin",
+          grantedBy: "u",
+          createdAt: 0,
+        }),
+        q.insert(schema.team).values([
+          { id: "a-team", organizationId: "a", name: "Visible", createdAt: new Date(0) },
+          { id: "b-team", organizationId: "b", name: "Hidden", createdAt: new Date(0) },
+        ]),
+        q
+          .insert(schema.teamMember)
+          .values({ id: "tm", teamId: "a-team", userId: "u", createdAt: new Date(0) }),
+        q.insert(schema.organizationRole).values({
+          id: "custom",
+          organizationId: "a",
+          role: "custom",
+          permission: JSON.stringify({ project: ["grant"], billing: ["update"] }),
+          createdAt: new Date(0),
+        }),
+      ]);
+      const directory = yield* projects.accessDirectory(actor, project.id);
+      expect(directory.members.map((member) => member.userId)).toEqual(["u"]);
+      expect(directory.groups.map((group) => group.id)).toEqual(["a-team"]);
+      expect(directory.groupMembers.map((member) => member.teamId)).toEqual(["a-team"]);
+      expect(directory.roles).toEqual([
+        { id: "custom", role: "custom", permission: { project: ["grant"] } },
+      ]);
+      yield* db.query("test.revoke", (q) => q.delete(schema.projectGrant));
+      expect((yield* projects.accessDirectory(actor, project.id).pipe(Effect.result))._tag).toBe(
+        "Failure",
+      );
+    }),
+  ));

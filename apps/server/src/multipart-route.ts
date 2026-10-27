@@ -131,21 +131,28 @@ export const multipartRoute = <R>(
           Effect.mapError(() => bad("Invalid multipart completion manifest")),
         );
         yield* uploads.complete(ticket, body.parts);
-        if (ticket.quotaReservation && quotas._tag === "Some")
-          yield* quotas.value.finish(ticket.quotaReservation, ticket.size);
-        yield* recheck.pipe(
-          Effect.flatMap((current) =>
-            current.cacheGeneration === scope.cacheGeneration
-              ? Effect.void
-              : Effect.fail(
-                  new ApiError({
-                    status: 409,
-                    code: "purge_race",
-                    message: "Project was purged during upload; retry",
-                  }),
-                ),
+        yield* Effect.gen(function* () {
+          const current = yield* recheck;
+          if (current.cacheGeneration !== scope.cacheGeneration)
+            return yield* new ApiError({
+              status: 409,
+              code: "purge_race",
+              message: "Project was purged during upload; retry",
+            });
+          // Reject stale authorization before committing the quota ledger.
+          if (ticket.quotaReservation && quotas._tag === "Some")
+            yield* quotas.value.finish(ticket.quotaReservation, ticket.size);
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              // remove checks the upload session so a concurrent replacement is preserved.
+              yield* uploads.remove(ticket);
+              yield* invalidateLocal(ticket.hash);
+              if (ticket.quotaReservation && quotas._tag === "Some")
+                yield* quotas.value.release(ticket.quotaReservation);
+              return yield* Effect.fail(error);
+            }),
           ),
-          Effect.catch((error) => uploads.remove(ticket).pipe(Effect.andThen(Effect.fail(error)))),
         );
         yield* invalidateLocal(ticket.hash);
         yield* emit(scope, {

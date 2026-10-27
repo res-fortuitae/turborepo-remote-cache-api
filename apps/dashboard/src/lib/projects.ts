@@ -1,6 +1,7 @@
 import {
   Project,
   ProjectGrants,
+  ProjectAccessDirectory,
   ProjectList,
   ProjectStorage,
   PurgeReport,
@@ -139,3 +140,7 @@ export const connectedRepositories = (policies: typeof TrustPolicyList.Type) => 
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 };
+
+/** Project administrators can select principals without organization role-catalog access. */
+export const accessDirectory = (projectId: string, signal?: AbortSignal) =>
+  api(`${project(projectId)}/access-directory`, { signal, schema: ProjectAccessDirectory });

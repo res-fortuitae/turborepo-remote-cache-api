@@ -1,14 +1,15 @@
 import { Quotas } from "@repo/artifacts";
 import { QuotaSettings } from "@repo/api-spec";
-import { Auth, requirePasskeyProof } from "@repo/auth";
+import { Auth } from "@repo/auth";
 import { Authorization } from "@repo/authz";
 import { Database, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { Effect, Schema } from "effect";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
 import { readManagementJson } from "./projects-route.ts";
+import { requireAdminProof } from "./admin-proof.ts";
 export const quotaPath = /^\/(projects|orgs)\/([^/]+)\/quotas$/;
 const decodeSettings = Schema.decodeUnknownEffect(QuotaSettings);
 export const quotasRoute = Effect.gen(function* () {
@@ -48,23 +49,7 @@ export const quotasRoute = Effect.gen(function* () {
         { message: "Storage quota exceeds the effective organization ceiling" },
         { status: 400 },
       );
-    // The existing authorization policy controls fresh administrator proof.
-    const [settings] = yield* db.query("Quota.instancePolicy", (q) =>
-      q.select().from(schema.instanceSettings),
-    );
-    if (
-      settings?.settings.requirePasskeyForAdmins === true &&
-      ["owner", "admin"].includes(session.user.role ?? "")
-    ) {
-      const proof = yield* Effect.tryPromise(() =>
-        requirePasskeyProof(db.drizzle, session.session.id, session.user.id),
-      ).pipe(Effect.result);
-      if (proof._tag === "Failure")
-        return yield* Response.json(
-          { message: "Verify an administrator passkey first" },
-          { status: 403 },
-        );
-    }
+    yield* requireAdminProof(orgId, session.user, session.session.id);
     yield* quotas.configure({ orgId, projectId }, input, {
       scope: "org",
       orgId,
@@ -97,6 +82,8 @@ export const quotasRoute = Effect.gen(function* () {
 }).pipe(
   Effect.catchTags({
     Unauthenticated: () => Response.json({ message: "Sign in required" }, { status: 401 }),
+    Forbidden: () =>
+      Response.json({ message: "Verify an administrator passkey first" }, { status: 403 }),
     AuthzError: () => Response.json({ message: "Administrator access required" }, { status: 403 }),
     SchemaError: () => Response.json({ message: "Invalid quota settings" }, { status: 400 }),
     BadRequest: () => Response.json({ message: "Invalid quota settings" }, { status: 400 }),

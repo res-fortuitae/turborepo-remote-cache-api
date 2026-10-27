@@ -1,0 +1,48 @@
+diff --git a/lib/Cloudflare/SecretsStore/LocalSecretsStoreGateway.js b/lib/Cloudflare/SecretsStore/LocalSecretsStoreGateway.js
+index 98a926a5ff7826f7a6f4a86022be007f97d04ab8..cf430146ae95a86c02ca460b166378bf86fe0e88 100644
+--- a/lib/Cloudflare/SecretsStore/LocalSecretsStoreGateway.js
++++ b/lib/Cloudflare/SecretsStore/LocalSecretsStoreGateway.js
+@@ -2,6 +2,10 @@ import { SecretsStore } from "@alchemy.run/cloudflare-runtime/core/bindings";
+ import { open } from "@alchemy.run/cloudflare-runtime/core/platform-proxy";
+ import * as Data from "effect/Data";
+ import * as Effect from "effect/Effect";
++import * as Semaphore from "effect/Semaphore";
++
++// The simulator store has one writer; serialize scoped gateways sharing its local disk.
++const gatewayWrites = Semaphore.makeUnsafe(1);
+ import { gatewayName } from "../LocalGateway.js";
+ export class LocalSecretsStoreError extends Data.TaggedError("LocalSecretsStoreError") {
+ }
+@@ -18,7 +22,7 @@ export const withLocalSecretsStore = (storeId, use) => Effect.scoped(Effect.gen(
+     });
+     const store = proxy.env.STORE;
+     return yield* use(store);
+-}));
++})).pipe(gatewayWrites.withPermit);
+ /** Write a secret value into the local store (idempotent overwrite). */
+ export const seedLocalSecret = (storeId, secretName, value) => withLocalSecretsStore(storeId, (store) => Effect.tryPromise({
+     try: () => store.put(secretName, value),
+diff --git a/src/Cloudflare/SecretsStore/LocalSecretsStoreGateway.ts b/src/Cloudflare/SecretsStore/LocalSecretsStoreGateway.ts
+index 274b138e114b4ffb8808661210fe64aaf704f2dc..5bc19d9d0830b0ab70d7037fd7b38bc3e60aeccc 100644
+--- a/src/Cloudflare/SecretsStore/LocalSecretsStoreGateway.ts
++++ b/src/Cloudflare/SecretsStore/LocalSecretsStoreGateway.ts
+@@ -21,6 +21,10 @@ import { open } from "@alchemy.run/cloudflare-runtime/core/platform-proxy";
+ import type * as runtime from "@cloudflare/workers-types";
+ import * as Data from "effect/Data";
+ import * as Effect from "effect/Effect";
++import * as Semaphore from "effect/Semaphore";
++
++// The simulator store has one writer; serialize scoped gateways sharing its local disk.
++const gatewayWrites = Semaphore.makeUnsafe(1);
+ import { gatewayName } from "../LocalGateway.ts";
+ 
+ export class LocalSecretsStoreError extends Data.TaggedError("LocalSecretsStoreError")<{
+@@ -47,7 +51,7 @@ export const withLocalSecretsStore = <A, E, R>(
+       const store = (proxy.env as Record<string, unknown>).STORE as runtime.KVNamespace<string>;
+       return yield* use(store);
+     }),
+-  );
++  ).pipe(gatewayWrites.withPermit);
+ 
+ /** Write a secret value into the local store (idempotent overwrite). */
+ export const seedLocalSecret = (storeId: string, secretName: string, value: string) =>

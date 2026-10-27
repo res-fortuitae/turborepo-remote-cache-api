@@ -9,6 +9,7 @@ import { deleteOrganizationProjects } from "@repo/db";
 import { InstancePolicy, tightenPolicy, type AuthSettings } from "@repo/deploy-config";
 import * as Schema from "effect/Schema";
 import {
+  effectiveOrganizationPermissions,
   organizationAccess,
   organizationRoles,
   hasOrganizationPermission,
@@ -275,6 +276,20 @@ export const organizationPlugins = (
     {
       id: "organization-policy",
       endpoints: {
+        myOrganizationPermissions: createAuthEndpoint(
+          "/organization/my-permissions",
+          { method: "GET", use: [fresh], query: z.object({ organizationId: z.string() }) },
+          async (ctx) => {
+            await activeOrg(ctx.query.organizationId);
+            const own = await effectiveOrganizationPermissions(
+              db,
+              ctx.query.organizationId,
+              ctx.context.session.user.id,
+            );
+            if (!own) throw new APIError("FORBIDDEN");
+            return ctx.json(own);
+          },
+        ),
         transferOrganizationOwnership: createAuthEndpoint(
           "/organization/transfer-ownership",
           {

@@ -58,3 +58,5 @@ export {
   QuotaEvictionLive,
 } from "./quotas.ts";
 export type { QuotaScope, QuotaSettings } from "./quotas.ts";
+
+export { Anomalies, AnomaliesLive, AnomalyAlerts, AnomalyDeliveryError } from "./anomalies.ts";

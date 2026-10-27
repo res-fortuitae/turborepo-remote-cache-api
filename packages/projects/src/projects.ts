@@ -51,6 +51,9 @@ const presentTrustPolicy = (row: TrustPolicy) => ({
   createdAt: new Date(row.createdAt).toISOString(),
 });
 
+const decodeProjectPermissions = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ project: Schema.optional(Schema.Array(Schema.String)) })),
+);
 const decodeGrant = Schema.decodeUnknownEffect(GrantRequest);
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Adapter failures are unknown by definition.
@@ -414,6 +417,67 @@ const projects = Effect.gen(function* () {
           .set({ enabled: false })
           .where(eq(schema.trustPolicy.projectId, id)),
       ]);
+    }),
+    accessDirectory: Effect.fn("Projects.accessDirectory")(function* (
+      actor: ProjectActor,
+      id: string,
+    ) {
+      const row = yield* locate(id);
+      yield* requirePermission(actor, "grant", row.orgId, id);
+      const members = yield* database.query("Projects.directoryMembers", (db) =>
+        db
+          .select({
+            member: schema.member,
+            user: {
+              id: schema.user.id,
+              name: schema.user.name,
+              email: schema.user.email,
+              image: schema.user.image,
+            },
+          })
+          .from(schema.member)
+          .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
+          .where(eq(schema.member.organizationId, row.orgId)),
+      );
+      const groups = yield* database.query("Projects.directoryTeams", (db) =>
+        db.select().from(schema.team).where(eq(schema.team.organizationId, row.orgId)),
+      );
+      const groupMembers = yield* database.query("Projects.directoryTeamMembers", (db) =>
+        db
+          .select({
+            id: schema.teamMember.id,
+            teamId: schema.teamMember.teamId,
+            userId: schema.teamMember.userId,
+          })
+          .from(schema.teamMember)
+          .innerJoin(schema.team, eq(schema.teamMember.teamId, schema.team.id))
+          .where(eq(schema.team.organizationId, row.orgId)),
+      );
+      const roles = yield* database.query("Projects.directoryRoles", (db) =>
+        db
+          .select()
+          .from(schema.organizationRole)
+          .where(eq(schema.organizationRole.organizationId, row.orgId)),
+      );
+      return {
+        members: members.map(({ member, user }) => ({
+          ...member,
+          createdAt: member.createdAt.toISOString(),
+          user,
+        })),
+        groups: groups.map((group) => ({
+          id: group.id,
+          name: group.name,
+          createdAt: group.createdAt.toISOString(),
+        })),
+        groupMembers,
+        // The access explainer needs project permissions, not the rest of the role catalog.
+        roles: roles.map((role) => ({
+          id: role.id,
+          role: role.role,
+          permission: { project: decodeProjectPermissions(role.permission).project ?? [] },
+        })),
+      };
     }),
     listGrants: Effect.fn("Projects.listGrants")(function* (actor: ProjectActor, id: string) {
       const row = yield* locate(id);

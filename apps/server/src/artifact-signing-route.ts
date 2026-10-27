@@ -1,4 +1,4 @@
-import { Auth, requirePasskeyProof } from "@repo/auth";
+import { Auth } from "@repo/auth";
 import { Authorization, AuthorizationCeilings } from "@repo/authz";
 import { ArtifactSigning } from "@repo/credentials";
 import { Database, InstanceSettingsRepo, schema } from "@repo/db";
@@ -9,6 +9,7 @@ import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
 import { readManagementJson } from "./projects-route.ts";
 
+import { requireAdminProof } from "./admin-proof.ts";
 export const signingPath = /^\/projects\/([^/]+)\/signing(?:\/(rotate))?$/;
 const decodeInput = Schema.decodeUnknownEffect(Schema.Struct({ required: Schema.Boolean }));
 export const artifactSigningRoute = Effect.gen(function* () {
@@ -52,16 +53,7 @@ export const artifactSigningRoute = Effect.gen(function* () {
     metadata: {},
   };
   if (request.method === "POST") {
-    if (policy.requirePasskeyForAdmins && ["owner", "admin"].includes(session.user.role ?? "")) {
-      const proof = yield* Effect.tryPromise(() =>
-        requirePasskeyProof(db.drizzle, session.session.id, session.user.id),
-      ).pipe(Effect.result);
-      if (proof._tag === "Failure")
-        return yield* Response.json(
-          { message: "Verify your administrator passkey before changing signing settings" },
-          { status: 403 },
-        );
-    }
+    yield* requireAdminProof(project.orgId, session.user, session.session.id);
     if (match[2]) yield* signing.rotate(project.orgId, projectId, event);
     else {
       const input = yield* decodeInput(yield* readManagementJson(request));
@@ -83,6 +75,8 @@ export const artifactSigningRoute = Effect.gen(function* () {
     BadRequest: () => Response.json({ message: "Invalid signing settings" }, { status: 400 }),
     SchemaError: () => Response.json({ message: "Invalid signing settings" }, { status: 400 }),
     Unauthenticated: () => Response.json({ message: "Sign in required" }, { status: 401 }),
+    Forbidden: () =>
+      Response.json({ message: "Verify an administrator passkey first" }, { status: 403 }),
     AuthzError: () => Response.json({ message: "Project admin access required" }, { status: 403 }),
     ArtifactSigningError: () =>
       Response.json(
