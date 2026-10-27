@@ -80,6 +80,16 @@ export const multipartRoute = <R>(
     }
     if (match[1]) {
       const ticket = yield* uploads.resolve(match[1], owner, match[4] === "abort");
+      if (
+        scope.requireArtifactSigning &&
+        match[4] !== "abort" &&
+        !/^[A-Za-z0-9+/]{43}=$/.test(ticket.provenance.tag ?? "")
+      )
+        return yield* new ApiError({
+          status: 403,
+          code: "signature_required",
+          message: "Artifact signature tag required",
+        });
       if (match[2] && match[3] && request.method === "PUT")
         return yield* Response.json(
           yield* uploads.part(

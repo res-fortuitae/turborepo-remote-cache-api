@@ -336,3 +336,26 @@ export const usageInventory = sqliteTable("usage_inventory", {
   startedAt: integer("started_at").notNull(),
   completedAt: integer("completed_at"),
 });
+
+/** Envelope-encrypted artifact HMAC keys. No plaintext key material is stored in D1. */
+export const artifactSigningKey = sqliteTable(
+  "artifact_signing_key",
+  {
+    id: text().primaryKey(),
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    envelope: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+    retiredAt: integer("retired_at"),
+  },
+  (t) => [
+    index("artifact_signing_project").on(t.projectId, t.createdAt),
+    uniqueIndex("artifact_signing_current")
+      .on(t.projectId)
+      .where(sql`${t.retiredAt} is null`),
+  ],
+);
+export const artifactSigningSettings = sqliteTable("artifact_signing_settings", {
+  projectId: text("project_id").primaryKey(),
+  required: integer({ mode: "boolean" }).notNull().default(false),
+});

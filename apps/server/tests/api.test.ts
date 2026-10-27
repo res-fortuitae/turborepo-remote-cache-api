@@ -3,7 +3,7 @@ import { describeContract } from "./support/contract.ts";
 import { inProcessTarget, memoryBucket, serveInProcess } from "./support/in-process.ts";
 import { describePermissionMatrix } from "./support/permission-matrix.ts";
 import { bearer, uniqueTeam } from "./support/target.ts";
-import { testTurboRoundTrip } from "./support/turbo.ts";
+import { turboRoundTrip, testTurboRoundTrip } from "./support/turbo.ts";
 
 const token = "unit-test-token";
 
@@ -48,6 +48,15 @@ describe("turbo against the in-process API", () => {
   afterAll(() => server.stop(true));
 
   testTurboRoundTrip(() => ({ api: server.url.origin, token }));
+  test("real Turbo signs uploads and verifies downloaded artifacts", async () => {
+    await turboRoundTrip(
+      server.url.origin,
+      token,
+      undefined,
+      0,
+      "test-artifact-signature-key-at-least-32-bytes",
+    );
+  });
 });
 
 test("upload provenance is server-owned and is not returned as artifact response headers", async () => {

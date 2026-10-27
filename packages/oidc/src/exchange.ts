@@ -1,6 +1,6 @@
 import { ExchangeRequest, type ExchangeResponse } from "@repo/api-spec";
 import { AuditLog } from "@repo/audit";
-import { CacheTokenSigner, DpopVerifier } from "@repo/credentials";
+import { ArtifactSigning, CacheTokenSigner, DpopVerifier } from "@repo/credentials";
 import { InstanceSettingsRepo, ProjectRepo, TrustPolicyRepo } from "@repo/db";
 import { CanonicalOrigin, OidcAudience, type IdentityCeilings } from "@repo/deploy-config";
 import { ExchangeRateLimiter as RateLimiter } from "@repo/ratelimit";
@@ -93,6 +93,7 @@ const makeExchange = Effect.gen(function* () {
   const ceilings = yield* ExchangeConfig;
   const audiences = yield* OidcAudience;
   const api = yield* CanonicalOrigin;
+  const artifactSigning = yield* Effect.serviceOption(ArtifactSigning);
 
   return {
     exchange: Effect.fn("OidcExchange.exchange")(function* (
@@ -224,7 +225,24 @@ const makeExchange = Effect.gen(function* () {
                   ),
                 );
 
-        if (policy.requireArtifactSigning) return yield* denied("artifact_signing_unavailable");
+        const signing =
+          artifactSigning._tag === "Some"
+            ? yield* artifactSigning.value.deliver(request.team, project.id, {
+                scope: "org",
+                orgId: request.team,
+                projectId: project.id,
+                actor: { type: "oidc", id: verified.subject, display: verified.issuer },
+                action: "artifact.signing.access",
+                target: { type: "project", id: project.id },
+                outcome: "allow",
+                ip: context.ip,
+                userAgent: context.userAgent,
+                requestId: context.requestId,
+                metadata: {},
+              })
+            : undefined;
+        if (policy.requireArtifactSigning && !signing)
+          return yield* denied("artifact_signing_unavailable");
 
         const ttl = Math.floor(
           Math.min(
@@ -287,6 +305,7 @@ const makeExchange = Effect.gen(function* () {
           team: request.team,
           project: project.id,
           scope: decision.scope,
+          ...signing,
         } satisfies ExchangeResponse;
       }).pipe(Effect.mapError((error) => (error instanceof ExchangeError ? error : unavailable())));
 

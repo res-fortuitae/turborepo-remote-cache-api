@@ -136,6 +136,7 @@ export const MultipartUploadsLive = Layer.effect(
           provenance: Object.fromEntries(
             Object.entries(metadata).filter(([key]) =>
               [
+                "tag",
                 "uploadedAt",
                 "credentialType",
                 "credentialId",

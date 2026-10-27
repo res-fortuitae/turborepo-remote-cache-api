@@ -79,6 +79,7 @@ export interface ArtifactScope {
   readonly requestsPerMinute?: number;
   readonly credential?: ResolvedCredential;
   readonly maxUploadBytes: number;
+  readonly requireArtifactSigning?: boolean;
 }
 
 export interface ApiDependencies<R> {
@@ -113,6 +114,7 @@ export interface ApiDependencies<R> {
       readonly method: string;
       readonly dpop?: string;
       readonly scheme: string;
+      readonly artifactTag?: string;
       readonly proofAlreadyVerified?: boolean;
     },
   ) => Effect.Effect<ArtifactScope, ApiError, R>;
@@ -238,6 +240,7 @@ export const artifactApi = <R>({
           {
             method: request.method,
             dpop: request.headers.dpop,
+            artifactTag: request.headers["x-artifact-tag"],
             scheme: scheme!,
             proofAlreadyVerified,
           },

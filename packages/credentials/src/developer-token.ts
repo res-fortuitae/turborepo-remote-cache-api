@@ -6,6 +6,7 @@ import { InstanceSettingsRepo, ProjectRepo } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { RateLimiter } from "@repo/ratelimit";
 import { Clock, Context, Effect, Layer, Redacted, Schema } from "effect";
+import { ArtifactSigning } from "./artifact-signing.ts";
 import { CacheTokenSigner } from "./cache-token.ts";
 
 export class DeveloperTokenError extends Schema.TaggedError<DeveloperTokenError>()(
@@ -26,6 +27,7 @@ const make = Effect.gen(function* () {
   const audit = yield* AuditLog;
   const limiter = yield* RateLimiter;
   const api = yield* CanonicalOrigin;
+  const artifactSigning = yield* Effect.serviceOption(ArtifactSigning);
   return {
     issue: Effect.fn("DeveloperTokens.issue")(function* (
       input: unknown,
@@ -54,8 +56,24 @@ const make = Effect.gen(function* () {
           if (policy.developerCacheWrites !== true) return yield* denied();
           yield* authorization.require(principal, "cache:write", resource);
         }
-        // Delivery of signing keys is a separate capability; fail closed under that policy.
-        if (policy.requireArtifactSigning || policy.requireBoundTokens) return yield* denied();
+        if (policy.requireBoundTokens) return yield* denied();
+        const signing =
+          artifactSigning._tag === "Some"
+            ? yield* artifactSigning.value.deliver(request.team, project.id, {
+                scope: "org",
+                orgId: request.team,
+                projectId: project.id,
+                actor: { type: "user", id: session.user.id, display: session.user.name },
+                action: "artifact.signing.access",
+                target: { type: "project", id: project.id },
+                outcome: "allow",
+                ip: headers.get("cf-connecting-ip") ?? "",
+                userAgent: headers.get("user-agent") ?? "",
+                requestId: crypto.randomUUID(),
+                metadata: {},
+              })
+            : undefined;
+        if (policy.requireArtifactSigning && !signing) return yield* denied();
         const now = yield* Clock.currentTimeMillis;
         const ttl = Math.min(
           request.ttlSeconds ?? 3600,
@@ -93,6 +111,7 @@ const make = Effect.gen(function* () {
           project: project.id,
           token: Redacted.make(issued.token),
           scope,
+          ...signing,
           expiresAt: new Date(issued.principal.expiresAt * 1000).toISOString(),
         };
       });

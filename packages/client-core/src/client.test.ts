@@ -768,3 +768,46 @@ test("CircleCI requests a fresh custom audience with argv rather than reusing it
     f,
   );
 });
+
+test("running jobs pin their signing key only through the server's bounded overlap", () => {
+  let acquisitions = 0;
+  const old = Redacted.make("old-signature-key"),
+    current = Redacted.make("new-signature-key");
+  const f = fixture({
+    env: {},
+    developer: {
+      acquire: Effect.gen(function* () {
+        acquisitions++;
+        return {
+          token: Redacted.make(cacheSecret),
+          signatureKey: acquisitions === 1 ? old : current,
+          previousSignatureKeys: acquisitions === 2 ? [old] : [],
+          expiresAt: new Date((yield* Clock.currentTimeMillis) + 120000).toISOString(),
+          api,
+          team: "org",
+          project: "prj",
+          scope: "read" as const,
+        };
+      }),
+    },
+  });
+  return run(
+    Effect.gen(function* () {
+      const cache = yield* TokenCache;
+      const first = yield* cache.get;
+      expect(
+        first?.source !== "apiKey" && first?.signatureKey && Redacted.value(first.signatureKey),
+      ).toBe("old-signature-key");
+      yield* TestClock.adjust(95000);
+      const second = yield* cache.get;
+      expect(
+        second?.source !== "apiKey" && second?.signatureKey && Redacted.value(second.signatureKey),
+      ).toBe("old-signature-key");
+      expect(f.masks).toContain("new-signature-key");
+      yield* TestClock.adjust(95000);
+      expect(yield* cache.get).toBeUndefined();
+      expect(yield* cache.peek).toBeUndefined();
+    }),
+    f,
+  );
+});

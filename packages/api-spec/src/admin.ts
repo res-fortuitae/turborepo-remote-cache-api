@@ -82,6 +82,18 @@ export const ProjectStorage = Schema.Struct({
   }),
 });
 
+export const ArtifactSigningStatus = Schema.Struct({
+  required: Schema.Boolean,
+  instanceRequired: Schema.Boolean,
+  keys: Schema.Array(
+    Schema.Struct({
+      id: Id,
+      createdAt: NonNegativeInteger,
+      retiredAt: Schema.NullOr(NonNegativeInteger),
+    }),
+  ),
+});
+
 export const ProjectList = Schema.Struct({
   items: Schema.Array(Project),
   nextCursor: Schema.NullOr(Schema.String),

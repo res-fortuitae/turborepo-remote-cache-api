@@ -18,6 +18,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
       readonly method: string;
       readonly dpop?: string;
       readonly scheme: string;
+      readonly artifactTag?: string;
       readonly proofAlreadyVerified?: boolean;
     },
   ) {
@@ -34,6 +35,20 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
           status: 400,
           code: "bad_request",
           message: "Invalid legacy team",
+        });
+      const legacyPolicy = yield* (yield* InstanceSettingsRepo).policy(
+        "",
+        yield* AuthorizationCeilings,
+      );
+      if (
+        action === "cache:write" &&
+        legacyPolicy.requireArtifactSigning &&
+        !/^[A-Za-z0-9+/]{43}=$/.test(request?.artifactTag ?? "")
+      )
+        return yield* new ApiError({
+          status: 403,
+          code: "signature_required",
+          message: "Artifact signature tag required",
         });
       const limits = yield* ProjectLimits;
 
@@ -58,6 +73,11 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
         });
     } else if (request?.dpop || request?.scheme === "dpop")
       return yield* new DpopInvalid({ reason: "binding" });
+    const signatureTag = request?.artifactTag;
+    const multipartContinuation = /^\/v8\/x\/uploads\/[^/]+\//.test(url.pathname);
+    const signed =
+      multipartContinuation ||
+      (typeof signatureTag === "string" && /^[A-Za-z0-9+/]{43}=$/.test(signatureTag));
     const authorization = yield* Authorization;
     yield* authorization.require(
       {
@@ -68,6 +88,8 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
         scope: principal.scope,
         issuedAt: principal.issuedAt,
         expiresAt: principal.expiresAt,
+        signed,
+        bound: principal.cnf !== undefined,
       },
       action,
       { orgId: principal.org, projectId: principal.project },
@@ -139,9 +161,23 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     const policy = yield* settings.policy(principal.org, ceilings);
     if (policy.requireBoundTokens && principal.cnf === undefined)
       return yield* new DpopInvalid({ reason: "binding" });
+    const [signing] = yield* database.query("Cache.signing", (db) =>
+      db
+        .select()
+        .from(schema.artifactSigningSettings)
+        .where(eq(schema.artifactSigningSettings.projectId, principal.project)),
+    );
+    const requireArtifactSigning = policy.requireArtifactSigning || signing?.required === true;
+    if (action === "cache:write" && requireArtifactSigning && !signed)
+      return yield* new ApiError({
+        status: 403,
+        code: "signature_required",
+        message: "Artifact signature tag required",
+      });
     const limits = yield* ProjectLimits;
 
     return {
+      requireArtifactSigning,
       prefix: `${principal.org}/${principal.project}`,
       cacheGeneration: yield* CoordinatorClient.use((client) =>
         client.cacheGeneration(principal.project, action === "cache:write"),
