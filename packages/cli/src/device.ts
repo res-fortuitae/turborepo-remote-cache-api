@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { mkdir, chmod, writeFile, rename, lstat, readFile } from "node:fs/promises";
+import { mkdir, chmod, writeFile, rename, lstat, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -25,7 +25,15 @@ export const saveSession = async (api: string, token: string) => {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Unsafe config directory");
   await chmod(directory, 0o700);
   const temporary = join(directory, `session-${crypto.randomUUID()}.tmp`);
-  await writeFile(temporary, JSON.stringify({ api, token }), { mode: 0o600, flag: "wx" });
+  let credential: { api: string; token?: string; keychain?: boolean };
+  try {
+    await Bun.secrets.set({ service: "tcache", name: api, value: token, persist: "local" });
+    credential = { api, keychain: true };
+  } catch {
+    console.error("OS credential store unavailable; using a private session file.");
+    credential = { api, token };
+  }
+  await writeFile(temporary, JSON.stringify(credential), { mode: 0o600, flag: "wx" });
   await rename(temporary, join(directory, "session.json"));
 };
 export const readSession = async (): Promise<{ api: string; token: string } | undefined> => {
@@ -34,8 +42,14 @@ export const readSession = async (): Promise<{ api: string; token: string } | un
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) throw new Error();
     const value = JSON.parse(await readFile(path, "utf8"));
-    if (typeof value.api !== "string" || typeof value.token !== "string") throw new Error();
-    return { api: safeServer(value.api), token: value.token };
+    if (typeof value.api !== "string") throw new Error();
+    const api = safeServer(value.api);
+    const token =
+      value.keychain === true
+        ? await Bun.secrets.get({ service: "tcache", name: api })
+        : value.token;
+    if (typeof token !== "string" || !token) throw new Error();
+    return { api, token };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
     throw new Error("Cannot read private tcache session. Run login again.");
@@ -112,4 +126,23 @@ export const deviceLogin = async (
     throw new Error("Device request denied or expired. Run login again.");
   }
   throw new Error("Device request expired. Run login again.");
+};
+
+export const removeSession = async () => {
+  const session = await readSession();
+  const metadata = session
+    ? JSON.parse(await readFile(join(configDirectory(), "session.json"), "utf8"))
+    : undefined;
+  if (session && metadata?.keychain === true) {
+    try {
+      await Bun.secrets.delete({ service: "tcache", name: session.api });
+    } catch {
+      /* File fallback has no keychain entry. */
+    }
+  }
+  try {
+    await unlink(join(configDirectory(), "session.json"));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
 };

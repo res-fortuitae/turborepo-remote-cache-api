@@ -1,7 +1,8 @@
 # @repo/cli
 
-Run with Bun: `bun packages/cli/src/bin.ts <command>`. Full Effect CLI routing and
-single binary distribution follow in STV-453/488. These authentication commands
+Run with Bun: `bun packages/cli/src/bin.ts <command>`. Effect CLI provides command
+validation, help, completions and wizard support. Single binary distribution is
+tracked in STV-488. These authentication commands
 use `@repo/client-core`; no Worker implementation is imported.
 
 ```sh
@@ -79,3 +80,34 @@ erase the unpaced result or establish a production WAN guarantee.
 
 `doctor --server [URL] [--json]` reads validated instance capabilities using
 TURBO_API/TURBO_TOKEN. Other doctor checks follow in STV-489.
+
+## Developer commands
+
+```sh
+tcache login --api https://cache.example.com
+tcache whoami
+tcache link --team my-org --project PROJECT_ID
+tcache exec -- turbo run build
+tcache token --refresh # prints a secret; prefer exec
+tcache logout
+```
+
+Login prefers the native OS credential manager via `Bun.secrets`; when unavailable,
+it warns and uses a 0600 file under a 0700 `~/.config/tcache` directory. Keychain
+metadata contains no session token. A keychain lookup failure fails closed. Logout
+revokes the session remotely before deleting local credentials, so network failure
+leaves it available for a retry. See [device login](../../docs/device-login.md) and
+[developer tokens](../../docs/developer-tokens.md).
+
+Link accepts a team ID/slug and project ID, or offers interactive choices. Project
+listing requires the organization's list permission; members with only a direct
+project grant should pass its ID. The non-secret `.turbo-cache.json` records API,
+organization ID/slug, and project ID/slug. Existing files require `--force`.
+
+Admin commands keep authorization on the server. Use `admin projects
+list|create|get|update|delete`, `admin keys list|create|revoke`, and `admin policies
+list|create|update|delete|test`; pass `--team`, `--project`, `--id` as appropriate and
+`--json '<request body>'` for mutations. Key bodies use `organizationId` and the
+server's scoped key contract. A key creation response is intentionally secret;
+never log it. Project deletion requires the server's confirmation body. Purge
+retains its preview/confirm workflow and session-cookie adapter.

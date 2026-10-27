@@ -11,7 +11,8 @@ custom scopes are rejected. This flow obtains a Better Auth session, not a cache
 JWT. Developer cache token issuance is separate. Treat the CLI session as an
 account credential: it can exercise the signed-in user's application access.
 
-Sessions are stored in `~/.config/tcache/session.json` (directory 0700, file 0600).
+Sessions prefer the native OS credential store. If unavailable, login warns and
+falls back to `~/.config/tcache/session.json` (directory 0700, file 0600).
 No session or device secret is printed. Use an OS-encrypted home directory on
 shared machines. The CLI rejects symlink session files and insecure file modes.
 
