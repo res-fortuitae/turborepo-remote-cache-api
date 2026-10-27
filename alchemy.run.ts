@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import { Stage } from "alchemy/Stage";
 import {
   ArtifactBucket,
+  AnalyticsBasin,
   BackupBucket,
   CacheNamespace,
   Database,
@@ -56,6 +57,7 @@ export default Alchemy.Stack(
       const database = yield* Database;
       const cache = yield* CacheNamespace;
       yield* BackupBucket;
+      yield* AnalyticsBasin;
       const worker = yield* Worker;
 
       return {
@@ -79,6 +81,8 @@ export default Alchemy.Stack(
         jurisdiction: residency.jurisdiction,
         artifactRetentionDays: config.limits.artifactRetentionDays,
         auditHistoryEnabled: capabilities.auditHistory.enabled,
+        analyticsInfrastructureEnabled:
+          capabilities.workersPlan === "paid" && config.features.analytics !== false,
       }),
     );
   }),

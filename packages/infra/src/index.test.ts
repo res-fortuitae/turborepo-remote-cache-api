@@ -3,7 +3,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Test from "alchemy/Test/Bun";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AuditBasin, auditBasinEnabled } from "./index.ts";
+import { AnalyticsBasin, AuditBasin, auditBasinEnabled } from "./index.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers(), dev: true });
 
@@ -13,6 +13,7 @@ test.provider(
     Effect.gen(function* () {
       // No InfraConfig is supplied: dev must exit before resolving catalog props.
       expect(Option.isNone(yield* AuditBasin)).toBe(true);
+      expect(Option.isNone(yield* AnalyticsBasin)).toBe(true);
       expect(auditBasinEnabled({ dev: true, jurisdiction: undefined, catalogToken: true })).toBe(
         false,
       );

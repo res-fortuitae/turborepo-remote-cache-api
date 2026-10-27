@@ -119,6 +119,7 @@ import { capabilitiesRoute } from "./capabilities-route.ts";
 import { CapabilityReport } from "@repo/shared";
 import {
   ArtifactBucket,
+  AnalyticsBasin,
   AuditBasin,
   AuditCheckpointBucket,
   BasinSqlToken,
@@ -299,6 +300,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const checkpointBucket = yield* Cloudflare.R2.ReadWriteBucket(AuditCheckpointBucket);
     const auditStream = yield* AuditBasin;
+    const analyticsStreams = yield* AnalyticsBasin;
+    if (Option.isSome(analyticsStreams)) {
+      yield* Cloudflare.Basin.WriteStream(analyticsStreams.value.cacheEvents);
+      yield* Cloudflare.Basin.WriteStream(analyticsStreams.value.artifactOps);
+    }
 
     const auditWriter = Option.isSome(auditStream)
       ? Option.some(yield* Cloudflare.Basin.WriteStream(auditStream.value))

@@ -44,3 +44,4 @@ export {
 
 export { DeveloperTokenRequest, DeveloperTokenApi } from "./oidc.ts";
 export { HealthReport, SelfTestReport } from "./health.ts";
+export { CacheEventRecord, ArtifactOperationRecord } from "./analytics-events.ts";
