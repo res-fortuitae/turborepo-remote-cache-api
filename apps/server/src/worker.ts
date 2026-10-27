@@ -5,7 +5,12 @@ import { AuditReaderLive, AuditHistory, AuditHistoryDisabled, AuditQueryError } 
 import { healthRoute } from "./health-route.ts";
 import { selftestRoute } from "./selftest-route.ts";
 import { developerTokenRoute } from "./developer-token-route.ts";
-import { DeveloperTokensLive } from "@repo/credentials";
+import { artifactSigningRoute, signingPath } from "./artifact-signing-route.ts";
+import {
+  ArtifactEncryptionSecret,
+  ArtifactSigningLive,
+  DeveloperTokensLive,
+} from "@repo/credentials";
 import { PolicyGuardrailsLive } from "@repo/oidc";
 import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/artifacts";
 import { multipartRoute } from "./multipart-route.ts";
@@ -1230,6 +1235,33 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
     );
+    const artifactSigningLayer = ArtifactSigningLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          databaseLayer,
+          auditLayer,
+          Layer.effect(
+            ArtifactEncryptionSecret,
+            Effect.map(authSecret.raw, (secret) => ({
+              get: Effect.tryPromise(() => secret.get()).pipe(Effect.map(Redacted.make)),
+            })),
+          ),
+        ),
+      ),
+    );
+    const signingSettings = artifactSigningRoute.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          artifactSigningLayer,
+          authLayer,
+          authorizationLayer,
+          databaseLayer,
+          InstanceSettingsRepoLive.pipe(Layer.provide(databaseLayer)),
+          Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {}),
+        ),
+      ),
+      Effect.provide(databaseLayer),
+    );
     const developerTokens = developerTokenRoute(
       DeveloperTokensLive.pipe(
         Layer.provide(
@@ -1237,6 +1269,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             authLayer,
             authorizationLayer,
             tokenSignerLayer,
+            artifactSigningLayer,
             auditLayer,
             rateLimitLayer,
             ProjectRepoLive,
@@ -1255,6 +1288,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             TrustPolicyMatcherLive,
             PolicyGuardrailsLive,
             tokenSignerLayer,
+            artifactSigningLayer,
             auditLayer,
             ProjectRepoLive,
             TrustPolicyRepoLive,
@@ -1436,6 +1470,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             : HttpServerResponse.empty({ status: 405 });
         if (pathname === "/api/instance/selftest") return yield* selftest;
 
+        if (signingPath.test(pathname)) return yield* signingSettings;
         if (pathname === "/tokens/dev") return yield* developerTokens;
 
         if (pathname === "/api/instance/capabilities") return yield* report;

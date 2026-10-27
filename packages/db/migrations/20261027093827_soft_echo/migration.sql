@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `artifact_signing_current` ON `artifact_signing_key` (`project_id`) WHERE "artifact_signing_key"."retired_at" is null;

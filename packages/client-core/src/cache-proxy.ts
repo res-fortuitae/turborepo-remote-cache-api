@@ -1,3 +1,4 @@
+import { bridgeRotatedSignature } from "./signature-rotation.ts";
 import { MULTIPART_PART_BYTES } from "@repo/api-spec";
 import { uploadStream, type UploadSend } from "./proxy-upload.ts";
 import { Context, Effect, Layer, Redacted } from "effect";
@@ -212,10 +213,32 @@ const make = Effect.gen(function* () {
         ])
           outgoing.delete(name);
 
-        return new Response(request.method === "HEAD" ? null : response.body, {
+        const bodyResponse = new Response(request.method === "HEAD" ? null : response.body, {
           status: response.status,
           headers: outgoing,
         });
+        if (
+          request.method === "GET" &&
+          response.status === 200 &&
+          credential.source !== "apiKey" &&
+          credential.signatureKey &&
+          credential.previousSignatureKeys?.length &&
+          /^\/v8\/artifacts\/[a-fA-F0-9]+$/.test(incoming.pathname)
+        ) {
+          return yield* Effect.promise(() =>
+            bridgeRotatedSignature(
+              bodyResponse,
+              incoming.pathname.split("/").at(-1)!,
+              incoming.searchParams.get("teamId") ?? "",
+              Redacted.value(credential.signatureKey!),
+              [credential.signatureKey!, ...credential.previousSignatureKeys!].map((key) =>
+                Redacted.value(key),
+              ),
+              request.signal,
+            ),
+          );
+        }
+        return bodyResponse;
       }
 
       return new Response(null, { status: 502 });

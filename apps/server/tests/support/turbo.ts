@@ -16,11 +16,18 @@ export const turboRoundTrip = async (
   token: string,
   selectedTeam?: string,
   artifactBytes = 0,
+  signatureKey?: string,
 ) => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cache-turbo-e2e-"));
   const team = selectedTeam ?? uniqueTeam("e2e");
   const expected = `remote cache round trip ${team} ${uniqueTeam("run")}\n`;
-  const env = { ...process.env, TURBO_API: api, TURBO_TOKEN: token, TURBO_TEAM: team };
+  const env = {
+    ...process.env,
+    TURBO_API: api,
+    TURBO_TOKEN: token,
+    TURBO_TEAM: team,
+    ...(signatureKey ? { TURBO_REMOTE_CACHE_SIGNATURE_KEY: signatureKey } : {}),
+  };
 
   const run = async (command: string[]) => {
     const child = Bun.spawn(command, { cwd: directory, env, stdout: "pipe", stderr: "pipe" });
@@ -49,7 +56,10 @@ export const turboRoundTrip = async (
     );
     await Bun.write(
       NodePath.join(directory, "turbo.json"),
-      JSON.stringify({ tasks: { build: { outputs: ["dist/**"] } } }),
+      JSON.stringify({
+        tasks: { build: { outputs: ["dist/**"] } },
+        ...(signatureKey ? { remoteCache: { signature: true } } : {}),
+      }),
     );
     await Bun.write(
       NodePath.join(directory, "build.ts"),

@@ -6,6 +6,19 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ## Unreleased
 
+### Artifact signing (STV-475)
+
+- Apply the additive signing-key/settings tables and active-key unique index.
+  Generate a project key in Settings before enabling signature enforcement.
+  Existing unsigned caches are not retroactively signed.
+- OIDC and developer-token clients receive HMAC keys automatically. Update the
+  Action/CLI and enable `remoteCache.signature` in the repository's turbo.json.
+- Preserve the existing Better Auth secret: it also supplies domain-separated
+  envelope wrapping material. Rewrap stored envelopes before rotating that root
+  secret. Project key rotation has a 24-hour overlap and is audited.
+- See [artifact signatures](docs/artifact-signatures.md) for proxy/env rotation
+  behavior, upload enforcement and residual poisoning risks.
+
 ### Multipart artifact uploads (STV-492)
 
 - Direct requests retain their zone-dependent 100/200 MB ceiling. Optional

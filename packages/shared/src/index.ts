@@ -18,6 +18,7 @@ export {
   ProjectGrants,
   ProjectList,
   ProjectStorage,
+  ArtifactSigningStatus,
   TrustPolicy,
   TrustPolicyList,
   TestTrustPoliciesResponse,

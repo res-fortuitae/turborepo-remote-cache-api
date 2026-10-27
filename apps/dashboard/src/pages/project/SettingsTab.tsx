@@ -1,3 +1,4 @@
+import { SigningCard } from "./SigningCard.tsx";
 import { useState } from "react";
 import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import type { Project, ProjectStorage } from "@repo/shared";
@@ -79,6 +80,7 @@ export function SettingsTab({
 
   return (
     <div className="flex flex-col gap-6">
+      {canUpdate ? <SigningCard projectId={project.id} /> : null}
       <Card>
         <CardHeader>
           <CardTitle>General</CardTitle>

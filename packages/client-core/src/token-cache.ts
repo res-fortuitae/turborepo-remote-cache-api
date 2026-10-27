@@ -1,5 +1,5 @@
 import type { ExchangeResponse } from "@repo/api-spec";
-import { Clock, Context, Effect, Layer, Semaphore } from "effect";
+import { Clock, Context, Effect, Layer, Redacted, Semaphore } from "effect";
 import { CiProvider } from "./ci-provider.ts";
 import { ClientAuthError, ClientConfig, ClientMessages } from "./config.ts";
 import { DpopSigner } from "./dpop.ts";
@@ -104,8 +104,9 @@ const make = Effect.gen(function* () {
       if (retry !== undefined && now < retry.at) return yield* fail(retry.error);
 
       return yield* acquire.pipe(
-        Effect.flatMap((credential) =>
+        Effect.flatMap((received) =>
           Effect.gen(function* () {
+            let credential = received;
             const current = yield* Clock.currentTimeMillis;
             const expiry = expires(credential);
 
@@ -114,10 +115,33 @@ const make = Effect.gen(function* () {
                 reason: "invalid_response",
                 message: "Cache credential is expired. Renew the CI identity or developer session.",
               });
+            // An exported environment cannot change under a running Turbo process.
+            // Pin its first key, but only while the server still includes it in the active overlap.
+            if (
+              cached?.source !== "apiKey" &&
+              cached?.signatureKey &&
+              credential.source !== "apiKey" &&
+              credential.signatureKey
+            ) {
+              const pinned = Redacted.value(cached.signatureKey);
+              const keys = [credential.signatureKey, ...(credential.previousSignatureKeys ?? [])];
+              if (!keys.some((key) => Redacted.value(key) === pinned))
+                return yield* new ClientAuthError({
+                  reason: "invalid_response",
+                  message: "Artifact signing key overlap ended. Restart this cache job.",
+                });
+              credential = {
+                ...credential,
+                signatureKey: cached.signatureKey,
+                previousSignatureKeys: keys.filter((key) => Redacted.value(key) !== pinned),
+              };
+            }
             yield* messages.mask(credential.token);
 
             if (credential.source !== "apiKey" && credential.signatureKey !== undefined)
               yield* messages.mask(credential.signatureKey);
+            if (credential.source !== "apiKey")
+              for (const key of credential.previousSignatureKeys ?? []) yield* messages.mask(key);
             cached = credential;
             // Very short tokens should still coalesce; refresh at most halfway through their life.
             refreshAt =

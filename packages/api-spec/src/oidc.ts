@@ -21,6 +21,9 @@ export const ExchangeResponse = Schema.Struct({
   project: Id,
   scope: CacheScope,
   signatureKey: Schema.optional(Schema.RedactedFromValue(Schema.NonEmptyString)),
+  previousSignatureKeys: Schema.optional(
+    Schema.Array(Schema.RedactedFromValue(Schema.NonEmptyString)).check(Schema.isMaxLength(1)),
+  ),
 });
 
 export const OidcApi = HttpApiGroup.make("oidc").add(

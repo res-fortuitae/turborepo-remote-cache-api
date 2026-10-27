@@ -707,3 +707,75 @@ test("bound cache JWT cannot be used without its fresh request proof, including 
       expect((yield* request("GET", undefined, bearer.token, "Bearer")).status).toBe(200);
     }).pipe(Effect.provide(layer), Effect.provideService(CanonicalOrigin, "https://cache.test")),
   ));
+
+test("project and instance signing requirements reject unsigned writes while reads remain available", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "org", slug: "team", name: "Team", createdAt: new Date() }),
+        q
+          .insert(schema.project)
+          .values({ id: "a", orgId: "org", slug: "a", name: "A", createdAt: 0 }),
+        q.insert(schema.artifactSigningSettings).values({ projectId: "a", required: true }),
+      ]);
+      const token = (yield* (yield* CacheTokenSigner).issue({
+        subject: "ci",
+        org: "org",
+        project: "a",
+        scope: "read write",
+        maxTtlSeconds: 900,
+      })).token;
+      const url = new URL("https://cache.test/v8/artifacts/abc");
+      expect(
+        (yield* Effect.result(
+          authorizeProjectCache(token, url, "cache:write", { method: "PUT", scheme: "bearer" }),
+        ))._tag,
+      ).toBe("Failure");
+      expect(
+        (yield* Effect.result(
+          authorizeProjectCache(token, url, "cache:write", {
+            method: "PUT",
+            scheme: "bearer",
+            artifactTag: "a".repeat(43) + "=",
+          }),
+        ))._tag,
+      ).toBe("Success");
+      expect(
+        (yield* Effect.result(
+          authorizeProjectCache(token, url, "cache:read", { method: "GET", scheme: "bearer" }),
+        ))._tag,
+      ).toBe("Success");
+      yield* db.batch((q) => [
+        q.update(schema.artifactSigningSettings).set({ required: false }),
+        q.insert(schema.instanceSettings).values({
+          id: 1,
+          schemaVersion: 1,
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [...defaultInstancePolicy.allowedOidcIssuers],
+            requireArtifactSigning: true,
+          },
+          updatedAt: Date.now(),
+        }),
+      ]);
+      expect(
+        (yield* Effect.result(
+          authorizeProjectCache(token, url, "cache:write", { method: "PUT", scheme: "bearer" }),
+        ))._tag,
+      ).toBe("Failure");
+      expect(
+        (yield* Effect.result(
+          authorizeProjectCache(token, url, "cache:write", {
+            method: "PUT",
+            scheme: "bearer",
+            artifactTag: "a".repeat(43) + "=",
+          }),
+        ))._tag,
+      ).toBe("Success");
+    }).pipe(Effect.provide(v2Layer), Effect.provideService(CanonicalOrigin, "https://cache.test")),
+  ));
