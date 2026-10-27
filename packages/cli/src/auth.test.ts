@@ -1,7 +1,7 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun application adapter integration. */
 import { expect, test } from "bun:test";
 import { formatEnvironment } from "./auth.ts";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,7 +23,7 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: async (request) => {
+    fetch: async (request): Promise<Response> => {
       upstreamToken = request.headers.get("authorization") ?? "";
 
       if (request.method === "PUT") {
@@ -58,7 +58,15 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
     );
 
     const child = Bun.spawn(
-      ["bun", new URL("./bin.ts", import.meta.url).pathname, "exec", "--", "bun", script],
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY
+          ? [Bun.env.TCACHE_TEST_BINARY]
+          : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+        "exec",
+        "--",
+        "bun",
+        script,
+      ],
       {
         env: {
           ...Bun.env,
@@ -98,7 +106,14 @@ test("daemon state is private, later processes can reach it, authenticated stop 
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
 
   const child = Bun.spawn(
-    ["bun", new URL("./bin.ts", import.meta.url).pathname, "proxy", "--state", state],
+    [
+      ...(Bun.env.TCACHE_TEST_BINARY
+        ? [Bun.env.TCACHE_TEST_BINARY]
+        : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+      "proxy",
+      "--state",
+      state,
+    ],
     {
       env: {
         ...Bun.env,
@@ -129,7 +144,14 @@ test("daemon state is private, later processes can reach it, authenticated stop 
     expect(await later.exited).toBe(0);
 
     const stop = Bun.spawn(
-      ["bun", new URL("./bin.ts", import.meta.url).pathname, "proxy-stop", "--state", state],
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY
+          ? [Bun.env.TCACHE_TEST_BINARY]
+          : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+        "proxy-stop",
+        "--state",
+        state,
+      ],
       { stdout: "ignore", stderr: "ignore" },
     );
 
@@ -184,7 +206,14 @@ test("proxy refreshes in background and retries safe reads without replaying upl
   const state = join(directory, "session.json");
 
   const child = Bun.spawn(
-    ["bun", new URL("./bin.ts", import.meta.url).pathname, "proxy", "--state", state],
+    [
+      ...(Bun.env.TCACHE_TEST_BINARY
+        ? [Bun.env.TCACHE_TEST_BINARY]
+        : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+      "proxy",
+      "--state",
+      state,
+    ],
     {
       env: {
         ...Bun.env,
@@ -226,3 +255,85 @@ test("proxy refreshes in background and retries safe reads without replaying upl
     await rm(directory, { recursive: true, force: true });
   }
 }, 10_000);
+
+test("default exec exchanges a saved developer session and forwards bearer credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tcache-developer-exec-"));
+  let exchanges = 0;
+  let reads = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request): Promise<Response> => {
+      if (new URL(request.url).pathname === "/tokens/dev") {
+        expect(request.method).toBe("POST");
+        expect(request.headers.get("origin")).toBe(server.url.origin);
+        expect(request.headers.get("authorization")).toBe("Bearer saved-session");
+        expect(await request.json()).toEqual({ team: "org", project: "project" });
+        exchanges++;
+        return Response.json({
+          token: "developer-cache-token",
+          api: server.url.origin,
+          team: "org",
+          project: "project",
+          scope: "read",
+          expiresAt: new Date(Date.now() + 300000).toISOString(),
+        });
+      }
+      // The server rejects a DPoP scheme/proof on an unbound developer token.
+      if (
+        request.headers.get("authorization") !== "Bearer developer-cache-token" ||
+        request.headers.has("dpop")
+      )
+        return new Response(null, { status: 401 });
+      reads++;
+      return new Response("cached artifact");
+    },
+  });
+  try {
+    const config = join(directory, ".config", "tcache");
+    await mkdir(config, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(config, "session.json"),
+      JSON.stringify({ api: server.url.origin, token: "saved-session" }),
+      { mode: 0o600 },
+    );
+    const script = join(directory, "child.ts");
+    await Bun.write(
+      script,
+      `const response = await fetch(Bun.env.TURBO_API + '/v8/artifacts/hash', { headers: { authorization: 'Bearer ' + Bun.env.TURBO_TOKEN } }); if (response.status !== 200 || await response.text() !== 'cached artifact') process.exit(1);`,
+    );
+    const child = Bun.spawn(
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY
+          ? [Bun.env.TCACHE_TEST_BINARY]
+          : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+        "exec",
+        "--",
+        "bun",
+        script,
+      ],
+      {
+        env: {
+          ...Bun.env,
+          HOME: directory,
+          TCACHE_API: server.url.origin,
+          TCACHE_TEAM: "org",
+          TCACHE_PROJECT: "project",
+          TCACHE_API_KEY: undefined,
+          TCACHE_CI_PROVIDER: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const stderr = await new Response(child.stderr).text();
+    expect(await child.exited).toBe(0);
+    expect(exchanges).toBe(1);
+    expect(reads).toBe(1);
+    expect(stderr).not.toContain("saved-session");
+    expect(stderr).not.toContain("developer-cache-token");
+  } finally {
+    await server.stop(true);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
