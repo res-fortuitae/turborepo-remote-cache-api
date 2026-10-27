@@ -19,6 +19,7 @@ export class AnalyticsInventory extends Context.Service<
     >;
   }
 >()("@repo/analytics/AnalyticsInventory") {}
+
 export class StorageReconciliation extends Context.Service<
   StorageReconciliation,
   {
@@ -33,9 +34,11 @@ export const StorageReconciliationLive = Layer.effect(
     const db = yield* Database;
     const inventory = yield* AnalyticsInventory;
     const accounting = yield* StorageAccounting;
+
     return {
       tick: Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
+
         const projects = yield* db.query("Analytics.inventory.projects", (q) =>
           q
             .select({ id: schema.project.id, orgId: schema.project.orgId })
@@ -54,6 +57,7 @@ export const StorageReconciliationLive = Layer.effect(
             )
             .limit(1),
         );
+
         for (const project of projects) {
           yield* db.query("Analytics.inventory.start", (q) =>
             q
@@ -65,19 +69,24 @@ export const StorageReconciliationLive = Layer.effect(
                 where: lt(schema.usageInventory.completedAt, now - 86_400_000),
               }),
           );
+
           const [state] = yield* db.query("Analytics.inventory.state", (q) =>
             q
               .select()
               .from(schema.usageInventory)
               .where(eq(schema.usageInventory.projectId, project.id)),
           );
+
           if (!state || state.completedAt !== null) continue;
           const prefix = `${project.orgId}/${project.id}/`;
           const page = yield* inventory.list(prefix, state.cursor ?? undefined);
+
           if (page.objects.length > 10)
             return yield* new AnalyticsError({ cause: "Inventory page exceeded limit" });
+
           for (const object of page.objects) {
             const hash = object.key.slice(prefix.length);
+
             if (!object.key.startsWith(prefix) || !/^[a-fA-F0-9]+$/.test(hash)) continue;
             yield* accounting.record(
               { orgId: project.orgId, projectId: project.id },
@@ -85,6 +94,7 @@ export const StorageReconciliationLive = Layer.effect(
               object.size,
             );
           }
+
           if (page.cursor) {
             yield* db.query("Analytics.inventory.cursor", (q) =>
               q

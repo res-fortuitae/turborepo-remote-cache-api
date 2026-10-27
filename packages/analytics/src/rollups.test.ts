@@ -13,6 +13,7 @@ import {
 import { StorageAccounting, StorageAccountingLive } from "./accounting.ts";
 
 const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000 - 3_600_000;
+
 const row = {
   org_id: "o",
   project_id: "p",
@@ -35,9 +36,11 @@ test("hourly reruns replace values, late data recomputes daily totals and failur
   let hits = 1;
   let fail = false;
   let queries = 0;
+
   const sql = Layer.succeed(BasinSqlClient, {
     query: (query) => {
       queries++;
+
       return fail
         ? Effect.fail(new AnalyticsError({ cause: "offline" }))
         : Effect.succeed(
@@ -47,6 +50,7 @@ test("hourly reruns replace values, late data recomputes daily totals and failur
           );
     },
   });
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const jobs = yield* AnalyticsRollups;
@@ -99,11 +103,13 @@ test("resumable inventory repairs expired objects and totals only after a comple
           : { objects: [{ key: `${prefix}aa`, size: 10 }], cursor: "next" },
       ),
   });
+
   const layer = StorageReconciliationLive.pipe(
     Layer.provideMerge(StorageAccountingLive),
     Layer.provide(inventory),
     Layer.provideMerge(DatabaseTest),
   );
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const db = yield* Database;

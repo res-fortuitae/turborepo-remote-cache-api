@@ -14,6 +14,7 @@ export class CacheEventsStream extends Context.Service<
     readonly send: (events: readonly CacheEventRecord[]) => Effect.Effect<void, unknown>;
   }
 >()("@repo/analytics/CacheEventsStream") {}
+
 export class ArtifactOpsStream extends Context.Service<
   ArtifactOpsStream,
   {
@@ -27,21 +28,30 @@ export class AnalyticsSampling extends Context.Service<
   Readonly<Record<string, number>>
 >()("@repo/analytics/AnalyticsSampling") {}
 
+const decodeCacheRecord = Schema.decodeUnknownSync(CacheEventRecord);
+const decodeArtifactRecord = Schema.decodeUnknownSync(ArtifactOperationRecord);
+
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
 const ulid = (millis: number) => {
   let time = "";
+
   for (let rest = millis, index = 0; index < 10; index++, rest = Math.floor(rest / 32))
     time = alphabet[rest % 32] + time;
+
   return (
     time +
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => alphabet[byte % 32]).join("")
   );
 };
+
 const label = (value: string | undefined) =>
   value && /^[A-Za-z0-9_.:/@-]{1,128}$/.test(value) ? value : null;
+
 const common = (scope: AnalyticsScope, now: number, rate: number) => {
   const id = ulid(now);
   const ts = new Date(now).toISOString();
+
   return {
     id,
     event_id: id,
@@ -55,10 +65,13 @@ const common = (scope: AnalyticsScope, now: number, rate: number) => {
     sample_rate: rate,
   };
 };
+
 const rateFor = (rates: Readonly<Record<string, number>>, org: string) => {
   const rate = Object.hasOwn(rates, org) ? rates[org] : 1;
+
   return rate !== undefined && rate > 0 && rate <= 1 ? rate : 1;
 };
+
 const selected = (rate: number) =>
   rate === 1 || crypto.getRandomValues(new Uint32Array(1))[0]! / 4_294_967_296 < rate;
 
@@ -67,18 +80,21 @@ export const AnalyticsEmitterBasin = Layer.effect(
   Effect.gen(function* () {
     const stream = yield* CacheEventsStream;
     const rates = yield* AnalyticsSampling;
+
     const failures = Metric.counter("analytics_send_failures", {
       description: "Failed analytics stream sends",
     });
+
     return {
       emit: (scope, events) =>
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
           const rate = rateFor(rates, scope.orgId);
+
           const records = events
             .filter(() => selected(rate))
             .map((event) =>
-              Schema.decodeUnknownSync(CacheEventRecord)({
+              decodeCacheRecord({
                 ...common(scope, now, rate),
                 session_id: event.sessionId.slice(0, 128),
                 source: event.source,
@@ -90,13 +106,14 @@ export const AnalyticsEmitterBasin = Layer.effect(
                 ref: label(scope.ref),
               }),
             );
+
           // One send per request batch. IDs are assigned once; any binding retry sees the same records.
           if (records.length)
             yield* stream
               .send(records)
               .pipe(Effect.mapError((cause) => new AnalyticsError({ cause })));
         }).pipe(
-          Effect.tapError(() => Metric.update(failures, 1)),
+          Effect.tapCause(() => Metric.update(failures, 1)),
           Effect.tapCause(Effect.logError),
         ),
     } satisfies typeof AnalyticsEmitter.Service;
@@ -109,15 +126,19 @@ export const ArtifactOpEmitterBasin = Layer.effect(
     const stream = yield* ArtifactOpsStream;
     const rates = yield* AnalyticsSampling;
     const failures = Metric.counter("analytics_artifact_send_failures");
+
     return {
       emit: (scope: AnalyticsScope, operation: ArtifactOperation) =>
         Effect.gen(function* () {
           const rate = rateFor(rates, scope.orgId);
+
           if (!selected(rate)) return;
           const method = operation.method === "POST" ? "QUERY" : operation.method;
+
           if (!["GET", "HEAD", "PUT", "DELETE", "QUERY"].includes(method)) return;
           const now = yield* Clock.currentTimeMillis;
-          const record = Schema.decodeUnknownSync(ArtifactOperationRecord)({
+
+          const record = decodeArtifactRecord({
             ...common(scope, now, rate),
             operation: method,
             op: method.toLowerCase(),
@@ -131,11 +152,12 @@ export const ArtifactOpEmitterBasin = Layer.effect(
             client_ci: label(operation.clientCi),
             interactive: scope.interactive ?? false,
           });
+
           yield* stream
             .send([record])
             .pipe(Effect.mapError((cause) => new AnalyticsError({ cause })));
         }).pipe(
-          Effect.tapError(() => Metric.update(failures, 1)),
+          Effect.tapCause(() => Metric.update(failures, 1)),
           Effect.tapCause(Effect.logError),
         ),
     } satisfies typeof ArtifactOpEmitter.Service;

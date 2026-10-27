@@ -52,7 +52,7 @@ not an admission-control quota implementation.
 
 Basin mode requires Workers Paid, the default jurisdiction and both root secrets
 `BASIN_CATALOG_TOKEN` and `BASIN_SQL_TOKEN`. Missing prerequisites select lite mode.
-Use a dedicated SQL token scoped to the analytics warehouse with the permissions
+Use a SQL reader token with access to the analytics warehouse and the permissions
 required by [Cloudflare's authentication guide](https://developers.cloudflare.com/basin-sql/query-data/#authentication).
 The SQL adapter uses Effect HttpClient, a 30-second timeout, an 8 MiB streaming
 response limit and redacted credentials. SQL text is internal to domain templates.
@@ -89,3 +89,62 @@ paged-inventory tests. Both production SQL templates were also executed against
 DuckDB fixtures with an `approx_distinct` alias to DuckDB's `approx_count_distinct`:
 duplicate delivery, sample weighting, LOCAL exclusion and bandwidth checks passed.
 This is a dialect smoke check, not a hosted Basin execution test.
+
+# Analytics API
+
+A fresh, non-impersonated session is required on every request. Org/project routes
+use `analytics:read`; instance routes require auditor, admin or owner. Cache bearer
+credentials do not grant dashboard analytics access. Authorization is rechecked
+before consulting a drill-down cache.
+
+- `GET /orgs/:id/analytics?from=...&to=...&granularity=hour|day`
+- `GET /projects/:id/analytics?from=...&to=...&granularity=hour|day`
+- `GET /instance/analytics?from=...&to=...&granularity=hour|day`
+- `GET /projects/:id/analytics/drilldown?from=...&to=...&template=most-missed&limit=20`
+
+Time-series ranges must use aligned UTC bucket boundaries and span at most 31 days.
+Missing buckets are zero-filled. Totals combine counts before deriving hit rates.
+`storageBytes` is the current reconciled estimate in totals and org/project
+breakdowns; historical series use zero because no historical storage snapshots
+exist. `uniqueSessions` retains the bucket-sum estimate described above. Results
+are capped at 100 breakdowns, ordered by combined served bytes and current storage.
+Instance breakdowns identify both orgs and projects with a `kind` field. Project
+breakdowns also include the stored provider/repository/ref dimensions.
+
+Page views read only D1. Lite counters fill buckets without published Basin data.
+The read budget is 20,000 rows per input table; overly broad selections return 503
+rather than partial totals. Daily Basin aggregates cover their available hours;
+lite hours from before a mode transition are added without counting overlapping
+published hours twice.
+
+Drill-downs accept `most-missed`, `slowest-tasks`, `edge-cache`, or `ref-history`.
+The last requires `ref`; all require a limit from 1–100 and at most 30 days. Tenant
+filters come from the authorized project, never query parameters. Templates
+prune dates, deduplicate delivery IDs, weight sampled counters and cap result rows.
+The edge template returns edge-hit/miss counters. Ref history returns hourly
+buckets. There is no raw-SQL endpoint. KV caches validated results for five minutes,
+keyed by tenant, template and all parameters. KV failures bypass caching; warehouse
+timeouts/errors return 503 with no partial result. Responses are `no-store` at the
+HTTP boundary.
+
+# Direct Iceberg access (instance administrators only)
+
+Catalog credentials expose the whole analytics warehouse; they cannot enforce
+this application's per-organization authorization. Never distribute them to org
+admins or dashboard clients. Use a read-only credential and obtain the Catalog URI
+and Warehouse name from the deployed AnalyticsCatalog bucket's catalog settings.
+The root `BASIN_SQL_TOKEN` is shared with audit queries and must be scoped to both
+catalog buckets when both integrations are enabled.
+
+For DuckDB, follow the maintained
+[Cloudflare DuckDB connection example](https://developers.cloudflare.com/basin-catalog/config-examples/duckdb/),
+attach the warehouse using its Iceberg extension, then query named columns from
+`<attached_catalog>.analytics.cache_events` or `.analytics.artifact_ops`, always
+including `day` and `ts` filters. Keep credentials in a DuckDB secret, not SQL files
+committed to the repository.
+
+For PyIceberg, initialize `RestCatalog` with the Warehouse name, Catalog URI and a
+read-only token supplied by your secret manager. Load `analytics.cache_events` or
+`analytics.artifact_ops`, then use a bounded scan with selected fields and date
+filters; see [Cloudflare's PyIceberg example](https://developers.cloudflare.com/basin-catalog/config-examples/pyiceberg/).
+These are read-only investigation paths; don't mutate managed tables or schemas.

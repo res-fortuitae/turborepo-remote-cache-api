@@ -14,6 +14,7 @@ const scope = {
   ci_provider: "github",
   sample_rate: 1,
 } as const;
+
 const cache = {
   ...scope,
   session_id: "s",
@@ -24,6 +25,7 @@ const cache = {
   repo_id: null,
   ref: null,
 } as const;
+
 const artifact = {
   ...scope,
   operation: "QUERY",
@@ -57,6 +59,7 @@ describe("versioned analytics records", () => {
     ]) {
       expect(() => Schema.decodeUnknownSync(CacheEventRecord)({ ...cache, ...patch })).toThrow();
     }
+
     for (const patch of [{ status: 600 }, { bytes: -1 }, { latency_ms: Infinity }]) {
       expect(() =>
         Schema.decodeUnknownSync(ArtifactOperationRecord)({ ...artifact, ...patch }),

@@ -30,6 +30,7 @@ const scope = {
   ref: "refs/heads/main",
   interactive: false,
 } as const;
+
 const event = {
   sessionId: "s",
   source: "REMOTE",
@@ -41,6 +42,7 @@ const event = {
 test("Basin sends one validated batch, preserves LOCAL events, and enriches only approved context", async () => {
   const cache: CacheEventRecord[][] = [];
   const ops: ArtifactOperationRecord[][] = [];
+
   const bindings = Layer.mergeAll(
     Layer.succeed(AnalyticsSampling, {}),
     Layer.succeed(CacheEventsStream, {
@@ -56,6 +58,7 @@ test("Basin sends one validated batch, preserves LOCAL events, and enriches only
         }),
     }),
   );
+
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* (yield* AnalyticsEmitter).emit(scope, [
@@ -91,23 +94,28 @@ test("Basin sends one validated batch, preserves LOCAL events, and enriches only
 
 test("stream failures are typed and empty batches do not send", async () => {
   let sends = 0;
+
   const bindings = Layer.mergeAll(
     Layer.succeed(AnalyticsSampling, { org: 0.5 }),
     Layer.succeed(CacheEventsStream, {
       send: () => {
         sends++;
+
         return Effect.fail(new Error("offline"));
       },
     }),
   );
+
   // Use an unsampled tenant to exercise the error deterministically.
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const emitter = yield* AnalyticsEmitter;
       yield* emitter.emit(scope, []);
+
       return yield* emitter.emit({ ...scope, orgId: "unsampled" }, [event]).pipe(Effect.result);
     }).pipe(Effect.provide(AnalyticsEmitterBasin.pipe(Layer.provide(bindings)))),
   );
+
   expect(sends).toBe(1);
   expect(result._tag).toBe("Failure");
 });
@@ -136,6 +144,7 @@ test("storage totals handle repeats, overwrites, deletes and tenant isolation at
 
 test("activity flags throttle D1 writes while first hit and last seen persist", async () => {
   const flags = new Map<string, string>();
+
   const bindings = Layer.succeed(ActivityFlags, {
     get: (key) => Effect.sync(() => flags.get(key) ?? null),
     put: (key, value) =>
@@ -143,6 +152,7 @@ test("activity flags throttle D1 writes while first hit and last seen persist", 
         flags.set(key, value);
       }),
   });
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -166,4 +176,18 @@ test("activity flags throttle D1 writes while first hit and last seen persist", 
       Effect.scoped,
     ),
   );
+});
+
+test("recording test layers are isolated across builds", async () => {
+  const { AnalyticsRecords, AnalyticsEmitterTest } = await import("./testing.ts");
+  for (let build = 0; build < 2; build++) {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const records = yield* AnalyticsRecords;
+        expect(records.cacheEvents).toHaveLength(0);
+        yield* (yield* AnalyticsEmitter).emit(scope, [event]);
+        expect(records.cacheEvents).toHaveLength(1);
+      }).pipe(Effect.provide(AnalyticsEmitterTest)),
+    );
+  }
 });
