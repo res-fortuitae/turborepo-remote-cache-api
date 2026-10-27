@@ -37,6 +37,13 @@ export const DeployConfigSchema = Schema.Struct({
     maxDirectUploadBytes: Schema.optional(PositiveInteger),
     cpuMs: Schema.optional(PositiveInteger),
   }),
+  /** Optional organization-ID sampling probabilities. Omitted organizations send every event. */
+  analyticsSampleRates: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Number.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1)),
+    ),
+  ),
   features: Schema.Struct({
     edgeCache: Schema.Boolean,
     /** Opt-in only: accepts TURBO_TOKEN with legacy team namespaces. */

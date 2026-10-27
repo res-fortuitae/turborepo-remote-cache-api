@@ -10,6 +10,12 @@ import * as Schema from "effect/Schema";
 export interface AnalyticsScope {
   readonly orgId: string;
   readonly projectId: string;
+  readonly credentialType?: "jwt" | "apiKey" | "legacy";
+  readonly credentialId?: string;
+  readonly ciProvider?: string;
+  readonly repoId?: string;
+  readonly ref?: string;
+  readonly interactive?: boolean;
 }
 
 export class AnalyticsError extends Schema.TaggedError<AnalyticsError>()("AnalyticsError", {
@@ -100,6 +106,11 @@ export const AnalyticsEmitterLite = Layer.effect(
 /** Server-observed operations; deliberately separate from client-reported Turbo events. */
 export interface ArtifactOperation {
   readonly method: string;
+  readonly bytes?: number;
+  readonly latencyMs?: number;
+  readonly edgeCache?: "HIT" | "MISS" | "BYPASS";
+  readonly colo?: string;
+  readonly clientCi?: string;
   readonly hash?: string;
   readonly provenance?: Readonly<Record<string, string>>;
   readonly status: number;

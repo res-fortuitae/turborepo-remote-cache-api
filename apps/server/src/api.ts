@@ -128,6 +128,7 @@ export interface ApiDependencies<R> {
   readonly emitEvents?: (
     team: string,
     events: readonly CacheEvent[],
+    scope?: ArtifactScope,
   ) => Effect.Effect<void, never, R>;
   readonly bucket: ArtifactBucket<R>;
   readonly token: Redacted.Redacted<string>;
@@ -437,12 +438,12 @@ export const artifactApi = <R>({
     return yield* HttpServerResponse.json(Object.fromEntries(entries));
   });
 
-  const events = Effect.fn("Api.events")(function* (team: string) {
+  const events = Effect.fn("Api.events")(function* (team: string, scope: ArtifactScope) {
     const events = yield* HttpServerRequest.schemaBodyJson(CacheEvents).pipe(
       Effect.mapError(() => badRequest("Invalid request body")),
     );
 
-    yield* waitUntil(emitEvents(team, events));
+    yield* waitUntil(emitEvents(team, events, scope));
 
     return HttpServerResponse.empty({ status: 200 });
   });
@@ -482,6 +483,7 @@ export const artifactApi = <R>({
     const segment = match?.[1];
     const method = request.method;
 
+    const startedAt = Date.now();
     const response = yield* Effect.gen(function* () {
       yield* guard(scope);
       if (multipartRequest)
@@ -496,7 +498,7 @@ export const artifactApi = <R>({
       } else if (segment === "status") {
         if (method === "GET") return yield* status;
       } else if (segment === "events") {
-        if (method === "POST") return yield* events(team);
+        if (method === "POST") return yield* events(team, scope);
       } else {
         if (!HASH.test(segment)) {
           return yield* badRequest("Invalid artifact hash");
@@ -537,11 +539,31 @@ export const artifactApi = <R>({
     const operation: ArtifactOperation = {
       method,
       status: response.status,
+      bytes:
+        ["GET", "PUT"].includes(method) && response.status < 300
+          ? Number(
+              method === "GET"
+                ? (response.headers["content-length"] ?? 0)
+                : (request.headers["content-length"] ?? 0),
+            )
+          : 0,
+      latencyMs: Math.max(0, Date.now() - startedAt),
+      edgeCache:
+        response.headers["x-edge-cache"] === "HIT"
+          ? "HIT"
+          : response.headers["x-edge-cache"] === "MISS"
+            ? "MISS"
+            : "BYPASS",
+      ...(request.headers["cf-ray"] ? { colo: request.headers["cf-ray"].split("-").at(-1) } : {}),
+      ...(request.headers["x-artifact-client-ci"]
+        ? { clientCi: request.headers["x-artifact-client-ci"] }
+        : {}),
       ...(segment && HASH.test(segment) ? { hash: segment } : {}),
       ...(method === "PUT" && [202, 413].includes(response.status) ? { provenance } : {}),
     };
 
-    yield* waitUntil(emitArtifactOp(scope, operation));
+    if ((segment && HASH.test(segment)) || (segment === undefined && method === "POST"))
+      yield* waitUntil(emitArtifactOp(scope, operation));
 
     return scope.credential?.credentialType === "apiKey"
       ? HttpServerResponse.setHeader(response, "warning", API_KEY_WARNING)

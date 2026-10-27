@@ -13,3 +13,18 @@ export type { ArtifactOperation } from "./emitter.ts";
 export { ArtifactOpEmitterD1Uploads } from "./emitter.ts";
 
 export { CacheEventRecord, ArtifactOperationRecord } from "@repo/api-spec";
+
+export {
+  CacheEventsStream,
+  ArtifactOpsStream,
+  AnalyticsSampling,
+  AnalyticsEmitterBasin,
+  ArtifactOpEmitterBasin,
+} from "./stream-emitter.ts";
+export {
+  ActivityFlags,
+  AnalyticsActivity,
+  AnalyticsActivityLive,
+  StorageAccounting,
+  StorageAccountingLive,
+} from "./accounting.ts";

@@ -565,6 +565,8 @@ const projects = Effect.gen(function* () {
         ),
         createdAt: yield* Clock.currentTimeMillis,
         archivedAt: null,
+        firstHitAt: null,
+        lastSeenAt: null,
       } satisfies Project;
 
       const defaultBodies: TrustPolicy["body"][] =
