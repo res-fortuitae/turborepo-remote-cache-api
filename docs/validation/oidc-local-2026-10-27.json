@@ -1,0 +1,201 @@
+{
+  "timestamp": "2026-10-27T12:49:18.949Z",
+  "scope": "Actual local root Alchemy Worker/D1/R2/KV/DO/Secrets Store/rate limits; locally signed custom pinned-key assertions, no real provider-issued CI token",
+  "stage": "stv508-oidc-mvqoml68",
+  "startupRetries": 0,
+  "checks": [
+    {
+      "label": "real local auth and D1 are ready",
+      "pass": true
+    },
+    {
+      "label": "isolated database has no organizations",
+      "pass": true
+    },
+    {
+      "label": "bound exchange succeeds",
+      "pass": true
+    },
+    {
+      "label": "exchange no-store",
+      "pass": true
+    },
+    {
+      "label": "cache JWT has valid application Ed25519 signature",
+      "pass": true
+    },
+    {
+      "label": "cache JWT tenant, scope, binding and TTL",
+      "pass": true
+    },
+    {
+      "label": "bound writer uploads to real R2",
+      "pass": true
+    },
+    {
+      "label": "bound cache GET restores bytes",
+      "pass": true
+    },
+    {
+      "label": "DPoP proof replay denied",
+      "pass": true
+    },
+    {
+      "label": "bound token cannot downgrade to Bearer",
+      "pass": true
+    },
+    {
+      "label": "missing DPoP proof denied",
+      "pass": true
+    },
+    {
+      "label": "wrong DPoP key denied",
+      "pass": true
+    },
+    {
+      "label": "wrong DPoP method denied",
+      "pass": true
+    },
+    {
+      "label": "wrong DPoP URL denied",
+      "pass": true
+    },
+    {
+      "label": "wrong access-token hash denied",
+      "pass": true
+    },
+    {
+      "label": "bound exchange succeeds",
+      "pass": true
+    },
+    {
+      "label": "exchange no-store",
+      "pass": true
+    },
+    {
+      "label": "reader exchange grants only read",
+      "pass": true
+    },
+    {
+      "label": "read-only token cannot PUT",
+      "pass": true
+    },
+    {
+      "label": "CI assertion replay denied",
+      "pass": true
+    },
+    {
+      "label": "wrong audience denied",
+      "pass": true
+    },
+    {
+      "label": "expired signed assertion denied",
+      "pass": true
+    },
+    {
+      "label": "future not-before denied",
+      "pass": true
+    },
+    {
+      "label": "unregistered issuer denied",
+      "pass": true
+    },
+    {
+      "label": "unknown signing key denied",
+      "pass": true
+    },
+    {
+      "label": "tampered JWT payload denied",
+      "pass": true
+    },
+    {
+      "label": "outside subject denied",
+      "pass": true
+    },
+    {
+      "label": "wrong branch denied",
+      "pass": true
+    },
+    {
+      "label": "foreign project cannot borrow policy",
+      "pass": true
+    },
+    {
+      "label": "unbound exchange cannot bypass binding policy",
+      "pass": true
+    },
+    {
+      "label": "concurrent assertion redemption succeeds once",
+      "pass": true
+    },
+    {
+      "label": "CLI output does not expose fixture assertions/cache JWTs",
+      "pass": true
+    },
+    {
+      "label": "CLI output does not expose fixture assertions/cache JWTs",
+      "pass": true
+    },
+    {
+      "label": "compiled CLI OIDC writer -> actual Turbo R2 upload",
+      "pass": true
+    },
+    {
+      "label": "CLI output does not expose fixture assertions/cache JWTs",
+      "pass": true
+    },
+    {
+      "label": "compiled CLI read-only OIDC identity restores Turbo remote hit",
+      "pass": true
+    },
+    {
+      "label": "restored Turbo output matches",
+      "pass": true
+    },
+    {
+      "label": "CLI output does not expose fixture assertions/cache JWTs",
+      "pass": true
+    },
+    {
+      "label": "signed-in developer reader restores the same OIDC-uploaded Turbo cache",
+      "pass": true
+    },
+    {
+      "label": "developer-restored OIDC output matches",
+      "pass": true
+    },
+    {
+      "label": "browser/developer session cannot substitute for a CI assertion",
+      "pass": true
+    },
+    {
+      "label": "CLI output does not expose fixture assertions/cache JWTs",
+      "pass": true
+    },
+    {
+      "label": "CLI env mode fails closed for binding-required policy",
+      "pass": true
+    },
+    {
+      "label": "CLI output does not expose fixture assertions/cache JWTs",
+      "pass": true
+    },
+    {
+      "label": "CLI refresh uses fresh assertions after initial five-second cache JWT expires",
+      "pass": true
+    },
+    {
+      "label": "OIDC allow and denial attempts persisted in D1 audit",
+      "pass": true
+    },
+    {
+      "label": "audit excludes assertions, cache JWTs and unknown secret claims",
+      "pass": true
+    },
+    {
+      "label": "OIDC upload provenance is credential-attributed",
+      "pass": true
+    }
+  ],
+  "auditExchangeEvents": 22
+}

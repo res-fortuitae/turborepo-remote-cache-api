@@ -6,6 +6,10 @@ SLOs under a 200-job mixed workload. The user explicitly required all applicatio
 infrastructure to remain local. No Cloudflare deployment or destruction occurred.
 The local mixed workload still misses its latency targets; it is not an SLO pass.
 
+[Additional OIDC verification](oidc-validation.md) subsequently passed the actual
+local root-stack exchange, DPoP, CLI/Turbo, refresh and audit checks. It preserves
+the distinction between locally signed test assertions and real CI-issued tokens.
+
 ## Environment and test boundaries
 
 The backend was the actual root Alchemy composition, stage `stv508-validation`,
