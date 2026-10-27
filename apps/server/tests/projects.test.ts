@@ -171,13 +171,18 @@ test("storage route reports ledger totals and the first cache hit as ISO timesta
 
       expect(isProjectsPath(storagePath)).toBe(true);
       expect(created.firstHitAt).toBeNull();
-      expect(decodeStorage(yield* json(yield* serve(storagePath)))).toEqual({
+      const empty = decodeStorage(yield* json(yield* serve(storagePath)));
+
+      expect(empty).toMatchObject({
         projectId: created.id,
         bytes: 0,
         objects: 0,
         lastUploadAt: null,
         reconciledAt: null,
+        deletionRequestedAt: null,
       });
+      expect(empty.limits.maxRetentionDays).toBeGreaterThanOrEqual(created.retentionDays);
+      expect(empty.limits.maxArtifactBytes).toBeGreaterThanOrEqual(created.maxArtifactBytes);
 
       yield* db.batch((db) => [
         db.insert(schema.artifactUsage).values([
@@ -201,6 +206,14 @@ test("storage route reports ledger totals and the first cache hit as ISO timesta
       expect(project.lastSeenAt).toBe(new Date(8_000).toISOString());
       expect((yield* serve(storagePath, { method: "POST", body: {} })).status).toBe(405);
       expect((yield* serve(storagePath, { anonymous: true })).status).toBe(401);
+
+      yield* serve(`/projects/${created.id}`, {
+        method: "DELETE",
+        body: { confirmation: created.id },
+      });
+      expect(
+        decodeStorage(yield* json(yield* serve(storagePath))).deletionRequestedAt,
+      ).not.toBeNull();
     }),
   ));
 

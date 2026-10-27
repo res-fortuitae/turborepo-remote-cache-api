@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Gauge, Settings2, ShieldCheck, Trash2, Users, UsersRound } from "lucide-react";
+import { FolderGit2, Gauge, Settings2, ShieldCheck, Trash2, Users, UsersRound } from "lucide-react";
 
 export interface NavItem {
   readonly label: string;
@@ -13,6 +13,7 @@ export interface NavItem {
 /** Sidebar entries in display order. */
 export const navItems: ReadonlyArray<NavItem> = [
   { label: "Overview", icon: Gauge, path: "", section: "Workspace" },
+  { label: "Projects", icon: FolderGit2, path: "/projects", section: "Workspace" },
   { label: "Members", icon: Users, path: "/members", section: "Organization" },
   { label: "Groups", icon: UsersRound, path: "/groups", section: "Organization" },
   { label: "Roles", icon: ShieldCheck, path: "/roles", section: "Organization" },

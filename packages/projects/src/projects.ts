@@ -642,7 +642,17 @@ const projects = Effect.gen(function* () {
     /** Live totals from the upload-path ledger; reconciliation corrects drift daily. */
     storage: Effect.fn("Projects.storage")(function* (actor: ProjectActor, id: string) {
       const row = yield* locate(id);
-      yield* requirePermission(actor, "read", row.orgId, row.id);
+      const [deletion] = yield* database.query("Projects.storageDeletion", (db) =>
+        db
+          .select()
+          .from(schema.projectDeletion)
+          .where(eq(schema.projectDeletion.projectId, row.id)),
+      );
+
+      // Authorization fails closed for projects being deleted; deletion progress
+      // stays visible to members who can read every project in the org.
+      if (deletion) yield* requirePermission(actor, "read", row.orgId);
+      else yield* requirePermission(actor, "read", row.orgId, row.id);
       const scope = and(
         eq(schema.artifactUsage.orgId, row.orgId),
         eq(schema.artifactUsage.projectId, row.id),
@@ -669,6 +679,7 @@ const projects = Effect.gen(function* () {
             ),
         ),
       ]);
+      const policy = yield* policyFor(row.orgId);
       const iso = (value: number | null | undefined) =>
         value ? new Date(value).toISOString() : null;
 
@@ -678,6 +689,12 @@ const projects = Effect.gen(function* () {
         objects: objects?.count ?? 0,
         lastUploadAt: iso(objects?.lastUploadAt),
         reconciledAt: iso(usage?.reconciledAt),
+        deletionRequestedAt: iso(deletion?.requestedAt),
+        limits: {
+          quotaBytes: policy.quotaBytes,
+          maxRetentionDays: Math.min(limits.retentionDays, policy.retentionDays),
+          maxArtifactBytes: Math.min(limits.maxArtifactBytes, policy.quotaBytes),
+        },
       };
     }),
     list: Effect.fn("Projects.list")(function* (
