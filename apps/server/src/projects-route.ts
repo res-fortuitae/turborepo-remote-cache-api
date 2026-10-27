@@ -17,6 +17,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const collection = /^\/orgs\/([^/]+)\/projects\/?$/;
 const item = /^\/projects\/([^/]+)\/?$/;
+const storagePath = /^\/projects\/([^/]+)\/storage\/?$/;
 const grantsPath = /^\/projects\/([^/]+)\/grants(?:\/(user|team)\/([^/]+))?\/?$/;
 
 const policiesPath = /^\/projects\/([^/]+)\/trust-policies(?:\/([^/]+))?\/?$/;
@@ -53,7 +54,11 @@ export const readManagementJson = Effect.fn("Projects.readJson")(function* (
 });
 
 export const isProjectsPath = (path: string) =>
-  collection.test(path) || item.test(path) || grantsPath.test(path) || policiesPath.test(path);
+  collection.test(path) ||
+  item.test(path) ||
+  storagePath.test(path) ||
+  grantsPath.test(path) ||
+  policiesPath.test(path);
 
 const errorResponse = (status: number, code: string, message: string) =>
   HttpServerResponse.json({ code, message }, { status });
@@ -91,6 +96,17 @@ export const projectsApi = Effect.gen(function* () {
       try: () => decodeURIComponent(value),
       catch: () => new BadRequest({ message: "Invalid identifier" }),
     });
+
+  const storageMatch = storagePath.exec(url.pathname);
+
+  if (storageMatch?.[1]) {
+    if (request.method !== "GET")
+      return HttpServerResponse.empty({ status: 405, headers: { allow: "GET" } });
+
+    return yield* HttpServerResponse.json(
+      yield* projects.storage(actor, yield* decodeId(storageMatch[1])),
+    );
+  }
 
   const policyMatch = policiesPath.exec(url.pathname);
 

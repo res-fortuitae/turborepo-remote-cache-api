@@ -180,29 +180,35 @@ export const makeApiKeys = (input: {
       value.projectEpoch < (await epoch(`project:${value.projectId}`))
     )
       throw forbidden();
-    // Conditional D1 update is scheduled at most once per minute per key in KV.
-    // The marker is a throttle, never an authority for verification or revocation.
-    if (
-      storage &&
-      background &&
-      Option.isNone(await Effect.runPromise(storage.get(`cache-key-used:${value.id}`)))
-    ) {
-      await Effect.runPromise(storage.set(`cache-key-used:${value.id}`, "1", 60));
-      background.run(
-        db
-          .update(schema.cacheApiKey)
-          .set({ lastUsedAt: Date.now() })
-          .where(
-            and(
-              eq(schema.cacheApiKey.id, value.id),
-              or(
-                isNull(schema.cacheApiKey.lastUsedAt),
-                lt(schema.cacheApiKey.lastUsedAt, Date.now() - 60000),
+    // Conditional D1 update runs at most once per minute per key and location,
+    // gated by a KV marker. The marker is a throttle, never an authority for
+    // verification or revocation, so sampling failures never reject a valid key.
+    // Without a background runner the rare update is awaited inline: Better Auth
+    // runs verification in plain promises, outside the Worker's request context.
+    if (storage) {
+      try {
+        if (Option.isNone(await Effect.runPromise(storage.get(`cache-key-used:${value.id}`)))) {
+          await Effect.runPromise(storage.set(`cache-key-used:${value.id}`, "1", 60));
+          const update = db
+            .update(schema.cacheApiKey)
+            .set({ lastUsedAt: Date.now() })
+            .where(
+              and(
+                eq(schema.cacheApiKey.id, value.id),
+                or(
+                  isNull(schema.cacheApiKey.lastUsedAt),
+                  lt(schema.cacheApiKey.lastUsedAt, Date.now() - 60000),
+                ),
               ),
-            ),
-          )
-          .then(() => {}),
-      );
+            )
+            .then(() => {});
+
+          if (background) background.run(update);
+          else await update;
+        }
+      } catch (cause) {
+        console.error("API key usage sampling failed", cause);
+      }
     }
     return value;
   };

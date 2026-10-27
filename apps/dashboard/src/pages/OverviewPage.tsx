@@ -17,7 +17,9 @@ import {
   PageHeader,
 } from "../components/common.tsx";
 import { api } from "../lib/api.ts";
-import { useOrg } from "../lib/org.tsx";
+import { orgPath, useOrg } from "../lib/org.tsx";
+import { href } from "../lib/router.tsx";
+import { Button } from "@repo/ui/components/button";
 import { useResource } from "../lib/use-resource.ts";
 
 export function OverviewPage() {
@@ -88,6 +90,14 @@ export function OverviewPage() {
                 icon={<FolderGit2 />}
                 title="No projects yet"
                 description="Create a project to start caching builds."
+                action={
+                  <Button
+                    render={<a href={href(orgPath(org, "/onboarding"))} />}
+                    nativeButton={false}
+                  >
+                    Set up your first project
+                  </Button>
+                }
               />
             ) : (
               <ul className="flex flex-col divide-y">
