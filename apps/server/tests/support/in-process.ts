@@ -1,5 +1,5 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Requests cross from Bun's fetch into the Effect handler at this test boundary. */
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";

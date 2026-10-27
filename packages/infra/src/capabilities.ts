@@ -1,7 +1,7 @@
 import type { CapabilityReport } from "@repo/api-spec";
 import * as accounts from "@distilled.cloud/cloudflare/accounts";
 import * as zones from "@distilled.cloud/cloudflare/zones";
-import { CloudflareEnvironment } from "alchemy/Cloudflare";
+import { CloudflareEnvironment } from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 

@@ -8,6 +8,12 @@ copies that version's section and the GitHub release notes into the upgrade PR.
 
 ### Security hardening (STV-474)
 
+- Alchemy and its Cloudflare provider now use the published `2.0.0-beta.84`
+  packages. Run `bun install --frozen-lockfile` to install the matching provider
+  and SDK versions. Provider imports moved from `alchemy/Cloudflare` to
+  `@alchemy.run/cloudflare`. No custom dependency patches are required. Preserve
+  the root `.alchemy` state, environment files, stage names, and resource IDs.
+
 - Artifact API responses now use `Cache-Control: no-store`; scoped Workers edge
   entries continue to cache privately. Invalidate any downstream caches or wait
   out the prior one-hour public TTL before serving sensitive clients.

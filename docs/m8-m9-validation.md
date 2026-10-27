@@ -73,9 +73,19 @@ project-admin directory authorization, and multi-role anomaly delivery. Regressi
 cases cover the identified failures. The final hardening PR contains these fixes
 for the cumulative stack.
 
-The local Alchemy beta provider also exposed a concurrent Secrets Store gateway
-collision. A pinned dependency patch serializes its scoped gateway operations;
-see [patch notes](../patches/README.md). Storage identity is preserved.
+No custom dependency patches are retained. Alchemy and its Cloudflare provider
+are pinned to the published `2.0.0-beta.84` packages; provider imports use
+`@alchemy.run/cloudflare`, and the direct Cloudflare SDK matches the provider's
+`1.0.0-rc.17` dependency. The unmodified beta.83 local stack reproduced a
+Secrets Store seeding failure (`Network connection lost.`); the unmodified
+beta.84 stack passes all 40 checks. This establishes a working upstream upgrade,
+without claiming the precise internal cause of the beta.83 failure.
+
+Official [local-development documentation](https://alchemy.run/cloudflare/local-development/)
+confirms Secrets Store values are seeded into the local simulator. Published
+[beta.84 release notes](https://github.com/alchemy-run/alchemy/releases/tag/v2.0.0-beta.84)
+include a [related cross-script Durable Object reconnection fix](https://github.com/alchemy-run/alchemy/pull/2325)
+and the provider-package migration used here.
 
 No real hosted CI issuer, hosted release signing, deployed email delivery or
 independent penetration test was performed.
@@ -84,4 +94,4 @@ OAuth rows/backups and pre-upgrade downstream cache entries need the operational
 remediation in [the security review](threat-model.md) and [upgrade notes](../UPGRADING.md).
 A maintainer must review the security findings/residual risks before launch.
 
-Model: gpt-6.1-sol · Agent: Codex · Harness: T3 Code/Codex · Timestamp: 2026-10-27T11:26:00Z
+Model: gpt-6.1-sol · Agent: Codex · Harness: T3 Code/Codex · Timestamp: 2026-10-27T11:35:16Z

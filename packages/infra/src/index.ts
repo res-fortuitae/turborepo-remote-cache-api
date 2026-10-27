@@ -1,6 +1,6 @@
 import { ArtifactOperationRecord, AuditEvent, CacheEventRecord } from "@repo/api-spec";
 import { AlchemyContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Output from "alchemy/Output";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as Config from "effect/Config";

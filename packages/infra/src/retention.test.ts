@@ -1,6 +1,6 @@
 import { AlchemyContext } from "alchemy";
 import { expect, test } from "bun:test";
-import { Providers } from "alchemy/Cloudflare";
+import { Providers } from "@alchemy.run/cloudflare";
 import { Stack, type StackSpec } from "alchemy/Stack";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";

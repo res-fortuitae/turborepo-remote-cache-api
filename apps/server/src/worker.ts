@@ -47,7 +47,7 @@ import {
   cacheAuthenticationFailureGuard,
   oidcExchangeGuard,
 } from "./request-guards.ts";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { type RuntimeContext, AlchemyContext } from "alchemy";
 import { Stage } from "alchemy/Stage";
 import * as Config from "effect/Config";

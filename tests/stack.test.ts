@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { localState } from "alchemy";
 import * as Test from "alchemy/Test/Bun";
 import * as Effect from "effect/Effect";
