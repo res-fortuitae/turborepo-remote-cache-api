@@ -208,19 +208,19 @@ export const ArtifactOpsStream = Cloudflare.Basin.Stream("ArtifactOpsStream", {
 export const analyticsPipelineSql = (sink: string, stream: string, kind: "cache" | "artifact") => {
   const columns =
     kind === "cache"
-      ? "session_id, source, event, hash, duration_ms, (source = 'REMOTE' AND event = 'HIT') AS is_remote_hit"
-      : "operation, hash, status, bytes, edge_cache";
+      ? "session_id, source, event, hash, duration_ms, repo_id, ref, (source = 'REMOTE' AND event = 'HIT') AS is_remote_hit"
+      : "operation, op, hash, status, bytes, edge_cache, latency_ms, colo, credential_id, client_ci, interactive";
   const valid =
     kind === "cache"
       ? "source IN ('LOCAL', 'REMOTE') AND event IN ('HIT', 'MISS') AND duration_ms >= 0"
-      : "operation IN ('GET', 'HEAD', 'PUT', 'DELETE') AND status >= 100 AND status <= 599 AND bytes >= 0 AND edge_cache IN ('HIT', 'MISS', 'BYPASS')";
-  return `INSERT INTO ${sink} SELECT id, ts, schemaVersion, org_id, project_id,
+      : "operation IN ('GET', 'HEAD', 'PUT', 'DELETE', 'QUERY') AND status >= 100 AND status <= 599 AND bytes >= 0 AND edge_cache IN ('HIT', 'MISS', 'BYPASS')";
+  return `INSERT INTO ${sink} SELECT id, event_id, ts, schemaVersion, org_id, project_id, credential_type, sample_rate,
     CASE WHEN lower(ci_provider) IN ('github', 'github-actions', 'github_actions') THEN 'github'
       WHEN lower(ci_provider) IN ('gitlab', 'gitlab-ci') THEN 'gitlab'
       WHEN lower(ci_provider) IN ('circleci', 'buildkite', 'bitbucket', 'vercel', 'aws', 'google', 'azure') THEN lower(ci_provider)
       ELSE 'other' END AS ci_provider,
     substring(ts, 1, 10) AS day, ${columns}
-    FROM ${stream} WHERE schemaVersion = 1 AND org_id <> '' AND project_id <> '' AND ${valid}`;
+    FROM ${stream} WHERE schemaVersion = 1 AND org_id <> '' AND project_id <> '' AND sample_rate > 0 AND sample_rate <= 1 AND ${valid}`;
 };
 
 const planAnalyticsBasin = Effect.gen(function* () {

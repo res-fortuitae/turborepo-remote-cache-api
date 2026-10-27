@@ -11,3 +11,5 @@ export { ArtifactOpEmitter, ArtifactOpEmitterDisabled } from "./emitter.ts";
 
 export type { ArtifactOperation } from "./emitter.ts";
 export { ArtifactOpEmitterD1Uploads } from "./emitter.ts";
+
+export { CacheEventRecord, ArtifactOperationRecord } from "@repo/api-spec";
