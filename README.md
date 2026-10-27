@@ -279,8 +279,10 @@ only sent for a detected/asserted Workers Paid account.
   requests use their team namespace for both. Counter writes run under `waitUntil`, and
   failures are logged without failing cache traffic. Counters are at least once;
   retransmitted event batches can count twice. `analytics: false` selects a no-op
-  emitter. Basin analytics/history/drill-downs remain pending STV-462–465, even
-  on Paid accounts.
+  emitter. Workers Paid, the default jurisdiction, `BASIN_CATALOG_TOKEN` and
+  `BASIN_SQL_TOKEN` enable Basin telemetry and hourly/daily D1 rollups. Sampling,
+  freshness, inventory reconciliation and limits are documented in
+  [analytics](packages/analytics/README.md).
 - **Audit:** Iceberg export requires Workers Paid, the default jurisdiction,
   `BASIN_CATALOG_TOKEN`, and an enabled flag. Otherwise no audit Basin resources
   are provisioned. The configured hot window grows from 90 to 365 days;
