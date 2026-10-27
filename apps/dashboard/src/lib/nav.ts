@@ -4,6 +4,7 @@ import {
   KeyRound,
   Gauge,
   Settings2,
+  ScrollText,
   ShieldCheck,
   Trash2,
   Users,
@@ -26,6 +27,7 @@ export const navItems: ReadonlyArray<NavItem> = [
   { label: "Members", icon: Users, path: "/members", section: "Organization" },
   { label: "Groups", icon: UsersRound, path: "/groups", section: "Organization" },
   { label: "Roles", icon: ShieldCheck, path: "/roles", section: "Organization" },
+  { label: "Audit log", icon: ScrollText, path: "/audit", section: "Insights" },
   { label: "Credentials", icon: KeyRound, path: "/credentials", section: "Security" },
   { label: "Purge artifacts", icon: Trash2, path: "/purge", section: "Security" },
   {
