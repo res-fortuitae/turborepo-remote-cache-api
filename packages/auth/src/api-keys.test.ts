@@ -147,7 +147,12 @@ test("keys are scoped, hashed, shown once, org-owned, and verification never upd
       expect(rows[0]?.rateLimitEnabled).toBe(false);
       expect(rows[0]?.requestCount).toBe(0);
       const listed = yield* post("cache-keys/list", { organizationId: "org" });
-      expect(yield* Effect.promise(() => listed.text())).not.toContain(key.key);
+      const listedBody = yield* Effect.promise(() => listed.text());
+      expect(listedBody).not.toContain(key.key);
+      expect(JSON.parse(listedBody)[0]).toMatchObject({
+        projectId: "project",
+        createdAt: expect.any(String),
+      });
       yield* database.query("test.departure", (db) =>
         db.delete(schema.member).where(eq(schema.member.userId, "owner")),
       );

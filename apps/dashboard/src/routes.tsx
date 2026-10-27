@@ -1,3 +1,4 @@
+import { CredentialsPage } from "./pages/CredentialsPage.tsx";
 import type { ReactNode } from "react";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage.tsx";
 import { ProjectPage } from "./pages/project/ProjectPage.tsx";
@@ -28,6 +29,7 @@ export const orgRoutes: ReadonlyArray<Route> = [
   { pattern: "/members", title: "Members", render: () => <MembersPage /> },
   { pattern: "/groups", title: "Groups", render: () => <GroupsPage /> },
   { pattern: "/roles", title: "Roles", render: () => <RolesPage /> },
+  { pattern: "/credentials", title: "Credentials", render: () => <CredentialsPage /> },
   { pattern: "/purge", title: "Purge artifacts", render: () => <PurgePage /> },
 ];
 

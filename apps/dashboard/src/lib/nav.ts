@@ -1,5 +1,14 @@
 import type { LucideIcon } from "lucide-react";
-import { FolderGit2, Gauge, Settings2, ShieldCheck, Trash2, Users, UsersRound } from "lucide-react";
+import {
+  FolderGit2,
+  KeyRound,
+  Gauge,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+  Users,
+  UsersRound,
+} from "lucide-react";
 
 export interface NavItem {
   readonly label: string;
@@ -17,6 +26,7 @@ export const navItems: ReadonlyArray<NavItem> = [
   { label: "Members", icon: Users, path: "/members", section: "Organization" },
   { label: "Groups", icon: UsersRound, path: "/groups", section: "Organization" },
   { label: "Roles", icon: ShieldCheck, path: "/roles", section: "Organization" },
+  { label: "Credentials", icon: KeyRound, path: "/credentials", section: "Security" },
   { label: "Purge artifacts", icon: Trash2, path: "/purge", section: "Security" },
   {
     label: "Capabilities",

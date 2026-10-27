@@ -323,6 +323,8 @@ export const makeApiKeys = (input: {
         .select({
           id: schema.apikey.id,
           name: schema.apikey.name,
+          createdAt: schema.apikey.createdAt,
+          projectId: schema.cacheApiKey.projectId,
           expiresAt: schema.apikey.expiresAt,
           enabled: schema.apikey.enabled,
           permissions: schema.apikey.permissions,
