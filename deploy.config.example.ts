@@ -2,6 +2,7 @@ import { defineDeployConfig } from "@repo/deploy-config";
 
 // Copy with `bun run setup`. Only deploy.config.ts belongs to your organization.
 export default defineDeployConfig({
+  // productionWorkerName: "my-turborepo-cache", // stable workers.dev hostname for OAuth setup
   // domain: "cache.example.com",
   // stagingDomain: "cache-staging.example.com",
   // Defaults to this stage's origin. Pin old/new values when migrating a domain.

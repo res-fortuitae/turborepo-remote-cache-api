@@ -13,6 +13,10 @@ const PositiveInteger = Schema.Number.check(Schema.isInt(), Schema.isGreaterThan
 export const DeployConfigSchema = Schema.Struct({
   domain: Schema.optional(Hostname),
   stagingDomain: Schema.optional(Hostname),
+  /** Stable production Worker name, allowing OAuth setup before the first deploy. */
+  productionWorkerName: Schema.optional(
+    Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]{0,62}$/)),
+  ),
   /** Omit to accept this stage's canonical origin. Pin during domain migrations. */
   oidcAudiences: Schema.optional(OidcAudiences),
   oidcCustomIssuers: Schema.optional(CustomOidcIssuers),

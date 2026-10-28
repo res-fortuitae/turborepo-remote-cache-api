@@ -338,6 +338,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       !dev && Option.isSome(yield* AnalyticsBasin) ? yield* AnalyticsCatalogBucket : undefined;
     return {
       main: import.meta.url,
+      name: !dev && stage === config.stages.production ? config.productionWorkerName : undefined,
       assets: DashboardAssets,
       domain,
       // Better Auth uses AsyncLocalStorage from node:async_hooks.

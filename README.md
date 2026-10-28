@@ -101,6 +101,10 @@ for versioned org assets. Future edits to those tracked files work normally.
 Do not commit secrets.
 
 The deploy prints the Worker `url`. `bun run dev` runs it locally with hot reload.
+For a stable production workers.dev callback before deployment, set
+`productionWorkerName` in `deploy.config.ts`. A separate production environment
+can be loaded with `bun --env-file=.env.prod run deploy --env-file .env.prod`.
+Keep `.env.prod` private; it is ignored by Git.
 Development uses Alchemy's local providers and on-disk state in the root
 `.alchemy/` directory. It needs `deploy.config.ts` and the required root `.env`
 secrets, but no Cloudflare account or state-store bootstrap. Worker, R2 (including
