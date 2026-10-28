@@ -34,7 +34,7 @@ test("headless login explicitly stores a private session file without an OS keyc
       ],
       {
         cwd: directory,
-        env: { ...Bun.env, HOME: directory },
+        env: { ...Bun.env, GITHUB_ACTIONS: undefined, HOME: directory },
         stdout: "pipe",
         stderr: "pipe",
       },
@@ -173,6 +173,7 @@ test("Effect CLI handles account, linking, permissions, and command exit codes w
         cwd: directory,
         env: {
           ...Bun.env,
+          GITHUB_ACTIONS: undefined,
           HOME: directory,
           TCACHE_API: undefined,
           TURBO_API: undefined,
@@ -229,4 +230,4 @@ test("Effect CLI handles account, linking, permissions, and command exit codes w
     await server.stop(true);
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 30_000);
