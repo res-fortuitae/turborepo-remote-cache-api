@@ -25,7 +25,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os:
+          [
+            blacksmith-2vcpu-ubuntu-2404,
+            blacksmith-6vcpu-macos-latest,
+            blacksmith-2vcpu-windows-2025,
+          ]
         turbo: [2.11.10, 2.10.13, 1.13.4]
         mode: [direct, proxy]
     runs-on: ${{ matrix.os }}

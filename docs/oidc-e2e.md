@@ -46,7 +46,7 @@ the workflow probe itself locally; it does not certify a hosted runner.
 ## Runner lifecycle workflow
 
 `.github/workflows/validate.yml` calls the reusable
-`oidc-runner-lifecycle.yml`. Its matrix covers hosted Linux/macOS/Windows with both
+`oidc-runner-lifecycle.yml`. Its matrix covers Blacksmith Linux/macOS/Windows with both
 direct and composite use of the JavaScript Action. A separate container job uses
 the same composite path. Steps run the fixture, register a cleanup verifier,
 start the Action, and access it from a later runner step. Post actions run in
@@ -107,7 +107,7 @@ permissions:
   id-token: write
 jobs:
   preview:
-    uses: StvyaSharma/turborepo-remote-cache-api/.github/workflows/oidc-preview.yml@<reviewed-full-commit-sha>
+    uses: res-fortuitae/turborepo-remote-cache-api/.github/workflows/oidc-preview.yml@<reviewed-full-commit-sha>
     with:
       api: https://preview-cache.example.com
       team: preview_org_id
