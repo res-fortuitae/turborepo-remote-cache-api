@@ -12,7 +12,7 @@
     "destroy": "bun apps/server/scripts/alchemy.ts destroy",
     "typecheck": "bun check && turbo run typecheck",
     "test": "bun test scripts && turbo run test",
-    "test:live": "bun test apps/server/tests/live.test.ts",
+    "test:live": "TCACHE_LIVE_TEST=1 bun test apps/server/tests/live.test.ts",
     "test:stack": "bun run dashboard:build && ALCHEMY_TEST=1 ALCHEMY_TEST_DEV=1 bun test --timeout 600000 tests/stack.test.ts",
     "test:deployed": "bun run dashboard:build && ALCHEMY_TEST=1 ALCHEMY_TEST_DEV=0 bun test --timeout 600000 tests/stack.test.ts",
     "lint": "oxlint .",
