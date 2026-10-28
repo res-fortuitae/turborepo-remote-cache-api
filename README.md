@@ -53,28 +53,6 @@ Lint severities and formatting options match `listener`; existing lint warnings
 remain warnings. Use `bun run lint --deny-warnings` for strict enforcement.
 See [shared configuration](packages/config/README.md) for details.
 
-## CI runners
-
-GitHub Actions workflows in `.github/workflows` execute on Blacksmith. Install
-and authorize the [Blacksmith GitHub App](https://docs.blacksmith.sh/introduction/quickstart)
-for `res-fortuitae/turborepo-remote-cache-api` before running these workflows;
-otherwise jobs using Blacksmith labels will queue without a runner.
-
-Linux jobs use `blacksmith-2vcpu-ubuntu-2404`, Linux ARM smoke tests use
-`blacksmith-2vcpu-ubuntu-2404-arm`, Windows jobs use
-`blacksmith-2vcpu-windows-2025` (Blacksmith public beta), and macOS jobs use
-`blacksmith-6vcpu-macos-latest`. CLI macOS smoke tests pin macOS 15; the Intel
-binary runs through Rosetta on Apple Silicon because Blacksmith has no Intel
-macOS runner. This verifies translated execution, not native Intel hardware; startup budgets
-are checked only on native targets.
-See the [runner catalog](https://docs.blacksmith.sh/blacksmith-runners/overview).
-
-Triggers, permissions, GitHub artifacts, and the project's own remote cache
-remain configured in GitHub Actions. Blacksmith transparently supports upstream
-[dependency cache actions](https://docs.blacksmith.sh/blacksmith-caching/dependencies-actions);
-no Blacksmith cache fork is needed. The manually dispatched OIDC lifecycle
-probe still accepts custom `self_hosted_labels` to test other runner environments.
-
 ## Setup
 
 Fork this repository into your organization's GitHub account. Deploy the fork
