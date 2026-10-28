@@ -50,7 +50,7 @@ async function main() {
   }
 }
 
-void main().catch(() => {
-  console.error("Proxy post-step cleanup verification failed.");
+void main().catch((error) => {
+  console.error("Proxy post-step cleanup verification failed:", error.code ?? error.message);
   process.exitCode = 1;
 });
