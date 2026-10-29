@@ -36,7 +36,8 @@ jobs:
           project: ${{ vars.TCACHE_PROJECT }}
       - run: bun run build
       - run: bun run check
-      - run: bun run test
+      - name: Test within the runner CPU budget
+        run: bun run test --concurrency=2
       - name: JWT hot-path performance smoke
         run: bun run perf:smoke
   oidc-runner-lifecycle:
