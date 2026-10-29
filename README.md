@@ -41,6 +41,7 @@ bun run lint:fix      # safe lint fixes
 bun run format        # format supported files
 bun run format:check
 bun run typecheck     # cached workspace type checks
+bun run build         # cached dashboard, Action bundles, and native CLI
 bun run test          # copied rule suites and config integration checks
 bun run check         # lint, type checks, and formatting
 bun run dashboard:dev   # dashboard UI preview with hot reload
@@ -52,6 +53,37 @@ bun run plan          # Alchemy plan for the configured staging stage
 Lint severities and formatting options match `listener`; existing lint warnings
 remain warnings. Use `bun run lint --deny-warnings` for strict enforcement.
 See [shared configuration](packages/config/README.md) for details.
+
+### This repository's remote cache
+
+The committed `.turbo-cache.json` links this checkout to the dedicated
+`<team>/<project>` project. It contains public identifiers only.
+Authenticate locally, then explicitly request developer writes when warming it:
+
+```sh
+bun packages/cli/src/bin.ts login --api https://<your-worker>.workers.dev
+bun packages/cli/src/bin.ts exec --strict --write -- bun run build
+bun packages/cli/src/bin.ts exec --strict --write -- bun run check
+bun packages/cli/src/bin.ts exec --strict --write -- bun run test
+```
+
+Developer writes require the instance policy and project permission. The session
+stays in the OS credential manager; short-lived cache tokens stay in the proxy.
+Use the root build/typecheck/test scripts: their Turbo launcher hashes the Bun and
+Node versions, and supplies the OS/architecture key used by tests and native CLI
+builds. Dashboard and Action builds remain portable across hosts with matching
+runtimes and inputs. Explicit CLI target arguments also enter Turbo's task hash. Generated
+configuration-package logs and dependencies are excluded from type-check inputs.
+
+Blacksmith validation and CLI binary builds use `.github/actions/remote-cache`.
+It clears inherited runner `TURBO_*` settings before authenticating with GitHub
+OIDC using repository variables `TCACHE_API`, `TCACHE_TEAM`, and `TCACHE_PROJECT`.
+Configured same-repository PRs read the cache; main pushes can read and write.
+Fork PRs and repositories without those variables use local caching. Authentication
+failure for a configured trusted job fails the job instead of silently using a
+different cache. Compatibility and lifecycle probes retain their isolated fixtures.
+Live server suites require `bun run test:live`; ordinary tests never activate them
+merely because runner or proxy cache credentials exist.
 
 ## Setup
 

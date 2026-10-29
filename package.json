@@ -10,8 +10,8 @@
     "dev": "bun apps/server/scripts/alchemy.ts dev",
     "deploy": "bun apps/server/scripts/alchemy.ts deploy",
     "destroy": "bun apps/server/scripts/alchemy.ts destroy",
-    "typecheck": "bun check && turbo run typecheck",
-    "test": "bun test scripts && turbo run test",
+    "typecheck": "bun check && bun scripts/turbo.ts typecheck",
+    "test": "bun test scripts && bun scripts/turbo.ts test",
     "test:live": "TCACHE_LIVE_TEST=1 bun test apps/server/tests/live.test.ts",
     "test:stack": "bun run dashboard:build && ALCHEMY_TEST=1 ALCHEMY_TEST_DEV=1 bun test --timeout 600000 tests/stack.test.ts",
     "test:deployed": "bun run dashboard:build && ALCHEMY_TEST=1 ALCHEMY_TEST_DEV=0 bun test --timeout 600000 tests/stack.test.ts",
@@ -31,7 +31,8 @@
     "perf:smoke": "bun apps/server/scripts/perf-verify.ts",
     "perf:local": "bun apps/server/scripts/perf-local.ts",
     "perf:proxy": "bun packages/cli/bench/proxy.ts --paced",
-    "perf:exchange": "bun apps/server/scripts/perf-exchange.ts"
+    "perf:exchange": "bun apps/server/scripts/perf-exchange.ts",
+    "build": "bun scripts/turbo.ts build"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.84",

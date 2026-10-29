@@ -28,13 +28,13 @@ jobs:
         with:
           node-version: "24"
       - run: bun install --frozen-lockfile
-      - name: Authenticate remote cache (when instance is configured)
-        if: vars.TCACHE_API != '' && vars.TCACHE_TEAM != '' && vars.TCACHE_PROJECT != ''
-        uses: ./packages/action
+      - name: Configure repository remote cache
+        uses: ./.github/actions/remote-cache
         with:
           api: ${{ vars.TCACHE_API }}
           team: ${{ vars.TCACHE_TEAM }}
           project: ${{ vars.TCACHE_PROJECT }}
+      - run: bun run build
       - run: bun run check
       - run: bun run test
       - name: JWT hot-path performance smoke
