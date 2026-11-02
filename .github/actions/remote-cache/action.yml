@@ -1,0 +1,38 @@
+name: Repository remote cache
+description: Replace runner-provided Turbo settings with this repository's cache
+inputs:
+  api:
+    description: Instance origin
+    required: false
+  team:
+    description: Organization ID
+    required: false
+  project:
+    description: Project ID
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Clear runner Turbo configuration
+      shell: bash
+      run: |
+        for name in ${!TURBO_@}; do
+          echo "$name=" >> "$GITHUB_ENV"
+        done
+        echo 'TURBO_API=http://127.0.0.1:1' >> "$GITHUB_ENV"
+        echo 'TURBO_TOKEN=' >> "$GITHUB_ENV"
+        echo 'TURBO_CACHE=local:rw' >> "$GITHUB_ENV"
+    - name: Authenticate repository cache
+      if: inputs.api != '' && inputs.team != '' && inputs.project != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      uses: ./packages/action
+      with:
+        api: ${{ inputs.api }}
+        team: ${{ inputs.team }}
+        project: ${{ inputs.project }}
+        strict: "true"
+    - name: Select cache access
+      if: inputs.api != '' && inputs.team != '' && inputs.project != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      shell: bash
+      env:
+        CACHE_MODE: ${{ github.event_name == 'pull_request' && 'local:rw,remote:r' || 'local:rw,remote:rw' }}
+      run: echo "TURBO_CACHE=$CACHE_MODE" >> "$GITHUB_ENV"

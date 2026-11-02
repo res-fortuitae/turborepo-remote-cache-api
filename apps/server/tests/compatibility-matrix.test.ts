@@ -93,8 +93,8 @@ describe.skipIf(!version)(`Turbo ${version} / ${mode} compatibility`, () => {
         );
         const team =
           selector === "teamId"
-            ? (Bun.env.TURBO_COMPAT_TEAM_ID ?? `team_${crypto.randomUUID()}`)
-            : (Bun.env.TURBO_COMPAT_TEAM_SLUG ?? `compat-${crypto.randomUUID()}`);
+            ? Bun.env.TURBO_COMPAT_TEAM_ID || `team_${crypto.randomUUID()}`
+            : Bun.env.TURBO_COMPAT_TEAM_SLUG || `compat-${crypto.randomUUID()}`;
         const expected = `compatibility-${crypto.randomUUID()}`;
         const signatureKey = "compatibility-test-signature-key-32-bytes-minimum";
         const v1 = version!.startsWith("1.");
@@ -158,7 +158,7 @@ describe.skipIf(!version)(`Turbo ${version} / ${mode} compatibility`, () => {
           TCACHE_API: api,
           TCACHE_API_KEY: token,
           TCACHE_TEAM: team,
-          TCACHE_PROJECT: Bun.env.TURBO_COMPAT_PROJECT ?? "compatibility",
+          TCACHE_PROJECT: Bun.env.TURBO_COMPAT_PROJECT || "compatibility",
         });
         const run = async (readOnly: boolean, override?: Record<string, string>) => {
           const args = [

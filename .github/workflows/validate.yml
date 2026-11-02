@@ -17,7 +17,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -28,15 +28,16 @@ jobs:
         with:
           node-version: "24"
       - run: bun install --frozen-lockfile
-      - name: Authenticate remote cache (when instance is configured)
-        if: vars.TCACHE_API != '' && vars.TCACHE_TEAM != '' && vars.TCACHE_PROJECT != ''
-        uses: ./packages/action
+      - name: Configure repository remote cache
+        uses: ./.github/actions/remote-cache
         with:
-          api: ${{ vars.TCACHE_API }}
-          team: ${{ vars.TCACHE_TEAM }}
-          project: ${{ vars.TCACHE_PROJECT }}
+          api: ${{ secrets.TCACHE_API }}
+          team: ${{ secrets.TCACHE_TEAM }}
+          project: ${{ secrets.TCACHE_PROJECT }}
+      - run: bun run build
       - run: bun run check
-      - run: bun run test
+      - name: Test within the runner CPU budget
+        run: bun run test --concurrency=2
       - name: JWT hot-path performance smoke
         run: bun run perf:smoke
   oidc-runner-lifecycle:

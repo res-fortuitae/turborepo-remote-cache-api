@@ -70,6 +70,7 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
       {
         env: {
           ...Bun.env,
+          GITHUB_ACTIONS: undefined,
           TCACHE_API: server.url.origin,
           TCACHE_TEAM: "org",
           TCACHE_PROJECT: "project",
@@ -117,6 +118,7 @@ test("daemon state is private, later processes can reach it, authenticated stop 
     {
       env: {
         ...Bun.env,
+        GITHUB_ACTIONS: undefined,
         TCACHE_API: upstream.url.origin,
         TCACHE_TEAM: "org",
         TCACHE_PROJECT: "project",
@@ -138,7 +140,7 @@ test("daemon state is private, later processes can reach it, authenticated stop 
         "-e",
         "const r=await fetch(Bun.env.TURBO_API+'/v8/artifacts/status',{headers:{authorization:'Bearer '+Bun.env.TURBO_TOKEN}});process.exit(r.status===200?0:1)",
       ],
-      { env: { ...Bun.env, ...values } },
+      { env: { ...Bun.env, GITHUB_ACTIONS: undefined, ...values } },
     );
 
     expect(await later.exited).toBe(0);
@@ -217,6 +219,7 @@ test("proxy refreshes in background and retries safe reads without replaying upl
     {
       env: {
         ...Bun.env,
+        GITHUB_ACTIONS: undefined,
         TCACHE_API: upstream.url.origin,
         TCACHE_TEAM: "org",
         TCACHE_PROJECT: "project",
@@ -315,6 +318,7 @@ test("default exec exchanges a saved developer session and forwards bearer crede
       {
         env: {
           ...Bun.env,
+          GITHUB_ACTIONS: undefined,
           HOME: directory,
           TCACHE_API: server.url.origin,
           TCACHE_TEAM: "org",

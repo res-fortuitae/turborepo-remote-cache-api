@@ -75,7 +75,7 @@ test("runner probe uses separate steps, refreshes and verifies reverse-order pos
       INPUT_STRICT: "true",
     });
 
-    expect(main.code, "Node Action must authenticate fixture").toBe(0);
+    expect(main.code, `Node Action must authenticate fixture: ${main.stderr}`).toBe(0);
     state = parseEnvironment(await readFile(env.GITHUB_STATE, "utf8"));
     exported = parseEnvironment(await readFile(env.GITHUB_ENV, "utf8"));
     const check = await run(["bun", "scripts/oidc-runner-probe.ts", "check"], exported);
@@ -88,7 +88,8 @@ test("runner probe uses separate steps, refreshes and verifies reverse-order pos
         STATE_directory: state.directory,
       });
 
-      expect(post.code).toBe(0);
+      expect(post.code, post.stderr).toBe(0);
+      expect(post.stdout).not.toContain("Unable to collect proxy stats or stop it");
     }
 
     const verify = await run(["node", ".github/actions/verify-proxy-cleanup/post.cjs"], exported);
