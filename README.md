@@ -56,8 +56,8 @@ See [shared configuration](packages/config/README.md) for details.
 
 ### This repository's remote cache
 
-The committed `.turbo-cache.json` links this checkout to the dedicated
-`<team>/<project>` project. It contains public identifiers only.
+To use your own instance, keep a local, git-ignored `.turbo-cache.json` that links
+this checkout to your `<team>/<project>` project.
 Authenticate locally, then explicitly request developer writes when warming it:
 
 ```sh

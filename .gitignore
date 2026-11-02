@@ -48,3 +48,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 !/packages/action/dist/
 !/packages/action/dist/*.cjs
 !/packages/action/dist/THIRD_PARTY_LICENSES.txt
+
+# Links a checkout to a private cache instance.
+/.turbo-cache.json
