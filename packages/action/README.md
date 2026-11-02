@@ -12,7 +12,7 @@ permissions:
   id-token: write
 steps:
   - uses: actions/checkout@<reviewed-full-commit-sha>
-  - uses: StvyaSharma/turborepo-remote-cache-api/packages/action@<reviewed-full-commit-sha>
+  - uses: res-fortuitae/turborepo-remote-cache-api/packages/action@<reviewed-full-commit-sha>
     with:
       api: https://cache.example.com
       team: org_id

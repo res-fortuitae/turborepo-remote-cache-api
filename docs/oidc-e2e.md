@@ -107,7 +107,7 @@ permissions:
   id-token: write
 jobs:
   preview:
-    uses: StvyaSharma/turborepo-remote-cache-api/.github/workflows/oidc-preview.yml@<reviewed-full-commit-sha>
+    uses: res-fortuitae/turborepo-remote-cache-api/.github/workflows/oidc-preview.yml@<reviewed-full-commit-sha>
     with:
       api: https://preview-cache.example.com
       team: preview_org_id

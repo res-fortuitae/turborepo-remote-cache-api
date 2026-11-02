@@ -8,7 +8,7 @@ case "$(uname -m)" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; *) ec
 libc=
 if [ "$os" = linux ] && ldd /bin/sh 2>&1 | grep -qi musl; then libc=-musl; fi
 asset=tcache-$os-$arch$libc
-base=https://github.com/StvyaSharma/turborepo-remote-cache-api/releases/download/cli-$version
+base=https://github.com/res-fortuitae/turborepo-remote-cache-api/releases/download/cli-$version
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$base/$asset" -o "$scratch/$asset"

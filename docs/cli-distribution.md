@@ -51,7 +51,7 @@ notices. No Node/Turbo/shell is present: mount/provide compatible build tools if
 using `exec`, or run the binary in your existing runner image. Native credential
 stores may be unavailable in containers; private-file fallback is documented.
 No image is pushed to GHCR by the current workflow. A future release may publish
-`ghcr.io/stvyasharma/tcache` after review and explicit publication authorization.
+`ghcr.io/res-fortuitae/tcache` after review and explicit publication authorization.
 
 ## Candidate automation and future publication
 
@@ -69,10 +69,10 @@ For a future reviewed release, verify candidates using:
 
 ```sh
 gh attestation verify ./tcache-linux-x64 \
-  --repo StvyaSharma/turborepo-remote-cache-api \
-  --signer-workflow StvyaSharma/turborepo-remote-cache-api/.github/workflows/cli-binaries.yml
+  --repo res-fortuitae/turborepo-remote-cache-api \
+  --signer-workflow res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-binaries.yml
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity 'https://github.com/StvyaSharma/turborepo-remote-cache-api/.github/workflows/cli-binaries.yml@refs/tags/cli-v0.1.0' \
+  --certificate-identity 'https://github.com/res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-binaries.yml@refs/tags/cli-v0.1.0' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
 sha256sum --check SHA256SUMS
 ```

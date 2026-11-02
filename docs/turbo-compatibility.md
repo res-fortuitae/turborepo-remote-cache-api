@@ -19,7 +19,7 @@ state. Run `turbo run build --cache=remote:rw` (v2) or
 `turbo run build --remote-only` (v1).
 
 The `tcache exec --strict -- turbo run build` command is implemented in the
-parallel STV-485 / [PR #43](https://github.com/StvyaSharma/turborepo-remote-cache-api/pull/43)
+parallel STV-485 / [PR #43](https://github.com/res-fortuitae/turborepo-remote-cache-api/pull/43)
 stack. It uses `TCACHE_API`, `TCACHE_TEAM`, `TCACHE_PROJECT` and, for the API-key
 fallback, `TCACHE_API_KEY`. The compatibility workflow pins that implementation
 until both stacks merge. This M3 branch does not copy its auth/proxy sources.
