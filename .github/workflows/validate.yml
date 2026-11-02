@@ -31,9 +31,9 @@ jobs:
       - name: Configure repository remote cache
         uses: ./.github/actions/remote-cache
         with:
-          api: ${{ vars.TCACHE_API }}
-          team: ${{ vars.TCACHE_TEAM }}
-          project: ${{ vars.TCACHE_PROJECT }}
+          api: ${{ secrets.TCACHE_API }}
+          team: ${{ secrets.TCACHE_TEAM }}
+          project: ${{ secrets.TCACHE_PROJECT }}
       - run: bun run build
       - run: bun run check
       - name: Test within the runner CPU budget

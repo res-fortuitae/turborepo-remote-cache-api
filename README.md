@@ -76,7 +76,7 @@ configuration-package logs and dependencies are excluded from type-check inputs.
 
 Blacksmith validation and CLI binary builds use `.github/actions/remote-cache`.
 It clears inherited runner `TURBO_*` settings before authenticating with GitHub
-OIDC using repository variables `TCACHE_API`, `TCACHE_TEAM`, and `TCACHE_PROJECT`.
+OIDC using repository secrets `TCACHE_API`, `TCACHE_TEAM`, and `TCACHE_PROJECT`.
 Configured same-repository PRs read the cache; main pushes can read and write.
 Fork PRs and repositories without those variables use local caching. Authentication
 failure for a configured trusted job fails the job instead of silently using a

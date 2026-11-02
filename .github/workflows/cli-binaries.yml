@@ -46,9 +46,9 @@ jobs:
       - name: Configure repository remote cache
         uses: ./.github/actions/remote-cache
         with:
-          api: ${{ vars.TCACHE_API }}
-          team: ${{ vars.TCACHE_TEAM }}
-          project: ${{ vars.TCACHE_PROJECT }}
+          api: ${{ secrets.TCACHE_API }}
+          team: ${{ secrets.TCACHE_TEAM }}
+          project: ${{ secrets.TCACHE_PROJECT }}
       - run: bun run build --filter=@repo/cli -- ${{ matrix.target }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
