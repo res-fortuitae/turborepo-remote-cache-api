@@ -37,7 +37,7 @@ for (const name of Object.keys(targets)) {
         files: [file, "THIRD_PARTY_LICENSES.txt", "LICENSE.bun"],
         repository: {
           type: "git",
-          url: "git+https://github.com/StvyaSharma/turborepo-remote-cache-api.git",
+          url: "git+https://github.com/res-fortuitae/turborepo-remote-cache-api.git",
         },
         publishConfig: { access: "public", provenance: true },
       },
@@ -79,7 +79,7 @@ await writeFile(
       optionalDependencies,
       repository: {
         type: "git",
-        url: "git+https://github.com/StvyaSharma/turborepo-remote-cache-api.git",
+        url: "git+https://github.com/res-fortuitae/turborepo-remote-cache-api.git",
       },
       publishConfig: { access: "public", provenance: true },
     },

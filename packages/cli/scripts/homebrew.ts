@@ -7,10 +7,10 @@ const checksum = (target: string) => {
   return hash;
 };
 const url =
-  "https://github.com/StvyaSharma/turborepo-remote-cache-api/releases/download/cli-v0.1.0";
+  "https://github.com/res-fortuitae/turborepo-remote-cache-api/releases/download/cli-v0.1.0";
 const formula = `class Tcache < Formula
   desc "Self-hosted Turborepo remote cache CLI"
-  homepage "https://github.com/StvyaSharma/turborepo-remote-cache-api"
+  homepage "https://github.com/res-fortuitae/turborepo-remote-cache-api"
   version "0.1.0"
   on_macos do
     on_arm do

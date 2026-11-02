@@ -5,7 +5,7 @@ export const isTurboIdentityPath = (path: string) =>
   );
 
 export const TURBO_COMPATIBILITY_DOCS =
-  "https://github.com/StvyaSharma/turborepo-remote-cache-api/blob/main/docs/turbo-compatibility.md";
+  "https://github.com/res-fortuitae/turborepo-remote-cache-api/blob/main/docs/turbo-compatibility.md";
 
 /** Explicit Authorization is required by Turbo before it sends the actual request. */
 export const TURBO_PREFLIGHT_HEADERS = {

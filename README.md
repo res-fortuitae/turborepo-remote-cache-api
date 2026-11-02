@@ -18,7 +18,7 @@ This Bun + Turborepo monorepo contains:
   ([composition guide](packages/client-core/README.md)).
 - `packages/action`: bundled Node 24 OIDC GitHub Action with proxy/env modes ([guide](packages/action/README.md)).
 - `packages/cli`: local authentication proxy, exec/env modes and server doctor ([guide](packages/cli/README.md)).
-- `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored rules from `listener`.
+- `packages/config`: shared TypeScript, Oxlint, and Oxfmt configuration, including vendored lint rules.
 
 Domain package skeletons and the allowed dependency graph are documented in
 [ADR-0001: package boundaries and Effect layers](docs/adr/0001-package-boundaries-and-effect-layers.md).
@@ -50,8 +50,7 @@ bun run setup         # create organization config; bootstrap handoff when avail
 bun run plan          # Alchemy plan for the configured staging stage
 ```
 
-Lint severities and formatting options match `listener`; existing lint warnings
-remain warnings. Use `bun run lint --deny-warnings` for strict enforcement.
+Existing lint warnings remain warnings. Use `bun run lint --deny-warnings` for strict enforcement.
 See [shared configuration](packages/config/README.md) for details.
 
 ### This repository's remote cache
@@ -349,14 +348,26 @@ only sent for a detected/asserted Workers Paid account.
   stateful resources under the normal deletion-protection policy.
 - **Email:** configure `email.from` after onboarding the sender domain to enable Cloudflare
   Email Service on Workers Paid. Without it, use signed invite links and GitHub
-  sign-in. See [transactional email](docs/email.md); the dashboard invite screen
-  follows in STV-468.
+  sign-in. See [transactional email](docs/email.md).
 - **Uploads:** Free, Pro, workers.dev, and unknown plans use a conservative
   100,000,000-byte request ceiling. A Business/Enterprise serving zone permits
   up to 200,000,000 bytes in this version; Cloudflare can impose a lower zone
   upload setting before the Worker runs. `directUploads: false` restores the
   conservative ceiling. The [multipart API and shared proxy transport](docs/multipart-uploads.md) support
-  larger artifacts; the `tcache exec` command follows in STV-485.
+  larger artifacts.
 
 Plan prerequisites follow Cloudflare's [Email Service pricing](https://developers.cloudflare.com/email-service/platform/pricing/)
 and [Workers request limits](https://developers.cloudflare.com/workers/platform/limits/).
+
+## Contributing
+
+Issues and pull requests are welcome. Run `bun run check` and `bun run test`
+before opening a pull request.
+
+## Security
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE). Vendored code keeps its own license files.

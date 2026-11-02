@@ -32,7 +32,7 @@ export function OverviewPage() {
 
   const project = projects.data?.items[0]?.id ?? "<project-id>";
   const local = `tcache login --api ${origin}\ntcache link --team ${org.slug} --project ${project}\ntcache exec -- turbo run build`;
-  const ci = `permissions:\n  contents: read\n  id-token: write\nsteps:\n  - uses: StvyaSharma/turborepo-remote-cache-api/packages/action@<reviewed-full-commit-sha>\n    with:\n      api: ${origin}\n      team: ${org.id}\n      project: ${project}\n  - run: bunx turbo run build`;
+  const ci = `permissions:\n  contents: read\n  id-token: write\nsteps:\n  - uses: res-fortuitae/turborepo-remote-cache-api/packages/action@<reviewed-full-commit-sha>\n    with:\n      api: ${origin}\n      team: ${org.id}\n      project: ${project}\n  - run: bunx turbo run build`;
 
   return (
     <>
