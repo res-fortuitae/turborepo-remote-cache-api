@@ -153,7 +153,7 @@ Deploy/destroy default to `stages.production`; plan defaults to `stages.staging`
 An explicit `--stage` or `ALCHEMY_STAGE` takes precedence. Development keeps
 Alchemy's local stage default. Production domains only attach to the production
 stage; use `stagingDomain` for staging. Existing installations must preserve their
-current stage name; see [UPGRADING.md](UPGRADING.md).
+current stage name.
 
 API, dashboard and auth share that origin. Optional `oidcAudiences` pins accepted
 CI audience identifiers across domain changes; it defaults to each stage's origin.
@@ -188,10 +188,9 @@ See [audit query and export](docs/audit-query.md) for scoped history and streami
 
 ## Upstream releases
 
-Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`) with a matching
-version section in `UPGRADING.md`. There is no automated release or fork sync;
-to upgrade a fork, merge the release tag manually, follow its `UPGRADING.md`
-notes, and run `bun run check`, `bun run test`, and `bun run plan` before deploying.
+Maintainers publish stable semver tags (`vMAJOR.MINOR.PATCH`). There is no automated
+release or fork sync; to upgrade a fork, merge the release tag manually and run
+`bun run check`, `bun run test`, and `bun run plan` before deploying.
 
 ## Use it from Turborepo
 

@@ -91,7 +91,7 @@ No real hosted CI issuer, hosted release signing, deployed email delivery or
 independent penetration test was performed.
 The local stack verifies the built assets and their CSP structurally. Existing
 OAuth rows/backups and pre-upgrade downstream cache entries need the operational
-remediation in [the security review](threat-model.md) and [upgrade notes](../UPGRADING.md).
+remediation in [the security review](threat-model.md).
 A maintainer must review the security findings/residual risks before launch.
 
 Model: gpt-6.1-sol · Agent: Codex · Harness: T3 Code/Codex · Timestamp: 2026-10-27T11:35:16Z
