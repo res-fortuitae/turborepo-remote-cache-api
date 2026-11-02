@@ -1,6 +1,6 @@
 # Shared tooling configuration
 
-Copied from `~/Developer/listener/packages/config`, including all 52 custom rules,
+Copied from another project's shared config, including all 52 custom rules,
 framework overrides, upstream tests, licenses, and source provenance.
 
 Consumers depend on `@repo/config: workspace:*` and use these config files:
