@@ -1,0 +1,94 @@
+name: CLI release
+# Publishes tcache to npm and GitHub Releases. Runs only for cli-vX.Y.Z tags and
+# waits for approval in the protected cli-release environment.
+on:
+  push:
+    tags: ["cli-v*"]
+permissions:
+  contents: read
+concurrency:
+  group: cli-release
+  cancel-in-progress: false
+jobs:
+  check-version:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Require tag to match packages/cli/package.json
+        run: |
+          version=$(jq -r .version packages/cli/package.json)
+          test "$GITHUB_REF_NAME" = "cli-v$version" || {
+            echo "::error::Tag $GITHUB_REF_NAME does not match package version $version"
+            exit 1
+          }
+  binaries:
+    needs: check-version
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/cli-binaries.yml
+    secrets: inherit
+  publish:
+    needs: binaries
+    environment: cli-release
+    # npm trusted publishing does not support self-hosted runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.3
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-local-test-bundle
+          path: packages/cli/dist
+      - name: Verify checksums
+        working-directory: packages/cli/dist
+        run: sha256sum --check SHA256SUMS
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: packages/cli/dist/tcache-*
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+      - run: cosign sign-blob --yes --bundle packages/cli/dist/SHA256SUMS.sigstore.json packages/cli/dist/SHA256SUMS
+      - name: Build npm packages
+        env:
+          TCACHE_NPM_SCOPE: "@resfortuitae"
+        run: bun packages/cli/scripts/package.ts
+      # Platform packages go first so the launcher never points at missing binaries.
+      # Already-published versions are skipped, so a failed run can be re-run.
+      - name: Publish to npm
+        working-directory: packages/cli/dist/npm
+        run: |
+          publish() {
+            name=$(jq -r .name "$1/package.json")
+            version=$(jq -r .version "$1/package.json")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already published"
+            else
+              npm publish "./$1" --access public --provenance
+            fi
+          }
+          for directory in tcache-*/; do publish "${directory%/}"; done
+          publish tcache
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: packages/cli/dist
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "tcache ${GITHUB_REF_NAME#cli-v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            tcache-* SHA256SUMS SHA256SUMS.sigstore.json install.sh tcache.rb \
+            THIRD_PARTY_LICENSES.txt LICENSE.bun

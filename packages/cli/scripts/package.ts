@@ -2,7 +2,8 @@ import { fileURLToPath } from "node:url";
 import { mkdir, copyFile, writeFile, readFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { filename, targets, type Target } from "./targets.ts";
-const version = "0.1.0";
+import packageJson from "../package.json" with { type: "json" };
+const version = packageJson.version;
 const scope = process.env.TCACHE_NPM_SCOPE;
 if (!scope)
   throw new Error(
@@ -30,11 +31,11 @@ for (const name of Object.keys(targets)) {
         name: packageName,
         version,
         description: `tcache native binary (${target})`,
-        license: "UNLICENSED",
+        license: "MIT",
         os: [os === "windows" ? "win32" : os],
         cpu: [cpu],
         ...(os === "linux" ? { libc: [name.endsWith("musl") ? "musl" : "glibc"] } : {}),
-        files: [file, "THIRD_PARTY_LICENSES.txt", "LICENSE.bun"],
+        files: [file, "LICENSE", "THIRD_PARTY_LICENSES.txt", "LICENSE.bun"],
         repository: {
           type: "git",
           url: "git+https://github.com/res-fortuitae/turborepo-remote-cache-api.git",
@@ -45,6 +46,7 @@ for (const name of Object.keys(targets)) {
       2,
     ),
   );
+  await copyFile(new URL("../../../LICENSE", import.meta.url), join(directory, "LICENSE"));
   await copyFile(new URL("../dist/LICENSE.bun", import.meta.url), join(directory, "LICENSE.bun"));
   await copyFile(
     new URL("../dist/THIRD_PARTY_LICENSES.txt", import.meta.url),
@@ -61,6 +63,7 @@ await copyFile(
   new URL("../dist/THIRD_PARTY_LICENSES.txt", import.meta.url),
   join(directory, "THIRD_PARTY_LICENSES.txt"),
 );
+await copyFile(new URL("../../../LICENSE", import.meta.url), join(directory, "LICENSE"));
 await writeFile(
   join(directory, "README.md"),
   await readFile(new URL("../../../docs/cli-distribution.md", import.meta.url), "utf8"),
@@ -72,9 +75,9 @@ await writeFile(
       name: `${scope}/tcache`,
       version,
       description: "Self-hosted Turborepo remote cache CLI",
-      license: "UNLICENSED",
+      license: "MIT",
       bin: { tcache: "bin.cjs" },
-      files: ["bin.cjs", "THIRD_PARTY_LICENSES.txt", "README.md"],
+      files: ["bin.cjs", "LICENSE", "THIRD_PARTY_LICENSES.txt", "README.md"],
       engines: { node: ">=22" },
       optionalDependencies,
       repository: {

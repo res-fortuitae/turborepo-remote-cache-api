@@ -1,6 +1,51 @@
-# Local CLI binaries and release candidates
+# tcache
 
-Publication is disabled. No npm name or registry account is needed for local tests.
+`tcache` is the CLI for a self-hosted Turborepo remote cache. It is MIT licensed.
+
+## Install
+
+```sh
+npm i -g @resfortuitae/tcache
+tcache --version
+```
+
+npm installs one native binary for your platform through optional dependencies,
+so keep optional dependencies enabled. Node 22 or later runs the launcher.
+Supported targets: Linux x64/arm64 (glibc and musl), macOS x64/arm64 and Windows x64.
+
+In CI, pin the version: `npm i -g @resfortuitae/tcache@0.1.0`.
+Upgrade with `npm i -g @resfortuitae/tcache@latest`. Uninstall with
+`npm rm -g @resfortuitae/tcache`.
+
+Without npm, download a binary and `SHA256SUMS` from a
+[GitHub Release](https://github.com/res-fortuitae/turborepo-remote-cache-api/releases)
+(tags `cli-vX.Y.Z`), or use the version-pinned `install.sh` from the same release.
+
+## First use
+
+```sh
+tcache login --api https://cache.example.com
+tcache link --team ORG --project PROJECT_ID
+tcache exec -- turbo run build
+```
+
+## Verify a release
+
+npm packages carry npm provenance. Release binaries carry GitHub build
+attestations, and `SHA256SUMS` has a Sigstore bundle:
+
+```sh
+gh attestation verify ./tcache-linux-x64 \
+  --repo res-fortuitae/turborepo-remote-cache-api \
+  --signer-workflow res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-release.yml
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity 'https://github.com/res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-release.yml@refs/tags/cli-vX.Y.Z' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum --check SHA256SUMS
+```
+
+## Build from source
+
 Use Bun 1.4.3 from the repository root:
 
 ```sh
@@ -26,9 +71,7 @@ Each build writes SHA256SUMS, bundled dependency license texts, and the Bun runt
 license/provenance notice. `LICENSE.bun` is copied unchanged from
 [oven-sh/bun at bun-v1.4.3](https://github.com/oven-sh/bun/blob/bun-v1.4.3/LICENSE.md).
 Bun's notice identifies its linked libraries and the WebKit rebuild procedure.
-The repository has no root distribution license; npm candidate metadata therefore
-uses `UNLICENSED` rather than inventing a license. Decide source distribution
-licensing before public publication, and retain all dependency/runtime notices.
+Packages also include the repository's MIT `LICENSE`.
 
 Budgets: at most 128 MiB per executable; at most 500 ms p95 across twenty `--version`
 process starts on the validation runner. The macOS arm64 local candidate measured
@@ -53,48 +96,27 @@ stores may be unavailable in containers; private-file fallback is documented.
 No image is pushed to GHCR by the current workflow. A future release may publish
 `ghcr.io/res-fortuitae/tcache` after review and explicit publication authorization.
 
-## Candidate automation and future publication
+## Releasing
 
-`.github/workflows/cli-binaries.yml` builds the seven targets and exercises native
-Linux/macOS/Windows smoke/budget checks plus Linux musl and a distroless container.
-It uploads **test artifacts only**. The signing job is off unless an operator
-explicitly sets `TCACHE_RELEASE_SIGNING_ENABLED=true`, configures the protected
-`cli-release` environment, and manually dispatches on a `cli-v*` tag. Protect that
-environment with reviewers/tag restrictions and protect tag creation before
-turning signing on. No job publishes GitHub Releases, npm packages or GHCR images.
+The version lives in `packages/cli/package.json`. To release:
 
-The optional signing job uses GitHub OIDC, GitHub build-provenance attestations,
-and a Sigstore bundle for SHA256SUMS. Never create a release from a PR artifact.
-For a future reviewed release, verify candidates using:
+1. Bump `version` there and merge to `main`.
+2. Push a matching tag: `git tag cli-vX.Y.Z && git push origin cli-vX.Y.Z`.
+3. Approve the run in the `cli-release` environment.
 
-```sh
-gh attestation verify ./tcache-linux-x64 \
-  --repo res-fortuitae/turborepo-remote-cache-api \
-  --signer-workflow res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-binaries.yml
-cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity 'https://github.com/res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-binaries.yml@refs/tags/cli-v0.1.0' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
-sha256sum --check SHA256SUMS
-```
+`.github/workflows/cli-release.yml` rejects a tag that does not match the
+version. It reuses the build and smoke jobs from `cli-binaries.yml`, then on a
+GitHub-hosted runner: verifies checksums, attests the binaries, signs
+`SHA256SUMS`, publishes the 7 platform packages and then `@resfortuitae/tcache`
+to npm through trusted publishing (no npm token), and uploads the binaries,
+`SHA256SUMS`, its Sigstore bundle, `install.sh` and the Homebrew formula to a
+GitHub Release. Versions already on npm are skipped, so a failed run can be re-run.
 
-See [GitHub attestation verification](https://cli.github.com/manual/gh_attestation_verify).
-A future version-pinned installer is supplied at `distribution/install.sh`; it
-downloads the selected binary and checksum manifest from the same `cli-vX.Y.Z`
-release, verifies SHA-256, and only then installs it. It never executes downloaded
-bytes. No release URL exists until an actual release is published. Pin the script
-URL/version; inspect it before running. Verify attestation/signature separately
-when stronger provenance assurance is needed.
+One-time setup: protect `cli-v*` tag creation with a ruleset, create the
+`cli-release` environment with a required reviewer, and add a trusted publisher
+(this repository, `cli-release.yml`, environment `cli-release`) to each of the
+8 npm packages. Packages have no install-time scripts.
 
-`bun packages/cli/scripts/homebrew.ts` generates `dist/tcache.rb` with exact hashes
-from a complete seven-target manifest. It is ready for a future Homebrew tap's
-`Formula/tcache.rb`; no tap is created or updated automatically.
-
-npm's unscoped `tcache` is unrelated. Once naming and publication are approved,
-`TCACHE_NPM_SCOPE=@your-scope bun run --cwd packages/cli package:release` creates
-one candidate package per platform plus a Node 22+ launcher with optional native
-dependencies. They have **no install-time scripts**. Packaging does not publish.
-Before publishing, reserve the scope/packages and configure
-[npm trusted publishers](https://docs.npmjs.com/trusted-publishers/) for every
-package, the reviewed workflow and protected environment. Use OIDC-only publication
-and provenance, not an npm token. Publication automation remains intentionally
-deferred until all M5 features and platform validations are accepted.
+`bun packages/cli/scripts/homebrew.ts` generates `dist/tcache.rb` for a future
+Homebrew tap; no tap is created or updated automatically. No container image is
+published.

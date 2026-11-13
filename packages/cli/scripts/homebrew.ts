@@ -1,4 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
+import packageJson from "../package.json" with { type: "json" };
+const version = packageJson.version;
 const sums = await readFile(new URL("../dist/SHA256SUMS", import.meta.url), "utf8");
 const checksum = (target: string) => {
   const line = sums.split("\n").find((line) => line.endsWith(`  tcache-${target}`));
@@ -6,12 +8,11 @@ const checksum = (target: string) => {
   if (!hash || !/^[a-f0-9]{64}$/.test(hash)) throw new Error(`Missing checksum: ${target}`);
   return hash;
 };
-const url =
-  "https://github.com/res-fortuitae/turborepo-remote-cache-api/releases/download/cli-v0.1.0";
+const url = `https://github.com/res-fortuitae/turborepo-remote-cache-api/releases/download/cli-v${version}`;
 const formula = `class Tcache < Formula
   desc "Self-hosted Turborepo remote cache CLI"
   homepage "https://github.com/res-fortuitae/turborepo-remote-cache-api"
-  version "0.1.0"
+  version "${version}"
   on_macos do
     on_arm do
       url "${url}/tcache-darwin-arm64"
@@ -36,7 +37,7 @@ const formula = `class Tcache < Formula
     bin.install Dir["tcache-*"][0] => "tcache"
   end
   test do
-    assert_match "tcache v0.1.0", shell_output("#{bin}/tcache --version")
+    assert_match "tcache v${version}", shell_output("#{bin}/tcache --version")
   end
 end
 `;

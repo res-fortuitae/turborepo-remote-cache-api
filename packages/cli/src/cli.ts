@@ -6,6 +6,7 @@ import { linkProject, logout, whoami, adminRequest } from "./account.ts";
 import { runAuthCommand } from "./commands.ts";
 import { adminPurge } from "./purge.ts";
 import { runDoctor } from "./doctor.ts";
+import packageJson from "../package.json" with { type: "json" };
 
 const textFlag = (name: string) => Flag.String(name).pipe(Flag.withDefault(""));
 const common = {
@@ -176,4 +177,6 @@ export const cli = Command.make("tcache").pipe(
   ]),
 );
 export const runCli = (args: readonly string[]) =>
-  Command.runWith(cli, { version: "0.1.0" })(args).pipe(Effect.provide(BunServices.layer));
+  Command.runWith(cli, { version: packageJson.version })(args).pipe(
+    Effect.provide(BunServices.layer),
+  );
