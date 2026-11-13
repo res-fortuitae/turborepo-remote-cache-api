@@ -70,10 +70,6 @@ jobs:
       # Already-published versions are skipped, so a failed run can be re-run.
       - name: Publish to npm
         working-directory: packages/cli/dist/npm
-        # Temporary: NPM_TOKEN exists only for the first release, before the packages
-        # exist and trusted publishers can be added. Remove it once they are set up.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           publish() {
             name=$(jq -r .name "$1/package.json")
