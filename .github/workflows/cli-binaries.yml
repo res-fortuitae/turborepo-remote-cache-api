@@ -45,10 +45,12 @@ jobs:
         with:
           node-version: "24"
       - run: bun install --frozen-lockfile
+      # Release builds (tags) skip the remote cache so published binaries are built
+      # from scratch. An empty api leaves Turbo on the local cache only.
       - name: Configure repository remote cache
         uses: ./.github/actions/remote-cache
         with:
-          api: ${{ secrets.TCACHE_API }}
+          api: ${{ !startsWith(github.ref, 'refs/tags/') && secrets.TCACHE_API || '' }}
           team: ${{ secrets.TCACHE_TEAM }}
           project: ${{ secrets.TCACHE_PROJECT }}
       - run: bun run build --filter=@repo/cli -- ${{ matrix.target }}
