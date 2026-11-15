@@ -82,14 +82,14 @@ export const multipartRoute = <R>(
             quotas._tag === "Some"
               ? yield* quotas.value.reserve(
                   { orgId: owner.orgId, projectId: owner.projectId },
-                  body.hash,
+                  body.hash.toLowerCase(),
                   body.size,
                 )
               : undefined;
           const created = yield* restore(
             uploads.create(
               { ...owner, expiresAt, quotaReservation: reservation },
-              body.hash,
+              body.hash.toLowerCase(),
               body.size,
               metadata,
             ),

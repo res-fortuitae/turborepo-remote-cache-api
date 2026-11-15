@@ -117,9 +117,13 @@ export const MultipartUploadsLive = Layer.effect(
             status: 413,
             message: "Artifact exceeds project multipart limit",
           });
-        if (new TextEncoder().encode(JSON.stringify(metadata)).byteLength > 6000)
-          return yield* invalid("Artifact metadata is too large");
         const session = crypto.randomUUID();
+        if (
+          new TextEncoder().encode(JSON.stringify({ ...metadata, uploadSession: session }))
+            .byteLength > 6000
+        )
+          return yield* invalid("Artifact metadata is too large");
+        hash = hash.toLowerCase();
         const objectKey = `${owner.orgId}/${owner.projectId}/${hash}`;
         const uploadId = yield* bucket
           .create(objectKey, { ...metadata, uploadSession: session })

@@ -2,7 +2,8 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import type * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
   uploadProvenance,
   ArtifactStore,
@@ -53,8 +54,38 @@ const badRequest = (message: string) => new ApiError({ status: 400, code: "bad_r
 const isMultipartPath = (path: string) =>
   path === "/v8/x/uploads" || path.startsWith("/v8/x/uploads/");
 
-const HASH = /^[a-fA-F0-9]+$/;
+const HASH = /^[a-fA-F0-9]{1,256}$/;
 const ROUTE = /^\/v8\/artifacts(?:\/([^/]+))?\/?$/;
+
+const readArtifactJson = (limit: number) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const decoder = new TextDecoder();
+    let size = 0;
+    const text = yield* Stream.runFoldEffect(
+      request.stream,
+      () => "",
+      (text, chunk) => {
+        size += chunk.byteLength;
+        return size > limit
+          ? Effect.fail(
+              new ApiError({
+                status: 413,
+                code: "payload_too_large",
+                message: "Artifact JSON body exceeds limit",
+              }),
+            )
+          : Effect.succeed(text + decoder.decode(chunk, { stream: true }));
+      },
+    ).pipe(
+      Effect.mapError((error) =>
+        error instanceof ApiError ? error : badRequest("Invalid request body"),
+      ),
+    );
+    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+      text + decoder.decode(),
+    ).pipe(Effect.mapError(() => badRequest("Invalid JSON body")));
+  });
 
 export type {
   ArtifactBucket,
@@ -288,7 +319,7 @@ export const artifactApi = <R>({
 
   const head = Effect.fn("Api.head")(function* (team: string, hash: string) {
     const store = yield* ArtifactStore;
-    const object = yield* store.head(team, hash);
+    const object = yield* store.head(team, hash.toLowerCase());
 
     if (object === null) return HttpServerResponse.empty({ status: 404 });
     const meta: ArtifactMetadata = object.customMetadata ?? {};
@@ -393,6 +424,9 @@ export const artifactApi = <R>({
 
     if (h["x-artifact-dirty-hash"]) meta.dirtyHash = h["x-artifact-dirty-hash"];
 
+    if (new TextEncoder().encode(JSON.stringify(meta)).byteLength > 6000)
+      return yield* badRequest("Artifact metadata is too large");
+
     const store = yield* ArtifactStore;
     const options = {
       httpMetadata: { contentType: "application/octet-stream" },
@@ -465,9 +499,9 @@ export const artifactApi = <R>({
   });
 
   const query = Effect.fn("Api.query")(function* (team: string, maxHashes: number) {
-    const { hashes } = yield* HttpServerRequest.schemaBodyJson(ArtifactQueryRequest).pipe(
-      Effect.mapError(() => badRequest("Invalid request body")),
-    );
+    const { hashes } = yield* Schema.decodeUnknownEffect(ArtifactQueryRequest)(
+      yield* readArtifactJson(100_000),
+    ).pipe(Effect.mapError(() => badRequest("Invalid request body")));
 
     if (hashes.length > maxHashes)
       return yield* badRequest(`At most ${maxHashes} hashes are allowed`);
@@ -481,7 +515,7 @@ export const artifactApi = <R>({
           }
 
           const store = yield* ArtifactStore;
-          const object = yield* store.head(team, hash);
+          const object = yield* store.head(team, hash.toLowerCase());
 
           if (object === null) return [hash, null] as const;
           const meta: ArtifactMetadata = object.customMetadata ?? {};
@@ -502,9 +536,9 @@ export const artifactApi = <R>({
   });
 
   const events = Effect.fn("Api.events")(function* (team: string, scope: ArtifactScope) {
-    const events = yield* HttpServerRequest.schemaBodyJson(CacheEvents).pipe(
-      Effect.mapError(() => badRequest("Invalid request body")),
-    );
+    const events = yield* Schema.decodeUnknownEffect(CacheEvents)(
+      yield* readArtifactJson(1_000_000),
+    ).pipe(Effect.mapError(() => badRequest("Invalid request body")));
 
     yield* waitUntil(emitEvents(team, events, scope));
 
@@ -544,7 +578,8 @@ export const artifactApi = <R>({
     const scope = yield* authenticate();
     const team = scope.prefix;
     const provenance = uploadProvenance(scope.credential);
-    const segment = match?.[1];
+    const rawSegment = match?.[1];
+    const segment = rawSegment && HASH.test(rawSegment) ? rawSegment.toLowerCase() : rawSegment;
     const method = request.method;
 
     const startedAt = Date.now();
