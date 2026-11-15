@@ -26,6 +26,7 @@ export const DeployConfigSchema = Schema.Struct({
   groups: Schema.optional(
     Schema.Struct({ maxGroups: PositiveInteger, maxMembersPerGroup: PositiveInteger }),
   ),
+  bootstrapOwnerEmail: Schema.optional(Schema.NonEmptyString),
   identityCeilings: Schema.optional(IdentityCeilings),
   jurisdiction: Schema.Literals(["default", "eu", "fedramp"]),
   githubApp: Schema.optional(

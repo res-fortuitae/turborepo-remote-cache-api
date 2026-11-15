@@ -1,3 +1,6 @@
+import { github } from "better-auth/social-providers";
+import { checkEmailPolicy, checkGithubPolicy, checkStoredIdentity } from "./identity-policy.ts";
+import { eq } from "drizzle-orm";
 import type { SessionReader } from "./session-reader.ts";
 import { bootstrapOwner } from "./bootstrap.ts";
 import * as Effect from "effect/Effect";
@@ -50,6 +53,17 @@ export const makeBetterAuth = ({
 
   if (config.github !== undefined) {
     socialProviders.github = {
+      scope: ["read:org"],
+      getUserInfo: async (tokens) => {
+        await checkGithubPolicy(
+          (await readInstancePolicy(db, config)).allowedGithubOrgs,
+          tokens.accessToken,
+        );
+        return github({
+          clientId: config.github!.clientId,
+          clientSecret: Redacted.value(config.github!.clientSecret),
+        }).getUserInfo(tokens);
+      },
       clientId: config.github.clientId,
       clientSecret: Redacted.value(config.github.clientSecret),
     };
@@ -94,56 +108,30 @@ export const makeBetterAuth = ({
         await identity.user.validateUserInfo(data, context);
         const policy = await readInstancePolicy(db, config);
 
-        if (policy.allowedEmailDomains.length > 0) {
-          const email = data.user.email;
-          const domain = typeof email === "string" ? email.split("@")[1]?.toLowerCase() : undefined;
-
-          if (
-            !data.user.emailVerified ||
-            !domain ||
-            !policy.allowedEmailDomains.some((allowed) => allowed.toLowerCase() === domain)
-          )
-            throw new APIError("FORBIDDEN", {
-              message: "Email domain is not allowed by instance policy",
-            });
-        }
-
-        if (policy.allowedGithubOrgs.length > 0) {
-          const login = data.source.oauth?.profile?.login;
-
-          if (data.source.oauth?.providerId !== "github" || typeof login !== "string")
-            throw new APIError("FORBIDDEN");
-          let allowed = false;
-
-          for (const org of policy.allowedGithubOrgs) {
-            const response = await fetch(
-              `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(login)}`,
-              {
-                headers: {
-                  Accept: "application/vnd.github+json",
-                  "User-Agent": "turborepo-remote-cache",
-                },
-                signal: AbortSignal.timeout(5000),
-              },
-            );
-
-            if (response.status === 204) allowed = true;
-          }
-
-          if (!allowed)
-            throw new APIError("FORBIDDEN", {
-              message: "GitHub organization membership is required",
-            });
-        }
+        checkEmailPolicy(policy, data.user.email ?? "", data.user.emailVerified === true);
+        if (policy.allowedGithubOrgs.length && data.source.oauth?.providerId !== "github")
+          throw new APIError("FORBIDDEN", { message: "GitHub sign-in is required" });
       },
     },
     databaseHooks: {
       ...identity.databaseHooks,
+      session: {
+        create: {
+          before: async (session) => {
+            const [user] = await db
+              .select()
+              .from(schema.user)
+              .where(eq(schema.user.id, session.userId));
+            if (!user) throw new APIError("FORBIDDEN");
+            await checkStoredIdentity(db, config, await readInstancePolicy(db, config), user);
+          },
+        },
+      },
       user: {
         create: {
           after: async (user) => {
             if (!audit) throw new APIError("SERVICE_UNAVAILABLE", { message: "Audit unavailable" });
-            await Effect.runPromise(bootstrapOwner(audit, user.id));
+            await Effect.runPromise(bootstrapOwner(audit, user.id, config.bootstrapOwnerEmail));
           },
         },
       },

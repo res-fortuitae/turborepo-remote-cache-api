@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { AuditLogTest } from "@repo/audit/testing";
 import { Database, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
-import { AuthConfig } from "@repo/deploy-config";
+import { defaultInstancePolicy, AuthConfig } from "@repo/deploy-config";
 import { Mailer, type MailMessage } from "@repo/mailer";
 import { Effect, Layer, Redacted } from "effect";
 import { Auth, AuthLive } from "./auth.ts";
@@ -144,5 +144,38 @@ test("password registration and an unconfigured GitHub provider stay disabled", 
     }),
     [],
     false,
+  );
+});
+
+test("returning magic links obey tightened policy and signup never grants ownership by default", async () => {
+  const messages: MailMessage[] = [];
+  await run(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const database = yield* Database;
+      yield* auth.handler(requestLink());
+      yield* auth.handler(new Request(messages[0]!.text.split("\n\n")[1]!));
+      const users = yield* database.query("test.users", (db) => db.select().from(schema.user));
+      yield* database.query("test.policy", (db) =>
+        db.insert(schema.instanceSettings).values({
+          id: 1,
+          schemaVersion: 1,
+          settings: {
+            ...JSON.parse(JSON.stringify(defaultInstancePolicy)),
+            allowedEmailDomains: ["other.test"],
+          },
+          updatedAt: Date.now(),
+        }),
+      );
+      yield* auth.handler(requestLink());
+      yield* auth.handler(new Request(messages[1]!.text.split("\n\n")[1]!));
+      const sessions = yield* database.query("test.sessions", (db) =>
+        db.select().from(schema.session),
+      );
+      expect(sessions).toHaveLength(1);
+      expect(users[0]!.role).not.toBe("owner");
+    }),
+    messages,
+    true,
   );
 });

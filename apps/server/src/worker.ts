@@ -238,6 +238,7 @@ const AuthEnvironment = Schema.Struct({
     Schema.fromJsonString(Schema.Struct({ maxGroups: Schema.Int, maxMembersPerGroup: Schema.Int })),
   ),
   EMAIL_FROM: Schema.optional(Schema.String),
+  BOOTSTRAP_OWNER_EMAIL: Schema.optional(Schema.String),
   IDENTITY_CEILINGS: Schema.optional(Schema.fromJsonString(IdentityCeilings)),
 });
 
@@ -258,6 +259,7 @@ interface DeploymentEnvironment {
   OIDC_AUDIENCES?: string;
   OIDC_CUSTOM_ISSUERS?: string;
   GITHUB_CLIENT_ID?: string;
+  BOOTSTRAP_OWNER_EMAIL?: string;
   IDENTITY_CEILINGS?: string;
   EMAIL_FROM?: string;
   GROUP_LIMITS?: string;
@@ -306,6 +308,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       RATE_LIMIT_STAGE: stage,
       LEGACY_TOKEN_ENABLED: String(config.features.legacyToken === true),
       PROJECT_RETENTION_DAYS: String(config.limits.artifactRetentionDays),
+      BOOTSTRAP_OWNER_EMAIL: config.bootstrapOwnerEmail,
       IDENTITY_CEILINGS: JSON.stringify(config.identityCeilings ?? {}),
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
       CAPABILITIES: JSON.stringify(capabilities),
@@ -471,6 +474,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           trustedOrigins: [origin],
           github,
           groups: authEnvironment.GROUP_LIMITS,
+          bootstrapOwnerEmail: authEnvironment.BOOTSTRAP_OWNER_EMAIL,
           identityCeilings: authEnvironment.IDENTITY_CEILINGS,
         };
       }),

@@ -3,7 +3,7 @@ import { schema } from "@repo/db";
 import { and, eq, sql } from "drizzle-orm";
 
 /** The event describes the conditional check, including when another user already owns the instance. */
-export const bootstrapOwner = (audit: AuditLogService, userId: string) =>
+export const bootstrapOwner = (audit: AuditLogService, userId: string, ownerEmail?: string) =>
   audit.commit(
     {
       scope: "instance",
@@ -24,6 +24,9 @@ export const bootstrapOwner = (audit: AuditLogService, userId: string) =>
         .where(
           and(
             eq(schema.user.id, userId),
+            sql`lower(email) = ${ownerEmail?.toLowerCase() ?? ""}`,
+            eq(schema.user.emailVerified, true),
+            sql`not exists (select 1 from user where id != ${userId})`,
             sql`not exists (select 1 from user where role = 'owner')`,
           ),
         ),
