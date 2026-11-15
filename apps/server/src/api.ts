@@ -534,6 +534,21 @@ export const artifactApi = <R>({
         if (method === "GET") return yield* download(team, segment, scope.cacheGeneration);
 
         if (method === "PUT") {
+          const length = request.headers["content-length"];
+          const size = length === undefined ? undefined : Number(length);
+          if (
+            (size === undefined && !uploadChunked) ||
+            (size !== undefined &&
+              (!/^\d+$/.test(length!) || !Number.isSafeInteger(size) || size < 0))
+          )
+            return yield* badRequest("Missing or invalid Content-Length header");
+          const limit = Math.min(scope.maxUploadBytes, maxUploadBytes);
+          if (size !== undefined && size > limit)
+            return yield* new ApiError({
+              status: 413,
+              code: "payload_too_large",
+              message: `Artifact exceeds direct upload limit (${limit} bytes); use tcache exec`,
+            });
           const uploading = upload(
             team,
             segment,

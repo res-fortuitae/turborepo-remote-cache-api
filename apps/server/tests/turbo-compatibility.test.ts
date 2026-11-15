@@ -66,3 +66,75 @@ test("Turbo preflight never redirects or touches storage and actual operations s
   expect((await target.fetch("/v8/artifacts/abc")).status).toBe(401);
   expect((await target.fetch("/api/auth/token", { method: "OPTIONS" })).status).toBe(404);
 });
+
+test("real Turbo keeps the task successful when a local upload returns 429", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join, resolve } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "quota-busy-turbo-"));
+  let attempts = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      if (request.method === "PUT") {
+        attempts++;
+        return Response.json(
+          { code: "upload_busy", message: "Retry upload" },
+          { status: 429, headers: { "Retry-After": "1" } },
+        );
+      }
+      if (new URL(request.url).pathname.endsWith("/status"))
+        return Response.json({ status: "enabled" });
+      return new Response(null, { status: 404 });
+    },
+  });
+  try {
+    await Bun.write(
+      join(directory, "package.json"),
+      JSON.stringify({
+        name: "quota-busy-fixture",
+        private: true,
+        packageManager: `bun@${Bun.version}`,
+        scripts: { build: "bun -e 'console.log(123)'" },
+      }),
+    );
+    await Bun.write(join(directory, "bun.lock"), "");
+    await Bun.write(
+      join(directory, "turbo.json"),
+      JSON.stringify({ tasks: { build: { outputs: [] } } }),
+    );
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        resolve(import.meta.dir, "../../../node_modules/turbo/bin/turbo"),
+        "run",
+        "build",
+        "--cache=remote:rw",
+      ],
+      {
+        cwd: directory,
+        env: {
+          PATH: process.env.PATH,
+          TURBO_API: server.url.origin,
+          TURBO_TOKEN: "local-only",
+          TURBO_TEAM: "quota-local",
+          TURBO_TELEMETRY_DISABLED: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(exit, stdout + stderr).toBe(0);
+    expect(attempts).toBe(1);
+    expect(stdout).toContain("123");
+  } finally {
+    server.stop(true);
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);

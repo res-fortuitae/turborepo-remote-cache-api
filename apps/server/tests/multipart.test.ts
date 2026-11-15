@@ -365,7 +365,7 @@ test("completion replay with real quotas preserves the artifact and ledgers", as
   );
 });
 
-test("reservation survives a sweep immediately before ticket expiry", async () => {
+test("abandoned reservation expires before its ticket and cannot publish", async () => {
   let now = 1000000;
   const clock: Clock.Clock = {
     currentTimeMillisUnsafe: () => now,
@@ -401,21 +401,12 @@ test("reservation survives a sweep immediately before ticket expiry", async () =
         const part = await fixture.serve(`${path}/parts/1`, "PUT", "write", "hello", {
           "content-length": "5",
         });
-        expect(
-          (
-            await fixture.serve(
-              `${path}/complete`,
-              "POST",
-              "write",
-              JSON.stringify({ parts: [await part.json()] }),
-            )
-          ).status,
-        ).toBe(202);
-        expect(fixture.bucket.objects.get("o/p/abc")?.size).toBe(5);
+        expect(part.status).toBe(503);
+        expect(fixture.bucket.objects.has("o/p/abc")).toBe(false);
       });
       expect(
         (yield* quotas.status({ orgId: "o", projectId: "p" })).project.usage.storageBytes,
-      ).toBe(5);
+      ).toBe(0);
     }).pipe(Effect.provide(QuotasTest), Effect.provideService(Clock.Clock, clock)),
   );
 });

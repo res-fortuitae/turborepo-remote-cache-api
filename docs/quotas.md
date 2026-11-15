@@ -17,32 +17,42 @@ owners/admins and shown in the settings card, deduplicated per UTC day/threshold
 Scoped direct PUTs reserve capacity in D1 before consuming their body. One atomic
 insert checks the project and organization's stored bytes plus active leases,
 and daily budgets plus reserved transfers. Concurrent requests cannot independently
-spend the same capacity; concurrent writes to the same hash are serialized by the
-reservation's unique key. Successful completion updates the size ledger and daily
+spend the same capacity. A concurrent write to the same hash receives retryable
+429 `upload_busy` with `Retry-After: 1`, rather than 403 `over_limit`. The unique
+reservation key prevents double reservation; retry after the first writer finishes. Successful completion updates the size ledger and daily
 counters in the same transaction that releases the reservation. Overwrites replace
 the old size rather than incrementing it. Unknown-length direct uploads reserve
 the direct-request ceiling, then reconcile to the stored size. Storage-head or
 accounting failures fail closed; a rejected oversized observation is cleaned up.
-A crashed direct request can hold a reservation for up to an hour.
+Direct upload finalizers release capacity on failure, defects, and Effect interruption.
+A crashed request can hold a reservation for at most five minutes. Client disconnect
+notification depends on the runtime; the lease bounds cleanup if no interruption arrives.
 
-Multipart creation reserves the declared whole size for its authenticated 24-hour
-upload ticket. Parts retain that reservation; completion publishes actual storage
+Multipart creation reserves the declared whole size with a five-minute lease,
+separate from its authenticated 24-hour ticket. Each part request
+renews an unexpired lease for five minutes. Expired leases cannot be revived: restart
+the upload to acquire capacity again. Admission sweeps expired rows (including at
+the expiry boundary); status ignores them. Completion publishes actual storage
 and releases it. Abort releases it. Pre-upgrade tickets without a reservation must
 be restarted. Every part/commit still rechecks authorization. Artifact operations
 count toward daily request/bandwidth budgets; multipart control/part calls retain
 separate existing request rate limits. Successful writes are counted transactionally;
 read/failed-operation counters are observed under waitUntil and can lag briefly.
 Reads remain allowed after any quota is exhausted; budgets pause writes, not reads.
-`/v8/artifacts/status` reports `over_limit` for exhausted scoped credentials.
+`/v8/artifacts/status` reports `over_limit` when usage plus reservations exceeds a
+limit; equality is healthy, though another positive increment may be rejected.
+Content-Length syntax and direct upload size are checked before reserving capacity.
 Opt-in legacy shared-token namespaces are outside org/project quota accounting.
 
 Reject is the default. Optional evict-oldest queues a durable job when storage
 admission fails. Writes stay paused while it runs, including through JWT refresh.
+Admission during eviction returns 429 `upload_busy` if capacity is otherwise
+available; pending maintenance alone does not set `over_limit`.
 The minute cron scans one 100-object R2 page at a time, retaining only the oldest
 100 candidates by provenance `uploadedAt` (native upload time is the fallback).
 It finishes the entire scan before deleting, so lexicographic hash order never
-stands in for age. It removes at most 25 objects per tick, checks ETags, waits for
-in-flight reservations, and invalidates edge-cache generations. Scans repeat until
+stands in for age. It removes at most 25 objects per tick, checks ETags, skips only hashes with
+live reservations, and invalidates edge-cache generations. Scans repeat until
 both project and org storage are below 90%, or no artifacts remain. Inventory
 reconciliation skips active eviction jobs. Completion and one audit summary commit
 together with `evictions`/`evictedBytes` analytics counters. Daily bandwidth/request
@@ -53,3 +63,9 @@ platform writes remain eventual-consistency limits; inventory reconciliation
 repairs them. An exhausted empty prefix clears its stale size ledger. Quotas are
 an admission budget over the ledger and active reservations, not a claim that R2
 is transactionally coupled to D1. Large inventories may need many bounded ticks.
+
+Contention is a transient cache write failure, not a credential-wide quota disable.
+Turbo compatibility must be checked against local fixtures when changing this status;
+The local real-binary probe confirms Turbo 2.11.10 sends one PUT on 429 and
+leaves the task successful; it does not automatically retry that publication.
+429 carries a retry hint for clients that support it. Task output remains usable even when cache publication fails.
