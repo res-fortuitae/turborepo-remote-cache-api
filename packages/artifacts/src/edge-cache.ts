@@ -36,7 +36,7 @@ export class EdgeCache extends Context.Service<
 
 // Scope is verified before use; generation changes invalidate all locations.
 const cacheKey = (prefix: string, hash: string, generation = 0) =>
-  `https://artifact-cache.internal/${prefix.split("/").map(encodeURIComponent).join("/")}/g${generation}/${hash}`;
+  `https://artifact-cache.internal/p${encodeURIComponent(prefix)}/g${generation}/${hash}`;
 
 export const EdgeCacheLive = Layer.effect(
   EdgeCache,

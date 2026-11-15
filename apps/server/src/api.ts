@@ -374,11 +374,27 @@ export const artifactApi = <R>({
       return HttpServerResponse.stream(object.body, options);
     }
 
-    // Serve one branch to the client and store the other at the edge in the background.
-    const [client, copy] = object.readable.tee();
-    yield* waitUntil(cache.put(team, hash, new Response(copy, { headers }), generation));
+    // Independent reads keep a fast cache fill from buffering a slow client's body.
+    yield* waitUntil(
+      Effect.gen(function* () {
+        const copy = yield* store.get(team, hash);
+        if (copy?.readable) {
+          const copyHeaders = {
+            ...artifactHeaders(copy.size, copy.customMetadata ?? {}),
+            "content-type": "application/octet-stream",
+            "cache-control": cache.cacheControl,
+          };
+          yield* cache.put(
+            team,
+            hash,
+            new Response(copy.readable, { headers: copyHeaders }),
+            generation,
+          );
+        }
+      }).pipe(Effect.catch(() => Effect.void)),
+    );
 
-    return HttpServerResponse.raw(client, options);
+    return HttpServerResponse.raw(object.readable, options);
   });
 
   const upload = Effect.fn("Api.upload")(function* (
