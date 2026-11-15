@@ -938,6 +938,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
                   Effect.tryPromise(() => raw.delete([...keys])).pipe(
                     Effect.andThen(recordDeleted(keys, accounting)),
                   ),
+                invalidateCache: (id: string) =>
+                  coordinator.invalidateCache(id).pipe(Effect.asVoid),
                 revoke: (id: string) =>
                   coordinator
                     .revokeAll(`project:${id}`)

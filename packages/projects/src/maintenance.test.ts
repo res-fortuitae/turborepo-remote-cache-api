@@ -67,6 +67,7 @@ test("organization deletion persists intents, disables trust and resumes bounded
         }
         for (const key of batch) keys.delete(key);
       }).pipe(Effect.catchDefect((cause) => Effect.fail(cause))),
+    invalidateCache: () => Effect.void,
     revoke: (id) =>
       Effect.sync(() => {
         revoked.push(id);
@@ -127,6 +128,7 @@ test("retention clamps days, resumes listing cursors and preserves newer artifac
   const fresh = new Date("2099-01-01");
   const removed: string[] = [];
   const requests: (string | undefined)[] = [];
+  const invalidated: string[] = [];
   const storage: typeof ProjectStorage.Service = {
     list: (prefix, cursor) =>
       Effect.sync(() => {
@@ -142,6 +144,10 @@ test("retention clamps days, resumes listing cursors and preserves newer artifac
       Effect.sync(() => {
         removed.push(...keys);
       }),
+    invalidateCache: (id) =>
+      Effect.sync(() => {
+        invalidated.push(id);
+      }),
     revoke: () => Effect.void,
   };
   return Effect.runPromise(
@@ -155,11 +161,53 @@ test("retention clamps days, resumes listing cursors and preserves newer artifac
       yield* maintenance.tick;
       yield* maintenance.tick;
       expect(removed).toEqual(["org/a/first"]);
+      expect(invalidated).toEqual(["a", "a"]);
       expect(requests).toEqual([undefined, "next"]);
       const [state] = yield* database.query("test.cursor", (db) =>
         db.select().from(schema.projectRetention),
       );
       expect(state?.cursor).toBeNull();
+    }).pipe(Effect.provide(fixture(storage))),
+  );
+});
+
+test("retention retries failed invalidation after deletion without advancing the cursor", () => {
+  let present = true;
+  let generation = 0;
+  let failInvalidation = true;
+  const storage: typeof ProjectStorage.Service = {
+    list: () =>
+      Effect.succeed({ objects: present ? [{ key: "org/a/abc", uploaded: new Date(0) }] : [] }),
+    delete: () =>
+      Effect.sync(() => {
+        present = false;
+      }),
+    revoke: () => Effect.void,
+    invalidateCache: () =>
+      Effect.gen(function* () {
+        if (failInvalidation) {
+          failInvalidation = false;
+          return yield* Effect.fail(new Error("Coordinator unavailable"));
+        }
+        generation++;
+      }),
+  };
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const database = yield* Database;
+      yield* database.query("test.onlyA", (db) =>
+        db.delete(schema.project).where(eq(schema.project.id, "b")),
+      );
+      const maintenance = yield* ProjectMaintenance;
+      expect(Result.isFailure(yield* Effect.result(maintenance.tick))).toBe(true);
+      expect(present).toBe(false);
+      expect(
+        (yield* database.query("test.cursor", (db) => db.select().from(schema.projectRetention)))
+          .length,
+      ).toBe(0);
+      yield* maintenance.tick;
+      expect(generation).toBe(1);
     }).pipe(Effect.provide(fixture(storage))),
   );
 });

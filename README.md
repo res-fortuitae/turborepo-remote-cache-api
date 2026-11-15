@@ -260,6 +260,9 @@ When a jurisdiction is set, artifact edge caching is disabled regardless of the
 feature flag, and downloads use `Cache-Control: no-store`. See
 [data residency](docs/data-residency.md) for guarantees and migration limitations.
 
+See [edge-cache behavior and invalidation](docs/edge-cache.md) for download memory
+isolation and retention freshness limits.
+
 ## Testing
 
 | Layer          | Command                                                 | Needs                                                        |

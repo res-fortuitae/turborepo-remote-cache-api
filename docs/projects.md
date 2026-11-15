@@ -152,3 +152,12 @@ warnings/errors. Invalid policies cannot contribute to the simulated grant.
 It requires the same live project-admin session and matching Origin as policy
 mutations, shares their 16 KiB limit and no-store response, and never issues a token
 or writes policy/audit rows. Sample claims have no authentication authority.
+
+Retention sweeps advance the project's edge-cache generation after each scanned
+page, before saving the cursor. Failed invalidations retry the page even when its
+objects were already deleted. Native R2 lifecycle deletion has no generation
+callback: an existing edge copy can remain readable for at most its remaining
+one-hour TTL after deletion. R2 lifecycle scheduling itself is asynchronous.
+
+Generation changes propagate to other isolates within the Coordinator client’s
+five-second state-cache window; the invalidating isolate updates immediately.

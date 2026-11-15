@@ -33,6 +33,7 @@ export class ProjectStorage extends Context.Service<
       unknown
     >;
     readonly delete: (keys: readonly string[]) => Effect.Effect<void, unknown>;
+    readonly invalidateCache: (projectId: string) => Effect.Effect<void, unknown>;
     readonly revoke: (projectId: string) => Effect.Effect<void, unknown>;
   }
 >()("@repo/projects/ProjectStorage") {}
@@ -179,6 +180,9 @@ const maintenance = Effect.gen(function* () {
         (object) => object.uploaded.getTime() <= now - days * 86_400_000,
       );
       if (expired.length) yield* storage.delete(expired.map((object) => object.key));
+      // Always retry invalidation, even if a previous attempt deleted the objects but
+      // failed to bump the generation. Do not advance the cursor until it succeeds.
+      yield* storage.invalidateCache(project.id);
       // Round-robin even when a prefix spans many pages; a failed page never advances its cursor.
       yield* database.query("Projects.retentionProgress", (db) =>
         db
