@@ -58,8 +58,16 @@ export const addMetrics = (target: Metrics, source: Metrics) => {
   return target;
 };
 
-/** Global queries: each source table is scanned once per hour, never once per tenant. */
-export const rollupSql = (kind: "cache" | "artifact", from: number, to: number) => {
+type RollupCursor = Pick<typeof RollupRow.Type, "org_id" | "project_id" | "hour" | "dimension">;
+const cursorFields = ["org_id", "project_id", "hour", "dimension"] as const;
+
+/** Globally ordered pages, independent of tenant count. */
+export const rollupSql = (
+  kind: "cache" | "artifact",
+  from: number,
+  to: number,
+  after?: RollupCursor,
+) => {
   if (
     !Number.isSafeInteger(from) ||
     !Number.isSafeInteger(to) ||
@@ -98,19 +106,38 @@ export const rollupSql = (kind: "cache" | "artifact", from: number, to: number) 
       ? `concat('provider:', ci_provider, '|repo:', coalesce(repo_id, ''), '|ref:', coalesce(ref, ''))`
       : `concat('provider:', ci_provider)`;
 
+  const literal = (value: string) => "'" + value.replaceAll("'", "''") + "'";
+  const seek = after
+    ? "WHERE " +
+      cursorFields
+        .map(
+          (field, index) =>
+            "(" +
+            [
+              ...cursorFields.slice(0, index).map((key) => key + " = " + literal(after[key])),
+              field + " > " + literal(after[field]),
+            ].join(" AND ") +
+            ")",
+        )
+        .join(" OR ")
+    : "";
+
   return `WITH dedup AS (
     SELECT event_id, ts, org_id, project_id, ci_provider, sample_rate, ${columns}
     FROM analytics.${kind === "cache" ? "cache_events" : "artifact_ops"}
     WHERE day >= '${start.slice(0, 10)}' AND day <= '${end.slice(0, 10)}'
       AND ts >= '${start}' AND ts < '${end}' AND sample_rate > 0 AND sample_rate <= 1
     QUALIFY ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY ts) = 1
-  )
+  ), aggregated AS (
   SELECT org_id, project_id, concat(substring(ts, 1, 13), ':00:00.000Z') AS hour, '' AS dimension, ${metrics}
   FROM dedup GROUP BY org_id, project_id, substring(ts, 1, 13)
   UNION ALL
   SELECT org_id, project_id, concat(substring(ts, 1, 13), ':00:00.000Z') AS hour, ${dimension} AS dimension, ${metrics}
   FROM dedup GROUP BY org_id, project_id, substring(ts, 1, 13), ${dimension}
-  LIMIT 2001`;
+  )
+  SELECT org_id, project_id, hour, dimension, requests, "remoteHits", "remoteMisses", "timeSavedMs", "bytesServed", "bytesUploaded", "uniqueSessions", "ciRequests", "localRequests", "edgeHits", "edgeMisses" FROM aggregated ${seek}
+  ORDER BY org_id, project_id, hour, dimension
+  LIMIT 2000`;
 };
 
 export class AnalyticsRollups extends Context.Service<
@@ -196,7 +223,19 @@ export const AnalyticsRollupsLive = Layer.effect(
         // Validate both complete responses before mutating either source's D1 window.
         const results = yield* Effect.forEach(
           ["cache", "artifact"] as const,
-          (kind) => sqlClient.query(rollupSql(kind, from, to)).pipe(Effect.flatMap(decodeRows)),
+          (kind) =>
+            Effect.gen(function* () {
+              const rows: (typeof RollupRow.Type)[] = [];
+              let after: RollupCursor | undefined;
+              while (true) {
+                const page = yield* sqlClient
+                  .query(rollupSql(kind, from, to, after))
+                  .pipe(Effect.flatMap(decodeRows));
+                rows.push(...page);
+                if (page.length < 2000) return rows;
+                after = page[page.length - 1]!;
+              }
+            }),
           { concurrency: 1 },
         );
 

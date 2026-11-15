@@ -18,6 +18,7 @@ export const multipartFixture = (
   quotas?: typeof Quotas.Service,
   clock?: Clock.Clock,
   onCreate?: () => void,
+  onArtifactOp?: () => void,
 ) => {
   const bucket = memoryBucket();
   const uploads = new Map<
@@ -104,6 +105,7 @@ export const multipartFixture = (
   });
   const api = artifactApi({
     bucket,
+    emitArtifactOp: () => Effect.sync(() => onArtifactOp?.()),
     token: Redacted.make("unused"),
     edgeCacheEnabled: false,
     cache: createArtifactCache(false),
@@ -409,4 +411,30 @@ test("abandoned reservation expires before its ticket and cannot publish", async
       ).toBe(0);
     }).pipe(Effect.provide(QuotasTest), Effect.provideService(Clock.Clock, clock)),
   );
+});
+
+test("multipart POSTs never emit artifact-query accounting", async () => {
+  let operations = 0;
+  const fixture = multipartFixture(undefined, undefined, undefined, () => operations++);
+  const id = await create(fixture.serve);
+  const path = `/v8/x/uploads/${id}`;
+  expect(
+    (await fixture.serve(`${path}/parts/1`, "PUT", "write", "hello", { "content-length": "5" }))
+      .status,
+  ).toBe(200);
+  expect(
+    (
+      await fixture.serve(
+        `${path}/complete`,
+        "POST",
+        "write",
+        '{"parts":[{"partNumber":1,"etag":"etag-1"}]}',
+      )
+    ).status,
+  ).toBe(202);
+  const abandoned = await create(fixture.serve);
+  expect((await fixture.serve(`/v8/x/uploads/${abandoned}/abort`)).status).toBe(204);
+  expect(operations).toBe(0);
+  await fixture.serve("/v8/artifacts", "POST", "write", '{"hashes":[]}');
+  expect(operations).toBe(1);
 });

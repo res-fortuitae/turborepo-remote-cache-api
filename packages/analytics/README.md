@@ -57,7 +57,7 @@ required by [Cloudflare's authentication guide](https://developers.cloudflare.co
 The SQL adapter uses Effect HttpClient, a 30-second timeout, an 8 MiB streaming
 response limit and redacted credentials. SQL text is internal to domain templates.
 
-At minute 5 each hour, two global queries recompute the last three completed hours.
+At minute 5 each hour, global paginated queries recompute the last three completed hours.
 Queries prune by `day` and `ts`, deduplicate `event_id` with a window function, and
 weight sampled totals by `1/sample_rate`. Raw unique sessions use `approx_distinct`;
 aggregated hours/days sum those estimates, so sessions spanning buckets may be
@@ -66,11 +66,17 @@ rates are derived from summed numerators/denominators, never averaged percentage
 Daily totals and top 20 provider/repository/ref dimensions are rebuilt in D1,
 including affected days after every hourly run and the previous two days at 02:15 UTC.
 
-Responses above 2,000 rows per source query or daily publication fail before
-publication, preserving previous data. This bounds Worker/D1 work and prevents
-silently truncated totals. High-cardinality installations must increase the budget
-with corresponding runtime capacity or reduce telemetry dimensions before relying
-on this job. Data arriving over three hours late requires an operator backfill;
+Hourly warehouse rollups read ordered keyset pages of at most 2,000 rows per
+source, retaining all hourly dimensions regardless of tenant count. Both sources
+must finish validation before the D1 window is replaced. A failed page leaves
+the previous window intact; retrying recomputes the same three-hour window.
+This is retryable window replacement, not a persisted warehouse cursor. Pages
+are accumulated in memory, so very large windows still require Worker memory and
+SQL execution budget. Daily rows retain the existing top-20 dimensions per project.
+Only published cache-source totals suppress lite cache counters; artifact-only
+hours continue to include lite counters in hourly and daily views.
+
+Data arriving over three hours late requires an operator backfill;
 no raw history is queried during dashboard views.
 
 Every minute, inventory reconciles one project page (10 objects), retaining its

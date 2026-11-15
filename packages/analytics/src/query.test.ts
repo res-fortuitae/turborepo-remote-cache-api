@@ -236,3 +236,35 @@ test("storage history carries gauges forward, marks unknown buckets and isolates
     }).pipe(Effect.provide(AnalyticsQueryLive.pipe(Layer.provideMerge(DatabaseTest)))),
   );
 });
+
+test("artifact-only hours retain lite cache metrics in hourly and daily reads", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((q) => [
+        q.insert(schema.usageHourly).values({
+          ...scope,
+          hour,
+          source: "artifact",
+          dimension: "",
+          metrics: { bytesServed: 42 },
+        }),
+        q
+          .insert(schema.usageDaily)
+          .values({ ...scope, day: hour, dimension: "", metrics: { bytesServed: 42 } }),
+        q
+          .insert(schema.rollup)
+          .values({ ...scope, bucketStart: hour, metric: "remoteHits", value: 3 }),
+      ]);
+      const service = yield* AnalyticsQuery;
+      const hourly = yield* service.read(scope, query);
+      const daily = yield* service.read(scope, { ...query, granularity: "day" });
+      expect(hourly.totals.remoteHits).toBe(3);
+      expect(hourly.totals.remoteHits).toBe(daily.totals.remoteHits);
+      expect(hourly.totals.bytesServed).toBe(42);
+    }).pipe(
+      Effect.provide(AnalyticsQueryLive.pipe(Layer.provideMerge(DatabaseTest))),
+      Effect.scoped,
+    ),
+  );
+});
