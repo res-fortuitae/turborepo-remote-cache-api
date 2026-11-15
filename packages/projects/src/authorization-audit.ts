@@ -1,12 +1,18 @@
 import { AuditLog } from "@repo/audit";
 import { AuthorizationAudit } from "@repo/authz";
-import { Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
+
+/** Hosts schedule delivery with their request lifetime; tests may execute it inline. */
+export const AuthorizationAuditBackground = Context.Reference<
+  (effect: Effect.Effect<void>) => Effect.Effect<void>
+>("@repo/projects/AuthorizationAuditBackground", { defaultValue: () => (effect) => effect });
 
 /** Bridges the policy port to the append-only audit domain without a dependency cycle. */
 export const AuthorizationAuditLive = Layer.effect(
   AuthorizationAudit,
   Effect.gen(function* () {
     const audit = yield* AuditLog;
+    const background = yield* AuthorizationAuditBackground;
 
     return {
       deny: (principal, action, resource, reason) =>
@@ -35,7 +41,13 @@ export const AuthorizationAuditLive = Layer.effect(
             requestId: crypto.randomUUID(),
             metadata: {},
           })
-          .pipe(Effect.asVoid),
+          .pipe(
+            Effect.asVoid,
+            Effect.catchCause((cause) =>
+              Effect.logError("Authorization denial audit failed", cause),
+            ),
+            background,
+          ),
     } satisfies typeof AuthorizationAudit.Service;
   }),
 );

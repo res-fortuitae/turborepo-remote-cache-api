@@ -67,9 +67,13 @@ export interface AuditRecord {
   readonly statement: (db: DatabaseQueries) => DatabaseStatement;
 }
 
-/** One chain per org, and one for instance-wide events. */
-export const chainOf = (input: Pick<AuditInput, "scope" | "orgId">) =>
-  input.scope === "org" && input.orgId !== undefined ? `org:${input.orgId}` : "instance";
+/** Denials never consume an admin chain position, even for an attacker-chosen org. */
+export const chainOf = (input: Pick<AuditInput, "scope" | "orgId" | "outcome">) =>
+  input.outcome === "deny"
+    ? "instance:denials"
+    : input.scope === "org" && input.orgId !== undefined
+      ? `org:${input.orgId}`
+      : "instance";
 
 export interface AuditLogService {
   /**
@@ -342,7 +346,7 @@ export const AuditSinkTest: Layer.Layer<AuditSink | AuditSinkMemory> = Layer.eff
 
 /**
  * Without an export sink, standalone denials need the same durable D1 history
- * as transactional events. They extend the chain and remain unexported.
+ * as transactional events. They extend the fixed denial chain and remain unexported.
  */
 export const AuditLogD1Only: Layer.Layer<AuditLog, never, Database> = Layer.effect(
   AuditLog,

@@ -105,6 +105,7 @@ import {
   ProjectLimits,
   ProjectsLive,
   AuthorizationAuditLive,
+  AuthorizationAuditBackground,
   ProjectMaintenance,
   ProjectMaintenanceLive,
   ProjectStorage,
@@ -766,8 +767,22 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     });
 
+    const authorizationAuditBackgroundLayer = Layer.effect(
+      AuthorizationAuditBackground,
+      Effect.gen(function* () {
+        const context = yield* Effect.context<RuntimeContext>();
+        return (effect: Effect.Effect<void>) =>
+          execution.waitUntil(effect).pipe(Effect.provideContext(context));
+      }),
+    );
+
     const authorizationLayer = AuthorizationDatabaseLive.pipe(
-      Layer.provide(AuthorizationAuditLive.pipe(Layer.provide(auditLayer))),
+      Layer.provide(
+        AuthorizationAuditLive.pipe(
+          Layer.provide(auditLayer),
+          Layer.provide(authorizationAuditBackgroundLayer),
+        ),
+      ),
       Layer.provide(Layer.succeed(AuthorizationCeilings, authEnvironment.IDENTITY_CEILINGS ?? {})),
     );
 
@@ -845,7 +860,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const cacheAuthorizationLayer = Layer.mergeAll(
       coordinatorLayer,
       authorizationLayer,
-      AuthorizationAuditLive.pipe(Layer.provide(auditLayer)),
+      AuthorizationAuditLive.pipe(
+        Layer.provide(auditLayer),
+        Layer.provide(authorizationAuditBackgroundLayer),
+      ),
       DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
       CredentialResolverLive.pipe(
         Layer.provide(
