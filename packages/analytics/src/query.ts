@@ -1,6 +1,6 @@
 import { AnalyticsQuery as QuerySchema, AnalyticsResponse, BadRequest } from "@repo/api-spec";
 import { Database, schema } from "@repo/db";
-import { and, eq, gte, lt } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
 import { AnalyticsError } from "./emitter.ts";
 import { addMetrics, type Metrics } from "./rollups.ts";
@@ -99,6 +99,7 @@ export const AnalyticsQueryLive = Layer.effect(
                 bucket,
                 dimension: table.dimension,
                 metrics: table.metrics,
+                source: "source" in table ? table.source : sql<string>`'cache'`,
               })
               .from(table)
               .where(
@@ -222,7 +223,8 @@ export const AnalyticsQueryLive = Layer.effect(
               continue;
             }
 
-            published.add(identity(row.orgId, row.projectId, row.bucket));
+            if (row.source === "cache")
+              published.add(identity(row.orgId, row.projectId, row.bucket));
             add(row.orgId, row.projectId, row.bucket, row.metrics);
           }
 

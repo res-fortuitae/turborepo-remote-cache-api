@@ -142,3 +142,62 @@ test("resumable inventory repairs expired objects and totals only after a comple
     }).pipe(Effect.provide(layer), Effect.scoped),
   );
 });
+
+test("hourly pages 5000 dimensions without dropping tenants and retries safely", async () => {
+  const dimensions = Array.from({ length: 5000 }, (_, i) => ({
+    ...row,
+    project_id: String(i).padStart(5, "0"),
+    dimension: "provider:ci",
+  }));
+  let page = 0;
+  let fail = true;
+  const sql = Layer.succeed(BasinSqlClient, {
+    query: (query) => {
+      if (!query.includes("analytics.cache_events")) return Effect.succeed([]);
+      const index = page++;
+      expect(query).toContain("ORDER BY org_id, project_id, hour, dimension");
+      expect(query).toContain("LIMIT 2000");
+      if (index > 0)
+        expect(query).toContain("project_id > '" + String(index * 2000 - 1).padStart(5, "0") + "'");
+      if (fail && index === 1) return Effect.fail(new AnalyticsError({ cause: "page failed" }));
+      return Effect.succeed(dimensions.slice(index * 2000, (index + 1) * 2000));
+    },
+  });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const jobs = yield* AnalyticsRollups;
+      expect((yield* jobs.hourly.pipe(Effect.result))._tag).toBe("Failure");
+      expect(
+        yield* db.query("test.empty", (q) => q.select().from(schema.usageHourly)),
+      ).toHaveLength(0);
+      fail = false;
+      page = 0;
+      yield* jobs.hourly;
+      expect(page).toBe(3);
+      expect(yield* db.query("test.all", (q) => q.select().from(schema.usageHourly))).toHaveLength(
+        5000,
+      );
+      expect(yield* db.query("test.days", (q) => q.select().from(schema.usageDaily))).toHaveLength(
+        5000,
+      );
+    }).pipe(
+      Effect.provide(
+        AnalyticsRollupsLive.pipe(Layer.provide(sql), Layer.provideMerge(DatabaseTest)),
+      ),
+      Effect.scoped,
+    ),
+  );
+});
+
+test("rollup cursor includes every grouping key and escapes warehouse values", () => {
+  const query = rollupSql("cache", hour - 2 * 3_600_000, hour + 3_600_000, {
+    org_id: "org'quoted",
+    project_id: "p",
+    hour: new Date(hour).toISOString(),
+    dimension: "ref:'main",
+  });
+  expect(query).toContain("org_id > 'org''quoted'");
+  expect(query).toContain("project_id = 'p' AND hour = '");
+  expect(query).toContain("dimension > 'ref:''main'");
+});

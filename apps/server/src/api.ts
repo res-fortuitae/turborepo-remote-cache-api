@@ -701,7 +701,10 @@ export const artifactApi = <R>({
       ...(method === "PUT" && [202, 413].includes(response.status) ? { provenance } : {}),
     };
 
-    if ((segment && HASH.test(segment)) || (segment === undefined && method === "POST"))
+    if (
+      !multipartRequest &&
+      ((segment && HASH.test(segment)) || (segment === undefined && method === "POST"))
+    )
       yield* waitUntil(emitArtifactOp(scope, operation));
 
     return scope.credential?.credentialType === "apiKey"
