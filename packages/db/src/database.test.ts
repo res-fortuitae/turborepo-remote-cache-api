@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Layer, Result } from "effect";
+import { D1Client } from "./database.ts";
+import { D1ClientTest } from "./testing.ts";
 import { Database, DatabaseError } from "./database.ts";
 import {
   GrantRepo,
@@ -202,4 +204,17 @@ describe("additive migration gate", () => {
     ])
       expect(checkMigration(sql)).toEqual([sql]);
   });
+});
+
+test("SQLite adapter enforces the D1 binding limit", async () => {
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Tests the adapter boundary directly.
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const client = yield* D1Client;
+      expect(() => client.prepare("select 1").bind(...Array(100).fill(0))).not.toThrow();
+      expect(() => client.prepare("select 1").bind(...Array(101).fill(0))).toThrow(
+        "100 bound parameters",
+      );
+    }).pipe(Effect.provide(D1ClientTest), Effect.scoped),
+  );
 });

@@ -90,7 +90,7 @@ export interface AuditLogService {
    * denials that change nothing; run it under `waitUntil`.
    */
   readonly recordStandalone: (input: AuditInput) => Effect.Effect<AuditEvent, AuditSinkError>;
-  /** Exports the oldest unexported rows in order and marks them exported. Returns the count. */
+  /** Exports healthy rows and quarantines invalid rows. Returns the total processed count. */
   readonly drainOutbox: (limit?: number) => Effect.Effect<number, AuditLogError | AuditSinkError>;
   /**
    * Deletes exported rows older than the retention window, except each chain's
@@ -138,7 +138,9 @@ const build = Effect.fn("AuditLog.build")(function* (input: AuditInput, prevHash
     prevHash,
   } satisfies Omit<AuditEvent, "hash">;
 
-  return { ...unhashed, hash: yield* hashEvent(unhashed) } satisfies AuditEvent;
+  return yield* decodeEvent({ ...unhashed, hash: yield* hashEvent(unhashed) }).pipe(
+    Effect.mapError((cause) => new AuditLogError({ operation: "AuditLog.build", cause })),
+  );
 });
 
 const insert =
@@ -218,7 +220,9 @@ export const AuditLogLive: Layer.Layer<AuditLog, never, Database | AuditSink> = 
       }),
       recordStandalone: Effect.fn("AuditLog.recordStandalone")(function* (input) {
         // No row and no chain position: standalone events are not chained.
-        const event = yield* build(input, null);
+        const event = yield* build(input, null).pipe(
+          Effect.mapError((cause) => new AuditSinkError({ cause })),
+        );
         yield* sink.send([event]);
 
         return event;
@@ -229,7 +233,9 @@ export const AuditLogLive: Layer.Layer<AuditLog, never, Database | AuditSink> = 
             db
               .select({ id: schema.auditEvent.id, payload: schema.auditEvent.payload })
               .from(schema.auditEvent)
-              .where(isNull(schema.auditEvent.exportedAt))
+              .where(
+                and(isNull(schema.auditEvent.exportedAt), isNull(schema.auditEvent.exportError)),
+              )
               .orderBy(asc(schema.auditEvent.ts), asc(schema.auditEvent.id))
               .limit(limit),
           )
@@ -237,28 +243,46 @@ export const AuditLogLive: Layer.Layer<AuditLog, never, Database | AuditSink> = 
 
         if (rows.length === 0) return 0;
 
-        const events = yield* Effect.forEach(rows, (row) =>
-          decodeEvent(row.payload).pipe(
-            Effect.mapError((cause) => new AuditLogError({ operation: "AuditLog.decode", cause })),
-          ),
-        );
+        const events: AuditEvent[] = [];
+        const ids: string[] = [];
+        let quarantined = 0;
+        for (const row of rows) {
+          const decoded = yield* Effect.result(decodeEvent(row.payload));
+          if (Result.isFailure(decoded)) {
+            yield* database
+              .query("AuditLog.quarantine", (db) =>
+                db
+                  .update(schema.auditEvent)
+                  .set({ exportError: "AuditEvent schema validation failed" })
+                  .where(eq(schema.auditEvent.id, row.id)),
+              )
+              .pipe(fromDatabase);
+            quarantined++;
+            yield* Effect.logError("Audit outbox row quarantined", { id: row.id });
+          } else {
+            events.push(decoded.success);
+            ids.push(row.id);
+          }
+        }
+        if (quarantined > 0)
+          yield* Effect.logWarning("Audit outbox quarantine count", { quarantined });
 
-        // Marked only after the sink accepts them, so a failed send is retried.
-        yield* sink.send(events);
-        const exportedAt = yield* Clock.currentTimeMillis;
-        yield* database
-          .query("AuditLog.markExported", (db) =>
-            db
-              .update(schema.auditEvent)
-              .set({ exportedAt })
-              .where(
-                inArray(
-                  schema.auditEvent.id,
-                  rows.map((row) => row.id),
-                ),
-              ),
-          )
-          .pipe(fromDatabase);
+        // Mark only rows accepted by the sink. Delivery remains at least once.
+        if (events.length > 0) {
+          yield* sink.send(events);
+          const exportedAt = yield* Clock.currentTimeMillis;
+          // D1 allows 100 bindings; reserve one for exportedAt.
+          for (let offset = 0; offset < ids.length; offset += 99) {
+            yield* database
+              .query("AuditLog.markExported", (db) =>
+                db
+                  .update(schema.auditEvent)
+                  .set({ exportedAt })
+                  .where(inArray(schema.auditEvent.id, ids.slice(offset, offset + 99))),
+              )
+              .pipe(fromDatabase);
+          }
+        }
 
         return rows.length;
       }),
