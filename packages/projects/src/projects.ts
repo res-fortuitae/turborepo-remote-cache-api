@@ -11,7 +11,7 @@ import {
   type Project as ProjectResponse,
 } from "@repo/api-spec";
 import { AuditLog, type AuditInput, type AuditLogError } from "@repo/audit";
-import { readInstancePolicy, requirePasskeyProof } from "@repo/auth";
+import { readInstancePolicy, requireManagementPasskeyProof } from "@repo/auth";
 import { Authorization, type SessionPrincipal, type ProjectAction } from "@repo/authz";
 import { Database, ProjectRepo, schema, type Project, type TrustPolicy } from "@repo/db";
 import { PolicyGuardrails, type PolicyGuardrailSettings } from "@repo/oidc";
@@ -155,7 +155,8 @@ const projects = Effect.gen(function* () {
 
     if (policy.requirePasskeyForAdmins) {
       yield* Effect.tryPromise({
-        try: () => requirePasskeyProof(database.drizzle, actor.sessionId, actor.userId),
+        try: () =>
+          requireManagementPasskeyProof(database.drizzle, policy, actor.sessionId, actor.userId),
         catch: () => new Forbidden({ message: "A fresh passkey check is required" }),
       });
     }

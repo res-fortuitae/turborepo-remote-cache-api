@@ -116,6 +116,13 @@ turning `requirePasskeyForAdmins` on in instance policy; enabling it requires
 fresh proof from the operator. With the policy on, instance mutation and
 elevation endpoints (including native admin mutations) require a D1 proof no
 older than five minutes. Read-only views remain available without step-up.
+“Admins” means the live **instance** owner/admin role, not organization owners,
+organization admins or project admins. Project create/update/delete, grants,
+trust policies, purge, quotas, signing-key rotation and anomaly mutations all
+apply the same rule after their normal authorization checks. Organization policy
+can enable this requirement for instance administrators within that organization;
+it does not extend passkey enrollment or step-up to organization/project roles.
+Those roles retain their authorized management access without passkey proof.
 Verification rotates the session and revokes the prior D1 session; proof never
 comes from KV, a body parameter, or cookie claims. Changing domains changes the
 RP ID, so enroll replacement credentials before such a migration.

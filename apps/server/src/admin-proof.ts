@@ -1,4 +1,4 @@
-import { requirePasskeyProof } from "@repo/auth";
+import { requireManagementPasskeyProof } from "@repo/auth";
 import { AuthorizationCeilings } from "@repo/authz";
 import { Database, InstanceSettingsRepo } from "@repo/db";
 import { Forbidden } from "@repo/api-spec";
@@ -11,10 +11,10 @@ export const requireAdminProof = Effect.fn("Management.requireAdminProof")(funct
   sessionId: string,
 ) {
   const policy = yield* (yield* InstanceSettingsRepo).policy(orgId, yield* AuthorizationCeilings);
-  if (policy.requirePasskeyForAdmins && ["owner", "admin"].includes(user.role ?? "")) {
+  if (policy.requirePasskeyForAdmins) {
     const db = yield* Database;
     yield* Effect.tryPromise({
-      try: () => requirePasskeyProof(db.drizzle, sessionId, user.id),
+      try: () => requireManagementPasskeyProof(db.drizzle, policy, sessionId, user.id),
       catch: () => new Forbidden({ message: "Verify an administrator passkey first" }),
     });
   }

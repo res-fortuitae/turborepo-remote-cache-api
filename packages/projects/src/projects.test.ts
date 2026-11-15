@@ -255,6 +255,9 @@ test("live org policy tightens project limits and passkey step-up gates mutation
         retentionDays: 7,
         maxArtifactBytes: 1000,
       });
+      yield* db.query("test.instanceAdmin", (db) =>
+        db.update(schema.user).set({ role: "admin" }).where(eq(schema.user.id, "u")),
+      );
       const denied = yield* Effect.result(projects.update(actor, project.id, { name: "Blocked" }));
       expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
       const verifiedAt = yield* Clock.currentTimeMillis;
@@ -650,6 +653,9 @@ test("policy access requires project admin and live membership; passkey policy g
           updatedAt: 1,
         }),
       );
+      yield* db.query("test.instanceAdmin", (db) =>
+        db.update(schema.user).set({ role: "admin" }).where(eq(schema.user.id, "u")),
+      );
       const denied = yield* Effect.result(projects.saveTrustPolicy(actor, project.id, trustInput));
       expect(Result.isFailure(denied) && denied.failure._tag).toBe("Forbidden");
       expect((yield* projects.listTrustPolicies(actor, project.id))[0]).toMatchObject({
@@ -814,3 +820,104 @@ test("project administrators get an organization-scoped access directory without
       );
     }),
   ));
+
+test("organization owner can create projects with administrator passkey policy enabled", () =>
+  run(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.query("test.policy", (db) =>
+        db.insert(schema.organizationPolicy).values({
+          orgId: "a",
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [],
+            requirePasskeyForAdmins: true,
+          },
+          updatedAt: 1,
+        }),
+      );
+      const projects = yield* Projects;
+      expect((yield* projects.create(actor, "a", { slug: "cache", name: "Cache" })).slug).toBe(
+        "cache",
+      );
+    }),
+  ));
+
+for (const role of ["owner", "admin", "org-owner", "org-admin", "project-admin"]) {
+  for (const enabled of [false, true]) {
+    for (const proof of [false, true]) {
+      test(`management matrix: ${role}, policy=${enabled}, proof=${proof}`, () =>
+        run(
+          Effect.gen(function* () {
+            const db = yield* Database;
+            const projects = yield* Projects;
+            const project = yield* projects.create(actor, "a", {
+              slug: "existing",
+              name: "Existing",
+            });
+            yield* db.batch((db) => [
+              db
+                .update(schema.user)
+                .set({ role: role === "owner" || role === "admin" ? role : "member" })
+                .where(eq(schema.user.id, "u")),
+              db
+                .update(schema.member)
+                .set({
+                  role:
+                    role === "project-admin" ? "member" : role === "org-admin" ? "admin" : "owner",
+                })
+                .where(eq(schema.member.id, "m")),
+              db.insert(schema.projectGrant).values({
+                projectId: project.id,
+                principalType: "user",
+                principalId: "u",
+                role: "project:admin",
+                grantedBy: "u",
+                createdAt: 1,
+              }),
+              db.insert(schema.organizationPolicy).values({
+                orgId: "a",
+                settings: {
+                  ...defaultInstancePolicy,
+                  allowedEmailDomains: [...defaultInstancePolicy.allowedEmailDomains],
+                  allowedGithubOrgs: [...defaultInstancePolicy.allowedGithubOrgs],
+                  allowedOidcIssuers: [...defaultInstancePolicy.allowedOidcIssuers],
+                  requirePasskeyForAdmins: enabled,
+                },
+                updatedAt: 1,
+              }),
+              ...(proof
+                ? [
+                    db
+                      .insert(schema.passkeyProof)
+                      .values({ sessionId: "s", userId: "u", verifiedAt: Date.now() }),
+                  ]
+                : []),
+            ]);
+            const blocked = enabled && !proof && (role === "owner" || role === "admin");
+            const operations = [
+              projects.create(actor, "a", { slug: "new", name: "New" }).pipe(Effect.asVoid),
+              projects.update(actor, project.id, { name: "Updated" }).pipe(Effect.asVoid),
+              projects
+                .addGrant(actor, project.id, {
+                  principalType: "user",
+                  principalId: "u",
+                  role: "project:admin",
+                })
+                .pipe(Effect.asVoid),
+              projects.saveTrustPolicy(actor, project.id, trustInput).pipe(Effect.asVoid),
+              projects.delete(actor, project.id, project.id).pipe(Effect.asVoid),
+            ];
+            for (const [index, operation] of operations.entries()) {
+              const result = yield* Effect.result(operation);
+              const denied = blocked || (index === 0 && role === "project-admin");
+              expect(Result.isFailure(result)).toBe(denied);
+              if (Result.isFailure(result)) expect(result.failure._tag).toBe("Forbidden");
+            }
+          }),
+        ));
+    }
+  }
+}

@@ -30,3 +30,23 @@ export const requirePasskeyProof = async (
       message: "A fresh passkey check is required",
     });
 };
+
+/** Management step-up covers instance administrators, never organization/project roles.
+ * Read the live role so callers cannot bypass proof with a stale or omitted role.
+ */
+export const requireManagementPasskeyProof = async (
+  db: DatabaseDrizzle,
+  policy: { readonly requirePasskeyForAdmins: boolean },
+  sessionId: string,
+  userId: string,
+) => {
+  if (!policy.requirePasskeyForAdmins) return;
+  const [user] = await db
+    .select({ role: schema.user.role })
+    .from(schema.user)
+    .where(eq(schema.user.id, userId));
+  if (!user) throw new APIError("FORBIDDEN", { message: "A live user is required" });
+  if (user.role === "owner" || user.role === "admin") {
+    await requirePasskeyProof(db, sessionId, userId);
+  }
+};

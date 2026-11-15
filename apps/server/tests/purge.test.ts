@@ -13,7 +13,7 @@ import { AuthorizationDatabaseLive } from "@repo/authz";
 import { Database, ProjectRepoLive, InstanceSettingsRepoLive, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
 import { AuthorizationAuditLive } from "@repo/projects";
-import { CanonicalOrigin } from "@repo/deploy-config";
+import { defaultInstancePolicy, CanonicalOrigin } from "@repo/deploy-config";
 import { Effect, Layer } from "effect";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
@@ -74,6 +74,17 @@ test("purge routes require a live session, origin and project administration; jo
         q
           .insert(schema.member)
           .values({ id: "m", organizationId: "o", userId: "u", role: "owner", createdAt: now }),
+        q.insert(schema.organizationPolicy).values({
+          orgId: "o",
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [...defaultInstancePolicy.allowedEmailDomains],
+            allowedGithubOrgs: [...defaultInstancePolicy.allowedGithubOrgs],
+            allowedOidcIssuers: [...defaultInstancePolicy.allowedOidcIssuers],
+            requirePasskeyForAdmins: true,
+          },
+          updatedAt: 1,
+        }),
         q.insert(schema.project).values({
           id: "p",
           orgId: "o",
