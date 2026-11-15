@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CoordinatorClient } from "@repo/coordinator";
 import { CanonicalOrigin } from "@repo/deploy-config";
-import { Effect, Layer, Result } from "effect";
+import { Clock, Effect, Layer, Result } from "effect";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import { importJWK, SignJWT } from "jose";
@@ -157,7 +157,11 @@ describe("rejections", () => {
     await run(
       Effect.gen(function* () {
         const issued = yield* issue({ maxTtlSeconds: 60 });
+        const validityAt = yield* Clock.currentTimeMillis;
         yield* TestClock.adjust(61_000);
+        expect(
+          (yield* CacheTokenVerifier.use((v) => v.verify(issued.token, validityAt))).tokenId,
+        ).toBe(issued.principal.tokenId);
         expect(reason(yield* failure(verify(issued.token)))).toBe("expired");
       }),
     );
@@ -255,7 +259,11 @@ describe("revocation epochs", () => {
       Effect.gen(function* () {
         const coordinator = yield* CoordinatorClient;
         const old = yield* issue();
+        const validityAt = yield* Clock.currentTimeMillis;
         yield* coordinator.revokeAll("org:acme");
+        expect(
+          yield* failure(CacheTokenVerifier.use((v) => v.verify(old.token, validityAt))),
+        ).toBeInstanceOf(CacheTokenRevoked);
 
         const error = yield* failure(verify(old.token));
         expect(error).toBeInstanceOf(CacheTokenRevoked);

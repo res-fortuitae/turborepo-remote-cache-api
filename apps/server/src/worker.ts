@@ -1,3 +1,4 @@
+import { invalidateUpload } from "./upload-cleanup.ts";
 import { authStorageLayer, residencyFromEnvironment } from "./residency-storage.ts";
 import { Alerts } from "@repo/mailer";
 import { Anomalies, AnomaliesLive, AnomalyAlerts, AnomalyDeliveryError } from "@repo/artifacts";
@@ -1218,6 +1219,21 @@ export default class Api extends Cloudflare.Worker<Api>()(
       );
 
     const artifacts = artifactApi({
+      recordUploadCleanup: (prefix, hash) => {
+        const [orgId, projectId] = prefix.split("/");
+        return orgId && projectId
+          ? storageAccounting.record({ orgId, projectId }, hash, null).pipe(
+              Effect.mapError(
+                () =>
+                  new ApiError({
+                    status: 503,
+                    code: "accounting_unavailable",
+                    message: "Upload cleanup accounting unavailable",
+                  }),
+              ),
+            )
+          : Effect.void;
+      },
       overQuota: (scope) =>
         !scope.credential || scope.credential.credentialType === "legacy"
           ? Effect.succeed(false)
@@ -1384,7 +1400,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
               }),
           ),
         ),
-      bucket,
+      bucket: {
+        ...bucket,
+        invalidateUpload: (key, session) =>
+          Effect.flatMap(bucket.raw, (raw) => invalidateUpload(raw, key, session)),
+      },
       token,
       edgeCacheEnabled,
       cache: EdgeCache.createArtifactCache(edgeCacheEnabled),

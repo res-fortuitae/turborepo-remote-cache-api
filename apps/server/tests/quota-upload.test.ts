@@ -305,3 +305,47 @@ test("multipart creation uses a short renewable reservation rather than the tick
     }).pipe(Effect.provide(layer)),
   );
 });
+
+test("quota finish infrastructure failure retains the stored artifact", async () => {
+  let removed = false;
+  let released = false;
+  const result = await Effect.runPromise(
+    admitQuotaUpload(
+      { prefix: "o/p", credential, maxUploadBytes: 100 },
+      "aa",
+      1,
+      100,
+      Effect.succeed(Response.empty({ status: 202 })),
+      {
+        head: () => Effect.succeed({ size: 1 }),
+        remove: () =>
+          Effect.sync(() => {
+            removed = true;
+          }),
+      },
+    ).pipe(
+      Effect.provideService(Quotas, {
+        reserve: () => Effect.succeed(crypto.randomUUID()),
+        renew: () => Effect.succeed(undefined),
+        finish: () => Effect.fail(new QuotaUnavailable()),
+        release: () =>
+          Effect.sync(() => {
+            released = true;
+          }),
+        status: () => Effect.die("unused"),
+        config: () => Effect.die("unused"),
+        configure: () => Effect.die("unused"),
+        observe: () => Effect.die("unused"),
+        notify: () => Effect.die("unused"),
+      }),
+      Effect.provideService(
+        Request.HttpServerRequest,
+        Request.fromWeb(new globalThis.Request("http://localhost")),
+      ),
+      Effect.result,
+    ),
+  );
+  expect(result._tag).toBe("Failure");
+  expect(removed).toBe(false);
+  expect(released).toBe(true);
+});

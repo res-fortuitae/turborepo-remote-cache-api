@@ -35,6 +35,14 @@ export const memoryBucket = (): MemoryBucket => {
 
   const bucket: MemoryBucket = {
     objects,
+    invalidateUpload: (key, session) =>
+      guard(
+        Effect.sync(() => {
+          if (objects.get(key)?.customMetadata?.uploadSession !== session) return false;
+          objects.delete(key);
+          return true;
+        }),
+      ),
     delete: (keys) =>
       guard(
         Effect.sync(() => {

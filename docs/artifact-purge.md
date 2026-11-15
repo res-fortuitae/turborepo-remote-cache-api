@@ -86,3 +86,28 @@ The command prints the same JSON summary as the API and defaults to a dry run.
 It requires HTTPS except on loopback and refuses credential-bearing redirects.
 Anomaly handlers can propose the same `PurgeFilter` and call `IncidentPurge.preview`;
 confirmation remains explicit. Automated anomaly policy and its UI follow STV-490.
+
+### Authorization after direct uploads
+
+Direct uploads recheck current revocation, project policy, anomaly containment and
+purge fences after storage. JWT expiry is evaluated at request admission so an
+otherwise authorized upload can finish after its token expires. Internal rejection
+is reported as 403 without counting an IP authentication failure. Infrastructure
+failures return 503 and retain stored bytes; quota accounting failures also retain
+bytes for reconciliation.
+
+Security rejection or a changed purge generation invalidates only the upload's
+own session and object revision. Because R2 does not support conditional delete,
+cleanup uses an etag-conditional empty tombstone. Reads and HEAD treat that marker
+as absent, and successful invalidation removes the artifact's accounting entry.
+A concurrent writer that replaces the revision before cleanup is preserved.
+Empty tombstones remain as storage metadata until normal retention or project
+purge removes them. This cleanup does not roll back a previous overwritten copy.
+
+API-key verification currently conflates invalid keys and infrastructure failures.
+Post-upload API-key failures therefore return 503 and retain bytes, rather than
+risk destructive cleanup on an ambiguous result. JWT revocation remains explicit.
+R2 etags identify content rather than unique write versions: the etag and upload
+time conditions cannot distinguish identical-content writes in the same timestamp
+interval. Strict per-write isolation would require a durable version pointer or
+serialization shared by every writer, including multipart.

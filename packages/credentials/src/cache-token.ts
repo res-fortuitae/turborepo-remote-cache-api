@@ -143,6 +143,7 @@ export interface CacheTokenVerifierService {
   /** Signature, claims and revocation epochs; nothing else is stored. */
   readonly verify: (
     token: string,
+    validityAt?: number,
   ) => Effect.Effect<
     Principal,
     CacheTokenInvalid | CacheTokenRevoked | KeyStoreError | CoordinatorError
@@ -312,7 +313,10 @@ export const CacheTokenVerifierLive: Layer.Layer<
     const coordinator = yield* CoordinatorClient;
     const importKey = makeKeyImporter();
 
-    const findKey = Effect.fn("CacheTokenVerifier.findKey")(function* (token: string) {
+    const findKey = Effect.fn("CacheTokenVerifier.findKey")(function* (
+      token: string,
+      validityAt?: number,
+    ) {
       const header = yield* Effect.try({
         try: () => decodeProtectedHeader(token),
         catch: () => invalid("malformed", "token header is not a JWS header"),
@@ -336,7 +340,10 @@ export const CacheTokenVerifierLive: Layer.Layer<
       );
 
     return {
-      verify: Effect.fn("CacheTokenVerifier.verify")(function* (token: string) {
+      verify: Effect.fn("CacheTokenVerifier.verify")(function* (
+        token: string,
+        validityAt?: number,
+      ) {
         const key = yield* findKey(token);
         const now = yield* Clock.currentTimeMillis;
 
@@ -347,7 +354,7 @@ export const CacheTokenVerifierLive: Layer.Layer<
               audience: config.issuer,
               algorithms: [CACHE_TOKEN_ALGORITHM],
               typ: "JWT",
-              currentDate: new Date(now),
+              currentDate: new Date(validityAt ?? now),
               requiredClaims: ["sub", "jti", "iat", "nbf", "exp"],
             }),
           catch: fromJoseError,

@@ -20,10 +20,14 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
       readonly scheme: string;
       readonly artifactTag?: string;
       readonly proofAlreadyVerified?: boolean;
+      readonly validityAt?: number;
     },
   ) {
     const resolver = yield* CredentialResolver;
-    const credential = yield* resolver.resolve(Redacted.make(`Bearer ${token}`));
+    const credential = yield* resolver.resolve(
+      Redacted.make(`Bearer ${token}`),
+      request?.validityAt,
+    );
 
     if (credential.credentialType === "legacy") {
       if (request?.scheme === "dpop" || request?.dpop)
@@ -93,6 +97,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
       },
       action,
       { orgId: principal.org, projectId: principal.project },
+      request?.validityAt,
     );
     const database = yield* Database;
 
