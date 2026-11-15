@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -83,6 +84,7 @@ export interface ArtifactScope {
 }
 
 export interface ApiDependencies<R> {
+  readonly recordUploadCleanup?: (prefix: string, hash: string) => Effect.Effect<void, ApiError, R>;
   readonly overQuota?: (scope: ArtifactScope) => Effect.Effect<boolean, ApiError, R>;
   readonly withinUploadQuota?: (
     scope: ArtifactScope,
@@ -131,6 +133,7 @@ export interface ApiDependencies<R> {
       readonly scheme: string;
       readonly artifactTag?: string;
       readonly proofAlreadyVerified?: boolean;
+      readonly validityAt?: number;
     },
   ) => Effect.Effect<ArtifactScope, ApiError, R>;
   readonly auditDenial?: (
@@ -211,6 +214,7 @@ export const artifactApi = <R>({
   auditDenial = () => Effect.void,
   guard = () => Effect.void,
   guardAuthFailure = Effect.void,
+  recordUploadCleanup = () => Effect.void,
 }: ApiDependencies<R>) => {
   const storeLayer = ArtifactStoreLive.pipe(
     Layer.provide(
@@ -220,6 +224,10 @@ export const artifactApi = <R>({
           const context = yield* Effect.context<R>();
 
           return {
+            invalidateUpload: bucket.invalidateUpload
+              ? (key, session) =>
+                  bucket.invalidateUpload!(key, session).pipe(Effect.provideContext(context))
+              : undefined,
             head: (key) => bucket.head(key).pipe(Effect.provideContext(context)),
             get: (key) => bucket.get(key).pipe(Effect.provideContext(context)),
             put: (key, body, options) =>
@@ -231,7 +239,7 @@ export const artifactApi = <R>({
     ),
   );
 
-  const authenticate = (proofAlreadyVerified = false) =>
+  const authenticate = (proofAlreadyVerified = false, validityAt?: number) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const header = request.headers["authorization"] ?? "";
@@ -260,6 +268,7 @@ export const artifactApi = <R>({
             artifactTag: request.headers["x-artifact-tag"],
             scheme: scheme!,
             proofAlreadyVerified,
+            validityAt,
           },
         );
       }
@@ -347,6 +356,7 @@ export const artifactApi = <R>({
     uploadLimit: number,
     generation = 0,
     provenance: Record<string, string> = {},
+    validityAt?: number,
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const h = request.headers;
@@ -373,7 +383,7 @@ export const artifactApi = <R>({
       return yield* badRequest("Invalid x-artifact-duration header");
     }
 
-    const meta: ArtifactMetadata = { ...provenance };
+    const meta: ArtifactMetadata = { ...provenance, uploadSession: crypto.randomUUID() };
 
     if (duration) meta.duration = duration;
 
@@ -396,7 +406,7 @@ export const artifactApi = <R>({
     else yield* store.put(team, hash, request.stream, { ...options, contentLength });
 
     // A deletion or archive racing an upload must not leave a newly written artifact.
-    yield* authenticate(true).pipe(
+    yield* authenticate(true, validityAt).pipe(
       Effect.flatMap((current) =>
         (current.cacheGeneration ?? 0) === generation
           ? Effect.void
@@ -408,7 +418,40 @@ export const artifactApi = <R>({
               }),
             ),
       ),
-      Effect.catch((error) => store.remove(team, hash).pipe(Effect.andThen(Effect.fail(error)))),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (error.status >= 500)
+            return yield* new ApiError({
+              status: 503,
+              code: "authorization_unavailable",
+              message: "Upload authorization recheck unavailable; retry",
+            });
+          if (bucket.invalidateUpload) {
+            const removed = yield* bucket
+              .invalidateUpload(`${team}/${hash}`, meta.uploadSession!)
+              .pipe(
+                Effect.mapError(
+                  () =>
+                    new ApiError({
+                      status: 503,
+                      code: "cleanup_unavailable",
+                      message: "Upload cleanup unavailable",
+                    }),
+                ),
+              );
+            if (removed) yield* recordUploadCleanup(team, hash);
+          }
+          return yield* Effect.fail(
+            error.status === 401
+              ? new ApiError({
+                  status: 403,
+                  code: "upload_revoked",
+                  message: "Upload authorization revoked",
+                })
+              : error,
+          );
+        }),
+      ),
     );
 
     // Drop any stale copy cached in this datacenter.
@@ -497,6 +540,7 @@ export const artifactApi = <R>({
     if (request.method === "OPTIONS")
       return HttpServerResponse.empty({ status: 204, headers: TURBO_PREFLIGHT_HEADERS });
 
+    const validityAt = yield* Clock.currentTimeMillis;
     const scope = yield* authenticate();
     const team = scope.prefix;
     const provenance = uploadProvenance(scope.credential);
@@ -508,7 +552,7 @@ export const artifactApi = <R>({
       yield* guard(scope);
       if (multipartRequest)
         return multipart
-          ? yield* multipart(scope, authenticate(true))
+          ? yield* multipart(scope, authenticate(true, validityAt))
           : yield* Effect.fail(
               new ApiError({ status: 404, code: "not_found", message: "Multipart is unavailable" }),
             );
@@ -540,6 +584,7 @@ export const artifactApi = <R>({
             Math.min(scope.maxUploadBytes, maxUploadBytes),
             scope.cacheGeneration,
             provenance,
+            validityAt,
           ).pipe(
             Effect.provideService(ArtifactStore, yield* ArtifactStore),
             Effect.provideService(CanonicalOrigin, yield* CanonicalOrigin),

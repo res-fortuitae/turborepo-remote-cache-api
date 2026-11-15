@@ -40,7 +40,7 @@ export const admitQuotaUpload = <R>(
     }
     const finished = yield* quotas.finish(reservation, stored.size).pipe(Effect.result);
     if (finished._tag === "Failure") {
-      yield* storage.remove(`${scope.prefix}/${hash}`);
+      // Accounting failure is not evidence that the stored artifact is invalid.
       yield* quotas.release(reservation);
       return yield* Effect.fail(finished.failure);
     }
