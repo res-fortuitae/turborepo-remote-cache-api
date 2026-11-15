@@ -117,13 +117,15 @@ export const makeBetterAuth = ({
       ...identity.databaseHooks,
       session: {
         create: {
-          before: async (session) => {
+          before: async (session, context) => {
             const [user] = await db
               .select()
               .from(schema.user)
               .where(eq(schema.user.id, session.userId));
             if (!user) throw new APIError("FORBIDDEN");
             await checkStoredIdentity(db, config, await readInstancePolicy(db, config), user);
+            if (context?.path === "/device/token")
+              return { data: { ...session, token: `device_${session.token}` } };
           },
         },
       },

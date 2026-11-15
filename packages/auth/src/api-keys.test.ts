@@ -259,7 +259,6 @@ test("instance disallow and expiry are enforced at verification and issuance", a
           updatedAt: 1,
         }),
       );
-      yield* storage.delete("cache-key-policy:org");
       expect((yield* create()).status).toBe(403);
       expect((yield* Effect.result(lookup.verify(key.key)))._tag).toBe("Failure");
       for (const raw of ["invalid", "tcache_not-a-key", "ey.jwt.token"])
@@ -321,5 +320,21 @@ test("owner digest reports expiring and unused keys without disclosing secrets",
         ),
       ),
     ),
+  );
+});
+
+test("stale KV cannot preserve revoked keys or an obsolete API-key policy", async () => {
+  const state = testLayer();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const { database, lookup, create } = yield* fixture;
+      const response = yield* create();
+      const key = yield* Effect.promise(async () => createdKey(await response.json()));
+      yield* lookup.verify(key.key);
+      yield* database.query("test.disable", (db) =>
+        db.update(schema.apikey).set({ enabled: false }).where(eq(schema.apikey.id, key.id)),
+      );
+      expect((yield* Effect.flip(lookup.verify(key.key)))._tag).toBe("ApiKeyVerificationError");
+    }).pipe(Effect.provide(state.layer)),
   );
 });

@@ -433,3 +433,68 @@ test("organization email policy blocks invites and rechecks pending invitations 
       ).toBe(403);
     }).pipe(Effect.provide(AuthTest)),
   ));
+
+test("member removal and team deletion discard project grants", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const db = yield* Database;
+      const owner = yield* seed("owner", "owner");
+      yield* seed("target");
+      const response = yield* post(auth, owner, "create", { name: "Org", slug: "org" });
+      const org = yield* Effect.promise(async () => responseOrg(await response.json()));
+      const groupResponse = yield* post(auth, owner, "create-team", {
+        organizationId: org.id,
+        name: "team",
+      });
+      const group = yield* Effect.promise(async () => responseOrg(await groupResponse.json()));
+      yield* db.batch((db) => [
+        db.insert(schema.member).values({
+          id: "target-member",
+          userId: "target",
+          organizationId: org.id,
+          role: "member",
+          createdAt: new Date(),
+        }),
+        db.insert(schema.project).values({
+          id: "project",
+          orgId: org.id,
+          name: "Project",
+          slug: "project",
+          createdAt: Date.now(),
+        }),
+        db.insert(schema.projectGrant).values([
+          {
+            projectId: "project",
+            principalType: "user",
+            principalId: "target",
+            role: "project:admin",
+            grantedBy: "owner",
+            createdAt: Date.now(),
+          },
+          {
+            projectId: "project",
+            principalType: "team",
+            principalId: group.id,
+            role: "cache:write",
+            grantedBy: "owner",
+            createdAt: Date.now(),
+          },
+        ]),
+      ]);
+      expect(
+        (yield* post(auth, owner, "remove-member", {
+          organizationId: org.id,
+          memberIdOrEmail: "target-member",
+        })).status,
+      ).toBe(200);
+      expect(
+        (yield* post(auth, owner, "remove-team", { organizationId: org.id, teamId: group.id }))
+          .status,
+      ).toBe(200);
+      expect(yield* db.query("test.grants", (db) => db.select().from(schema.projectGrant))).toEqual(
+        [],
+      );
+    }).pipe(Effect.provide(AuthTest)),
+  );
+});

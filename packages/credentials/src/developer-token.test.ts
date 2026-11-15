@@ -78,6 +78,23 @@ test("developer tokens default to read, require both write policy and grants, an
       expect(read.scope).toBe("read");
       const principal = yield* verifier.verify(Redacted.value(read.token));
       expect(principal.subject).toBe("user:u");
+      yield* db.query("test.removeMember", (db) => db.delete(schema.member));
+      expect((yield* Effect.flip(verifier.verify(Redacted.value(read.token))))._tag).toBe(
+        "CacheTokenRevoked",
+      );
+      yield* db.query("test.reinvite", (db) =>
+        db.insert(schema.member).values({
+          id: "new-membership",
+          userId: "u",
+          organizationId: "org",
+          role: "member",
+          createdAt: now,
+        }),
+      );
+      expect((yield* Effect.flip(verifier.verify(Redacted.value(read.token))))._tag).toBe(
+        "CacheTokenRevoked",
+      );
+
       expect(principal.expiresAt - principal.issuedAt).toBeLessThanOrEqual(900);
       expect((yield* Effect.flip(tokens.issue({ ...request, write: true }, headers))).status).toBe(
         403,
