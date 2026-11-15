@@ -4,18 +4,22 @@ import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 // These payload schemas intentionally preserve the existing Turbo wire contract.
 // Query hashes are not refined: invalid hashes have per-entry errors.
 export const ArtifactQueryRequest = Schema.Struct({
-  hashes: Schema.Array(Schema.String).check(Schema.isMaxLength(1000)),
+  hashes: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
+    Schema.isMaxLength(1000),
+  ),
 });
 
 export const CacheEvent = Schema.Struct({
-  sessionId: Schema.String,
+  sessionId: Schema.String.check(Schema.isMaxLength(256)),
   source: Schema.Literals(["LOCAL", "REMOTE"]),
   event: Schema.Literals(["HIT", "MISS"]),
-  hash: Schema.String,
-  duration: Schema.optional(Schema.Number),
+  hash: Schema.String.check(Schema.isMaxLength(256)),
+  duration: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(86_400_000)),
+  ),
 });
 
-export const CacheEvents = Schema.Array(CacheEvent);
+export const CacheEvents = Schema.Array(CacheEvent).check(Schema.isMaxLength(1000));
 
 export const CacheStatus = Schema.Struct({
   status: Schema.Literals(["disabled", "enabled", "over_limit", "paused"]),
@@ -39,7 +43,7 @@ export const ArtifactQueryResponse = Schema.Record(
 export const ArtifactUploadResponse = Schema.Struct({ urls: Schema.Array(Schema.String) });
 
 export const ArtifactParams = Schema.Struct({
-  hash: Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]+$/)),
+  hash: Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]{1,256}$/)),
 });
 
 export const CacheQuery = Schema.Struct({
@@ -49,10 +53,10 @@ export const CacheQuery = Schema.Struct({
 
 export const ArtifactHeaders = Schema.Struct({
   "content-length": Schema.String,
-  "x-artifact-duration": Schema.optional(Schema.String),
-  "x-artifact-tag": Schema.optional(Schema.String),
-  "x-artifact-sha": Schema.optional(Schema.String),
-  "x-artifact-dirty-hash": Schema.optional(Schema.String),
+  "x-artifact-duration": Schema.optional(Schema.String.check(Schema.isMaxLength(6000))),
+  "x-artifact-tag": Schema.optional(Schema.String.check(Schema.isMaxLength(6000))),
+  "x-artifact-sha": Schema.optional(Schema.String.check(Schema.isMaxLength(6000))),
+  "x-artifact-dirty-hash": Schema.optional(Schema.String.check(Schema.isMaxLength(6000))),
 });
 
 export const ArtifactUploadHeaders = Schema.Struct({
@@ -69,7 +73,7 @@ export const ArtifactBody = HttpApiSchema.StreamUint8Array();
 
 // Turbo errors have no _tag on the wire. Keep them distinct from platform errors.
 export const CacheError = Schema.Struct({ code: Schema.String, message: Schema.String });
-const errorStatuses = [400, 401, 403, 404, 405, 429, 500];
+const errorStatuses = [400, 401, 403, 404, 405, 413, 429, 500];
 
 const errors = errorStatuses.map((code) => CacheError.pipe(HttpApiSchema.status(code)));
 

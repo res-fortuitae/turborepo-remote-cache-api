@@ -72,3 +72,27 @@ generation, but runtime authentication does not use it for counters.
 
 Tests use `RateLimiterTest` with fresh counters per layer build and Effect's
 `TestClock`; no Cloudflare account or deployment is required.
+
+### Artifact input limits
+
+Artifact query JSON is streamed with a 100,000-byte cap; cache event JSON has a
+1,000,000-byte cap. Exceeding either returns 413 and stops reading the stream.
+Queries allow at most 1,000 hashes (or the lower project policy limit), each at
+most 256 characters. Invalid hex query entries retain per-entry errors.
+Events allow at most 1,000 entries, with session IDs and hashes limited to 256
+characters and optional duration between zero and 86,400,000 milliseconds.
+These are resource ceilings; client-reported analytics remain untrusted and
+replays can still inflate counters.
+
+Direct and multipart artifact hashes accept 1–256 hexadecimal characters and
+use lowercase storage keys. Existing uppercase keys are not migrated or read as
+fallbacks: they become cold misses and expire under retention. Direct PUT and
+multipart creation reject custom metadata exceeding 6,000 UTF-8 bytes of JSON,
+including server provenance and upload session, with 400. This includes duration,
+tag, SHA and dirty-hash headers. Direct upload and multipart part byte ceilings
+continue to apply independently.
+
+The compatibility tests exercise real Turbo 1.13.4, 2.10.13 and 2.11.10 payloads;
+these ceilings deliberately allow far more than their small fixture batches and
+16-character task hashes. They are resource limits, not a claim about the largest
+possible Turbo workspace. Operators with larger clients should split batches.

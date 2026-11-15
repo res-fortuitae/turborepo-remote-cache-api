@@ -5,7 +5,7 @@ export const MAX_MULTIPART_PARTS = 10_000;
 export const MAX_EDGE_ARTIFACT_BYTES = 512_000_000;
 const positive = Schema.Int.check(Schema.isGreaterThan(0));
 export const MultipartCreate = Schema.Struct({
-  hash: Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]+$/), Schema.isMaxLength(256)),
+  hash: Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]{1,256}$/), Schema.isMaxLength(256)),
   size: positive,
 });
 export const UploadedPart = Schema.Struct({
