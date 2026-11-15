@@ -16,6 +16,8 @@ import {
   canonicalJson,
   hashEvent,
 } from "./audit-log.ts";
+import { AuditIntegrity, AuditIntegrityLive, CheckpointStoreTest } from "./integrity.ts";
+import { AuditReader, AuditReaderLive, AuditHistoryDisabled } from "./query.ts";
 import { drainOutboxJob } from "./jobs.ts";
 import { AuditLogTest } from "./testing.ts";
 
@@ -308,5 +310,84 @@ test("job advances past a full quarantined batch", async () => {
         "healthy",
       ]);
     }),
+  );
+});
+
+test("denial floods cannot take an admin sequence or create arbitrary org chains", async () => {
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Real D1-only adapter regression at the Bun boundary.
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      const database = yield* Database;
+      // Reserve the admin sequence before denials, making a lost race deterministic.
+      const admin = yield* audit.record(input("project.created"));
+      for (let i = 0; i < 50; i++) {
+        yield* audit.recordStandalone({
+          ...input("project.read"),
+          orgId: i % 2 === 0 ? "org_1" : `missing_${i}`,
+          outcome: "deny",
+        });
+      }
+      yield* database.batch((db) => [admin.statement(db)]);
+      const rows = yield* database.query("regression.chains", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      expect([...new Set(rows.map((row) => row.chain))].sort()).toEqual([
+        "instance:denials",
+        "org:org_1",
+      ]);
+      expect(rows.filter((row) => row.payload.outcome === "deny")).toHaveLength(50);
+      expect(rows.filter((row) => row.orgId === "org_1")).toHaveLength(26);
+      expect(yield* (yield* AuditIntegrity).writeCheckpoints).toHaveLength(2);
+      const reader = yield* AuditReader;
+      const page = yield* reader.page("org_1", {
+        from: "2020-01-01T00:00:00.000Z",
+        to: "2099-01-01T00:00:00.000Z",
+        outcome: "deny",
+      });
+      expect(page.items).toHaveLength(25);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          AuditIntegrityLive.pipe(
+            Layer.provide(CheckpointStoreTest),
+            Layer.provide(AuditLogD1Only),
+          ),
+          AuditReaderLive.pipe(Layer.provide(AuditHistoryDisabled)),
+          AuditLogD1Only,
+        ).pipe(Layer.provideMerge(DatabaseTest)),
+      ),
+      Effect.scoped,
+    ),
+  );
+});
+
+test("concurrent denials cannot exhaust an org admin mutation's retries", async () => {
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Concurrent writes use isolated SQLite.
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      const results = yield* Effect.all(
+        [
+          audit.commit(input("project.updated"), () => []),
+          ...Array.from({ length: 50 }, () =>
+            audit
+              .recordStandalone({
+                ...input("project.read"),
+                outcome: "deny",
+              })
+              .pipe(Effect.result),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(results[0]).toMatchObject({ action: "project.updated", outcome: "allow" });
+      const database = yield* Database;
+      const rows = yield* database.query("concurrent.chains", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      expect(rows.filter((row) => row.chain === "org:org_1")).toHaveLength(1);
+      expect(rows.some((row) => row.chain === "instance:denials")).toBe(true);
+    }).pipe(Effect.provide(AuditLogD1Only.pipe(Layer.provideMerge(DatabaseTest))), Effect.scoped),
   );
 });

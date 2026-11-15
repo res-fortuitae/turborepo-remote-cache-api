@@ -16,8 +16,21 @@ committed events to the audit stream.** This decision implements
   atomic, so a change can't commit without its audit row and a failed change leaves
   none. Because of this there is no pending state and no reconciler.
 - **High-volume denials.** `AuditLog.recordStandalone(input)` sends the event straight
-  to `AuditSink` with no D1 row. Callers run it under `waitUntil`. Per-minute denial
-  counters for alerting are left to the issue that adds alerting.
+  to `AuditSink` with no D1 row. Callers run it under `waitUntil`. The Worker authorization
+  adapter schedules delivery through its execution context and logs delivery failures
+  without replacing the permission denial with an audit error.
+  Without Basin, standalone denials persist through the D1 fallback on the fixed
+  `instance:denials` chain. Org/project fields remain in the payload and indexed
+  columns so existing audit UI filters and export retain visibility. All events
+  with outcome `deny`, including transactional callers, use this fixed chain:
+  untrusted resource identifiers never allocate an org admin-chain position.
+  This is the STV-782 isolation decision. It requires no migration; historical
+  denial rows remain on their original chains and continue to verify.
+  The number of new denial checkpoint objects per day is bounded at one.
+  Row storage and verification work still scale with event volume; per-principal
+  rate limits and aggregation remain future work. A flood may exhaust denial-chain
+  retries and lose a background denial event (logged), but cannot exhaust org
+  admin-chain retries. D1 capacity is still shared.
 
 ## Outbox
 
@@ -31,7 +44,8 @@ There is no update or delete API for events.
 
 ## Hash chain
 
-There is one chain per org (`org:<id>`) and one for instance events (`instance`). Each
+There is one chain per org (`org:<id>`), one for instance events (`instance`),
+and one fixed denial chain (`instance:denials`). Each
 row stores its `chain` and `sequence`, and `(chain, sequence)` is unique.
 `record` reads the chain head and sets `prevHash` to the head's hash and `sequence` to
 the head's plus one. `hash = SHA-256(prevHash || canonicalJson(event without hash))`,
@@ -43,7 +57,8 @@ runs the batch and re-records up to five times when the head has moved. If the h
 didn't move, the change itself failed, and that error is returned. This is the "D1
 conditional insert" option in [ADR 0002](./0002-storage-consistency-rules.md). A
 per-chain Durable Object sequencer is only needed if contention grows.
-`recordStandalone` events have no row, so they aren't chained.
+With Basin, `recordStandalone` events have no row and are unchained. The D1-only
+fallback retains them on the fixed denial chain.
 
 `prune` never deletes a chain's head, so the next event still links to it.
 
