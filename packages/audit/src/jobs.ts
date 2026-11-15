@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import { AuditLog, OUTBOX_BATCH_SIZE } from "./audit-log.ts";
 import { AuditIntegrity } from "./integrity.ts";
 
@@ -28,13 +29,23 @@ export const dailyAuditJob = Effect.gen(function* () {
   const audit = yield* AuditLog;
   const integrity = yield* AuditIntegrity;
 
-  yield* integrity.writeCheckpoints;
-  const report = yield* integrity.verifyAndRecord;
+  const checkpoint = yield* Effect.result(integrity.writeCheckpoints);
+  const verification = yield* Effect.result(integrity.verifyAndRecord);
+  const pruning = yield* Effect.result(audit.prune());
+
+  if (Result.isFailure(checkpoint))
+    yield* Effect.logError("Audit checkpoint failed", { error: checkpoint.failure });
+
+  if (Result.isFailure(verification)) return yield* verification.failure;
+
+  if (Result.isFailure(pruning)) return yield* pruning.failure;
+  const report = verification.success;
 
   if (report.mismatches.length > 0)
     yield* Effect.logError("Audit integrity check failed", { mismatches: report.mismatches });
 
-  const pruned = yield* audit.prune();
+  if (Result.isFailure(checkpoint)) return yield* checkpoint.failure;
+  const pruned = pruning.success;
 
   return { report, pruned };
 }).pipe(Effect.withSpan("AuditJobs.daily"));

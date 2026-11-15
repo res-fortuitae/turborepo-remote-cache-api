@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Database, type DatabaseService, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
 import { eq, sql } from "drizzle-orm";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Result } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { AUDIT_RETENTION_MILLIS, type AuditInput, AuditLog, AuditSinkMemory } from "./audit-log.ts";
 import { dailyAuditJob, drainOutboxJob } from "./jobs.ts";
@@ -11,6 +11,8 @@ import {
   AuditIntegrityLive,
   type CheckpointBucket,
   CheckpointStoreTest,
+  CheckpointStore,
+  CheckpointStoreError,
   makeCheckpointStore,
 } from "./integrity.ts";
 import { AuditLogTest } from "./testing.ts";
@@ -145,6 +147,7 @@ describe("hash chain", () => {
         yield* audit.drainOutbox();
         yield* TestClock.adjust(AUDIT_RETENTION_MILLIS + 1);
 
+        yield* (yield* AuditIntegrity).writeCheckpoints;
         expect(yield* audit.prune()).toBe(1);
         const [next] = yield* commitAll(["a.three"]);
         expect((yield* (yield* AuditIntegrity).verify).mismatches).toEqual([]);
@@ -181,7 +184,63 @@ describe("verifier", () => {
         yield* commitAll(["a.one"]);
         yield* integrity.writeCheckpoints;
 
-        expect((yield* Effect.result(integrity.writeCheckpoints))._tag).toBe("Failure");
+        expect((yield* Effect.result(integrity.writeCheckpoints))._tag).toBe("Success");
+      }),
+    );
+  });
+
+  test("detects a deleted checkpointed prefix inside retention", async () => {
+    await run(
+      Effect.gen(function* () {
+        const integrity = yield* AuditIntegrity;
+        yield* commitAll(Array.from({ length: 15 }, (_, i) => `a.${i}`));
+        yield* integrity.writeCheckpoints;
+        yield* commitAll(Array.from({ length: 5 }, (_, i) => `b.${i}`));
+        yield* execute(sql`delete from audit_event where sequence < 20`);
+        expect((yield* integrity.verify).mismatches.length).toBeGreaterThan(0);
+      }),
+    );
+  });
+
+  test.each(["org_id", "ts"])("detects %s column tampering", async (column) => {
+    await run(
+      Effect.gen(function* () {
+        yield* commitAll(["a.one"]);
+        yield* execute(
+          sql.raw(`update audit_event set ${column} = ${column === "ts" ? "1" : "'hidden'"}`),
+        );
+        expect((yield* (yield* AuditIntegrity).verify).mismatches.length).toBeGreaterThan(0);
+      }),
+    );
+  });
+
+  test("old missing rows still require export evidence", async () => {
+    await run(
+      Effect.gen(function* () {
+        const integrity = yield* AuditIntegrity;
+        yield* commitAll(["a.one", "a.two"]);
+        yield* integrity.writeCheckpoints;
+        yield* TestClock.adjust(AUDIT_RETENTION_MILLIS + 1);
+        yield* execute(sql`delete from audit_event where sequence = 1`);
+        expect((yield* integrity.verify).mismatches.length).toBeGreaterThan(0);
+      }),
+    );
+  });
+
+  test("checks the first survivor against its preceding checkpoint", async () => {
+    await run(
+      Effect.gen(function* () {
+        const integrity = yield* AuditIntegrity;
+        yield* commitAll(["a.one"]);
+        yield* (yield* AuditLog).drainOutbox();
+        yield* integrity.writeCheckpoints;
+        yield* commitAll(["a.two"]);
+        yield* TestClock.adjust(AUDIT_RETENTION_MILLIS + 1);
+        yield* (yield* AuditLog).prune();
+        yield* execute(sql`update audit_event set prev_hash = 'forged' where sequence = 2`);
+        expect((yield* integrity.verify).mismatches.map((m) => m.reason)).toContain(
+          "previous hash does not match checkpoint",
+        );
       }),
     );
   });
@@ -302,13 +361,114 @@ test("R2 checkpoint store is create-only and lists every page", async () => {
       yield* store.put(checkpoint);
       yield* store.put({ ...checkpoint, scope: "org:a" });
 
-      expect((yield* Effect.result(store.put(checkpoint)))._tag).toBe("Failure");
+      expect((yield* Effect.result(store.put(checkpoint)))._tag).toBe("Success");
+      expect((yield* Effect.result(store.put({ ...checkpoint, lastHash: "conflict" })))._tag).toBe(
+        "Failure",
+      );
       expect((yield* store.list).map((each) => each.scope)).toEqual(["instance", "org:a"]);
     }),
   );
 });
 
 describe("jobs", () => {
+  test("a partial checkpoint write does not skip later chains", async () => {
+    const attempted: string[] = [];
+
+    const failingStore = Layer.effect(
+      CheckpointStore,
+      Effect.map(CheckpointStore, (store) => ({
+        ...store,
+        put: (checkpoint: Parameters<typeof store.put>[0]) => {
+          attempted.push(checkpoint.scope);
+
+          return checkpoint.scope === "org:org_1"
+            ? Effect.fail(new CheckpointStoreError({ cause: "unavailable" }))
+            : store.put(checkpoint);
+        },
+      })),
+    ).pipe(Layer.provide(CheckpointStoreTest));
+
+    const failingLayer = AuditIntegrityLive.pipe(
+      Layer.provideMerge(Layer.mergeAll(AuditLogTest, failingStore)),
+      Layer.provideMerge(DatabaseTest),
+    );
+
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- bun:test executes Effects at this test boundary.
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* commitAll(["a.one"]);
+        yield* commitAll(["b.one"], "org_2");
+        const result = yield* Effect.result((yield* AuditIntegrity).writeCheckpoints);
+        expect(result._tag).toBe("Failure");
+        expect(attempted).toEqual(["org:org_1", "org:org_2"]);
+        expect((yield* (yield* CheckpointStore).list).map((c) => c.scope)).toEqual(["org:org_2"]);
+      }).pipe(Effect.provide(failingLayer)),
+    );
+  });
+
+  test("same-day daily retries verify and prune after the chain grows", async () => {
+    await run(
+      Effect.gen(function* () {
+        yield* commitAll(["a.one"]);
+        expect((yield* dailyAuditJob).report.events).toBe(1);
+        yield* commitAll(["a.two"]);
+        expect((yield* dailyAuditJob).report.events).toBe(2);
+        expect((yield* (yield* AuditIntegrity).writeCheckpoints)[0]?.count).toBe(1);
+      }),
+    );
+  });
+
+  test("checkpoint failure still verifies and prunes, then surfaces the error", async () => {
+    await run(
+      Effect.gen(function* () {
+        const integrity = yield* AuditIntegrity;
+        const audit = yield* AuditLog;
+        let verified = false;
+        let pruned = false;
+        yield* commitAll(["a.one", "a.two"]);
+        yield* audit.drainOutbox();
+        yield* TestClock.adjust(AUDIT_RETENTION_MILLIS + 1);
+        const failure = new CheckpointStoreError({ cause: "partial failure" });
+
+        const result = yield* Effect.result(
+          dailyAuditJob.pipe(
+            Effect.provideService(AuditIntegrity, {
+              ...integrity,
+              writeCheckpoints: integrity.writeCheckpoints.pipe(
+                Effect.andThen(Effect.fail(failure)),
+              ),
+              verifyAndRecord: integrity.verifyAndRecord.pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    verified = true;
+                  }),
+                ),
+              ),
+            }),
+            Effect.provideService(AuditLog, {
+              ...audit,
+              prune: () =>
+                audit.prune().pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      pruned = true;
+                    }),
+                  ),
+                ),
+            }),
+          ),
+        );
+
+        expect(Result.isFailure(result)).toBe(true);
+
+        if (Result.isFailure(result)) expect(result.failure).toBe(failure);
+        expect(verified).toBe(true);
+        expect(pruned).toBe(true);
+        expect((yield* integrity.verify).events).toBe(1);
+      }),
+    );
+  });
+
   test("drain exports the whole outbox; daily checkpoints, verifies and prunes", async () => {
     await run(
       Effect.gen(function* () {
