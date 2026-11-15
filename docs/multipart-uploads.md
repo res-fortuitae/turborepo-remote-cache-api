@@ -61,11 +61,15 @@ JWT ID requires restarting that upload. Revoked/expired bearer credentials
 cannot continue or abort; the R2 lifecycle cleans their unfinished uploads.
 
 The upload metadata is assigned when creation is accepted. Completion replay
-with the same ticket is idempotent while that committed object version remains.
+with the same ticket is idempotent while that committed object version remains:
+replay neither charges quota again nor removes the committed object on a failed
+authorization recheck. A replaced version is preserved if an older ticket is retried.
+Quota reservations outlive the ticket deadline by one hour to protect completion
+near expiry from reservation sweeps.
 The server rejects missing, duplicate, unordered or extraneous parts. R2 verifies
 their etags. If project policy tightens or a purge changes the generation, the
 caller must abort and restart. Project deletion/archive and purge races are
-checked again after completion; a failed recheck removes that upload's object.
+checked again after completion; a failed recheck removes an object newly committed by that request.
 Success evicts the local edge entry and emits the upload operation/provenance.
 
 ## Proxy integration

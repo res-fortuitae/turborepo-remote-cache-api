@@ -30,6 +30,7 @@ export interface MultipartOwner {
   generation: number;
   maxBytes: number;
   quotaReservation?: string;
+  expiresAt?: number;
 }
 export class MultipartSecret extends Context.Service<MultipartSecret, Redacted.Redacted<string>>()(
   "@repo/artifacts/MultipartSecret",
@@ -79,7 +80,7 @@ export class MultipartUploads extends Context.Service<
     complete: (
       ticket: UploadTicket,
       parts: readonly (typeof UploadedPart.Type)[],
-    ) => Effect.Effect<void, MultipartError>;
+    ) => Effect.Effect<boolean, MultipartError>;
     abort: (ticket: UploadTicket) => Effect.Effect<void, MultipartError>;
     remove: (ticket: UploadTicket) => Effect.Effect<void, MultipartError>;
   }
@@ -123,7 +124,7 @@ export const MultipartUploadsLive = Layer.effect(
         const uploadId = yield* bucket
           .create(objectKey, { ...metadata, uploadSession: session })
           .pipe(Effect.mapError(unavailable));
-        const expiresAt = (yield* Clock.currentTimeMillis) + 86_400_000;
+        const expiresAt = owner.expiresAt ?? (yield* Clock.currentTimeMillis) + 86_400_000;
         const ticket: UploadTicket = {
           uploadId,
           key: objectKey,
@@ -229,11 +230,12 @@ export const MultipartUploadsLive = Layer.effect(
         )
           return yield* invalid("Provide every part exactly once in ascending order");
         const object = yield* bucket.head(ticket.key).pipe(Effect.mapError(unavailable));
-        if (object?.session === ticket.session && object.size === ticket.size) return;
+        if (object?.session === ticket.session && object.size === ticket.size) return false;
         yield* bucket.complete(ticket, parts).pipe(Effect.mapError(unavailable));
         const completed = yield* bucket.head(ticket.key).pipe(Effect.mapError(unavailable));
         if (completed?.session !== ticket.session || completed.size !== ticket.size)
           return yield* unavailable();
+        return true;
       }),
       abort: (ticket) => bucket.abort(ticket).pipe(Effect.mapError(unavailable)),
       remove: (ticket) =>

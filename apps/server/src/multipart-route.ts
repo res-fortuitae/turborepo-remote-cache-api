@@ -1,7 +1,7 @@
 import { Quotas, MultipartUploads, uploadProvenance, type MultipartOwner } from "@repo/artifacts";
 import { MultipartCreate, MultipartComplete } from "@repo/api-spec";
 import type { ArtifactOperation } from "@repo/analytics";
-import { Effect, Schema, Stream } from "effect";
+import { Clock, Effect, Schema, Stream } from "effect";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
 import { ApiError, type ArtifactScope } from "./api.ts";
@@ -75,17 +75,23 @@ export const multipartRoute = <R>(
       ] as const) {
         if (headers[header]) metadata[key] = headers[header];
       }
+      const expiresAt = (yield* Clock.currentTimeMillis) + 86_400_000;
       const reservation =
         quotas._tag === "Some"
           ? yield* quotas.value.reserve(
               { orgId: owner.orgId, projectId: owner.projectId },
               body.hash,
               body.size,
-              86400000,
+              90_000_000,
             )
           : undefined;
       const created = yield* uploads
-        .create({ ...owner, quotaReservation: reservation }, body.hash, body.size, metadata)
+        .create(
+          { ...owner, expiresAt, quotaReservation: reservation },
+          body.hash,
+          body.size,
+          metadata,
+        )
         .pipe(
           Effect.tapError(() =>
             reservation && quotas._tag === "Some" ? quotas.value.release(reservation) : Effect.void,
@@ -130,7 +136,7 @@ export const multipartRoute = <R>(
         const body = yield* Schema.decodeUnknownEffect(MultipartComplete)(yield* readJson).pipe(
           Effect.mapError(() => bad("Invalid multipart completion manifest")),
         );
-        yield* uploads.complete(ticket, body.parts);
+        const committed = yield* uploads.complete(ticket, body.parts);
         yield* Effect.gen(function* () {
           const current = yield* recheck;
           if (current.cacheGeneration !== scope.cacheGeneration)
@@ -140,11 +146,12 @@ export const multipartRoute = <R>(
               message: "Project was purged during upload; retry",
             });
           // Reject stale authorization before committing the quota ledger.
-          if (ticket.quotaReservation && quotas._tag === "Some")
+          if (committed && ticket.quotaReservation && quotas._tag === "Some")
             yield* quotas.value.finish(ticket.quotaReservation, ticket.size);
         }).pipe(
           Effect.catch((error) =>
             Effect.gen(function* () {
+              if (!committed) return yield* Effect.fail(error);
               // remove checks the upload session so a concurrent replacement is preserved.
               yield* uploads.remove(ticket);
               yield* invalidateLocal(ticket.hash);
