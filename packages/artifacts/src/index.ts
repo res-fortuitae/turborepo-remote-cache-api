@@ -53,6 +53,8 @@ export {
   QuotasLive,
   QuotaDefaults,
   QuotaExceeded,
+  QuotaBusy,
+  quotaLeaseMillis,
   QuotaUnavailable,
   QuotaEviction,
   QuotaEvictionLive,

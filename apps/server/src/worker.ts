@@ -1304,8 +1304,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
             error instanceof ApiError
               ? error
               : new ApiError({
-                  status: error._tag === "QuotaExceeded" ? 403 : 503,
-                  code: error._tag === "QuotaExceeded" ? "over_limit" : "multipart_unavailable",
+                  status:
+                    error._tag === "QuotaExceeded" ? 403 : error._tag === "QuotaBusy" ? 429 : 503,
+                  code:
+                    error._tag === "QuotaExceeded"
+                      ? "over_limit"
+                      : error._tag === "QuotaBusy"
+                        ? "upload_busy"
+                        : "multipart_unavailable",
+                  retryAfter: error._tag === "QuotaBusy" ? 1 : undefined,
                   message: "Multipart upload unavailable",
                 }),
           ),

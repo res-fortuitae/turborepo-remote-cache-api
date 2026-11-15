@@ -1,10 +1,12 @@
 import { Database, schema, InstanceSettingsRepo } from "@repo/db";
 import { AuditLog, type AuditInput } from "@repo/audit";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
-import { and, eq, gt, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, lte, ne, sql } from "drizzle-orm";
 import { PurgeInventory } from "./incident.ts";
 import { ArtifactPurger } from "./purge.ts";
 
+export const quotaLeaseMillis = 300_000;
+export class QuotaBusy extends Schema.TaggedError<QuotaBusy>()("QuotaBusy", {}) {}
 export class QuotaExceeded extends Schema.TaggedError<QuotaExceeded>()("QuotaExceeded", {}) {}
 export class QuotaUnavailable extends Schema.TaggedError<QuotaUnavailable>()(
   "QuotaUnavailable",
@@ -119,17 +121,14 @@ const make = Effect.gen(function* () {
       const org = measure(false),
         project = measure(true);
       const exceeded = (usage: typeof org, limits: QuotaSettings) =>
-        usage.storageBytes + usage.reservedBytes >= limits.storageBytes! ||
+        usage.storageBytes + usage.reservedBytes > limits.storageBytes! ||
         (limits.bandwidthBytes !== null &&
-          usage.bandwidthBytes + usage.reservedTransferBytes >= limits.bandwidthBytes) ||
-        (limits.requests !== null && usage.requests + usage.reservedRequests >= limits.requests);
+          usage.bandwidthBytes + usage.reservedTransferBytes > limits.bandwidthBytes) ||
+        (limits.requests !== null && usage.requests + usage.reservedRequests > limits.requests);
       return {
         org: { usage: org, limits: settings.org },
         project: { usage: project, limits: settings.project },
-        overLimit:
-          exceeded(org, settings.org) ||
-          exceeded(project, settings.project) ||
-          jobs.some((job) => job.state !== "complete"),
+        overLimit: exceeded(org, settings.org) || exceeded(project, settings.project),
         eviction: jobs[0]
           ? {
               id: jobs[0].id,
@@ -191,7 +190,7 @@ const make = Effect.gen(function* () {
           Effect.asVoid,
           Effect.mapError(() => new QuotaUnavailable()),
         ),
-    reserve: (scope: QuotaScope, hash: string, size: number, lifetime = 3600000) =>
+    reserve: (scope: QuotaScope, hash: string, size: number, lifetime = quotaLeaseMillis) =>
       Effect.gen(function* () {
         if (!Number.isSafeInteger(size) || size < 0) return yield* new QuotaExceeded();
         const now = yield* Clock.currentTimeMillis,
@@ -212,7 +211,7 @@ const make = Effect.gen(function* () {
         const delta = Math.max(0, size - (existing?.bytes ?? 0));
         const deltaSql = sql`max(0, ${size} - coalesce((select bytes from artifact_usage where org_id = ${scope.orgId} and project_id = ${scope.projectId} and hash = ${hash}), 0))`;
         const accepted = yield* db.batch((q) => [
-          q.delete(schema.quotaReservation).where(lt(schema.quotaReservation.expiresAt, now)),
+          q.delete(schema.quotaReservation).where(lte(schema.quotaReservation.expiresAt, now)),
           q
             .insert(schema.quotaReservation)
             .select(
@@ -235,8 +234,8 @@ const make = Effect.gen(function* () {
                     sql`not exists (select 1 from quota_reservation where project_id = ${scope.projectId} and hash = ${hash})`,
                     sql`coalesce((select bytes from project_usage where org_id = ${scope.orgId} and project_id = ${scope.projectId}), 0) + coalesce((select sum(bytes) from quota_reservation where project_id = ${scope.projectId}), 0) + ${deltaSql} <= ${settings.project.storageBytes}`,
                     sql`coalesce((select sum(bytes) from project_usage where org_id = ${scope.orgId}), 0) + coalesce((select sum(bytes) from quota_reservation where org_id = ${scope.orgId}), 0) + ${deltaSql} <= ${settings.org.storageBytes}`,
-                    sql`coalesce((select bytes from project_usage where project_id = ${scope.projectId}), 0) < ${settings.project.storageBytes}`,
-                    sql`coalesce((select sum(bytes) from project_usage where org_id = ${scope.orgId}), 0) < ${settings.org.storageBytes}`,
+                    sql`coalesce((select bytes from project_usage where project_id = ${scope.projectId}), 0) <= ${settings.project.storageBytes}`,
+                    sql`coalesce((select sum(bytes) from project_usage where org_id = ${scope.orgId}), 0) <= ${settings.org.storageBytes}`,
                     ...([settings.org, settings.project] as const).flatMap((limit, index) => {
                       const project =
                         index === 1 ? sql`and project_id = ${scope.projectId}` : sql``;
@@ -255,20 +254,58 @@ const make = Effect.gen(function* () {
             .returning({ id: schema.quotaReservation.id }),
         ]);
         if (!accepted[1]?.length) {
+          const [busy] = yield* db.query("Quota.busy", (q) =>
+            q
+              .select()
+              .from(schema.quotaReservation)
+              .where(
+                and(
+                  eq(schema.quotaReservation.projectId, scope.projectId),
+                  eq(schema.quotaReservation.hash, hash),
+                  gt(schema.quotaReservation.expiresAt, now),
+                ),
+              ),
+          );
+          if (busy) return yield* new QuotaBusy();
           const current = yield* status(scope);
           if (
-            current.org.usage.storageBytes + delta >= current.org.limits.storageBytes ||
-            current.project.usage.storageBytes + delta >= current.project.limits.storageBytes
+            current.org.usage.storageBytes + delta > current.org.limits.storageBytes ||
+            current.project.usage.storageBytes + delta > current.project.limits.storageBytes
           )
             yield* schedule(scope);
-          return yield* new QuotaExceeded();
+          const exhausted = [current.org, current.project].some(
+            ({ usage, limits }) =>
+              usage.storageBytes + usage.reservedBytes + delta > limits.storageBytes ||
+              (limits.bandwidthBytes !== null &&
+                usage.bandwidthBytes + usage.reservedTransferBytes + size >
+                  limits.bandwidthBytes) ||
+              (limits.requests !== null &&
+                usage.requests + usage.reservedRequests + 1 > limits.requests),
+          );
+          return yield* exhausted ? new QuotaExceeded() : new QuotaBusy();
         }
         return id;
       }).pipe(
         Effect.mapError((error) =>
-          error instanceof QuotaExceeded ? error : new QuotaUnavailable(),
+          error instanceof QuotaExceeded || error instanceof QuotaBusy
+            ? error
+            : new QuotaUnavailable(),
         ),
       ),
+    renew: (id: string) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const rows = yield* db.query("Quota.renew", (q) =>
+          q
+            .update(schema.quotaReservation)
+            .set({ expiresAt: now + quotaLeaseMillis })
+            .where(
+              and(eq(schema.quotaReservation.id, id), gt(schema.quotaReservation.expiresAt, now)),
+            )
+            .returning({ id: schema.quotaReservation.id }),
+        );
+        if (!rows.length) return yield* new QuotaUnavailable();
+      }).pipe(Effect.mapError(() => new QuotaUnavailable())),
     release: (id: string) =>
       db
         .query("Quota.release", (q) =>
@@ -291,7 +328,9 @@ const make = Effect.gen(function* () {
           actualBytes < 0
         )
           return yield* new QuotaUnavailable();
-        const day = dayOf(yield* Clock.currentTimeMillis);
+        const now = yield* Clock.currentTimeMillis;
+        if (reservation.expiresAt <= now) return yield* new QuotaUnavailable();
+        const day = dayOf(now);
         // Ledger and reservation release share a D1 transaction. Accounting observers are idempotent.
         yield* db.batch((q) => [
           q
@@ -444,10 +483,8 @@ export const QuotaEvictionLive = Layer.effect(
                   eq(schema.quotaReservation.projectId, job.projectId),
                   gt(schema.quotaReservation.expiresAt, now),
                 ),
-              )
-              .limit(1),
+              ),
           );
-          if (reservations.length) return;
           const current = yield* quotas.status(scope);
           const done =
             current.project.usage.storageBytes < current.project.limits.storageBytes * 0.9 &&
@@ -516,6 +553,7 @@ export const QuotaEvictionLive = Layer.effect(
                 .filter(
                   (object) =>
                     object.key.startsWith(prefix) &&
+                    !reservations.some((row) => object.key === `${prefix}${row.hash}`) &&
                     /^[a-fA-F0-9]+$/.test(object.key.slice(prefix.length)),
                 )
                 .map((object) => ({
@@ -529,7 +567,7 @@ export const QuotaEvictionLive = Layer.effect(
             ]
               .sort((a, b) => a.uploaded - b.uploaded || a.key.localeCompare(b.key))
               .slice(0, 100);
-            if (!page.cursor && candidates.length === 0) {
+            if (!page.cursor && candidates.length === 0 && reservations.length === 0) {
               yield* complete("no_more_artifacts");
               return;
             }
@@ -549,6 +587,10 @@ export const QuotaEvictionLive = Layer.effect(
             removedBytes = job.removedBytes,
             processed = 0;
           for (const candidate of job.candidates.slice(0, 25)) {
+            if (reservations.some((row) => candidate.key === `${prefix}${row.hash}`)) {
+              processed++;
+              continue;
+            }
             const object = yield* inventory.head(candidate.key);
             if (object && object.etag !== candidate.etag) {
               processed++;

@@ -3,6 +3,7 @@ import { QuotasTest, QuotaEvictionTest } from "./testing.ts";
 import { expect, test } from "bun:test";
 import { Database, schema } from "@repo/db";
 
+import * as TestClock from "effect/testing/TestClock";
 import { Effect, Layer } from "effect";
 import { eq } from "drizzle-orm";
 import { Quotas, QuotaEviction } from "./quotas.ts";
@@ -80,7 +81,7 @@ test("daily bandwidth/request quotas pause writes, notify thresholds once and pr
       );
       const id = yield* quota.reserve(scope, "aa", 85);
       yield* quota.finish(id, 85);
-      expect((yield* quota.status(scope)).overLimit).toBe(true);
+      expect((yield* quota.status(scope)).overLimit).toBe(false);
       expect((yield* Effect.result(quota.reserve(scope, "bb", 1)))._tag).toBe("Failure");
       yield* db.batch((q) => [
         q.insert(schema.user).values({
@@ -192,6 +193,19 @@ test("eviction scans all pages before deleting the oldest provenance and commits
         event,
       );
       expect((yield* Effect.result(quota.reserve(scope, "cc", 1)))._tag).toBe("Failure");
+      yield* db.query("test.inflight", (q) =>
+        q
+          .insert(schema.quotaReservation)
+          .values({
+            ...scope,
+            id: "stale",
+            hash: "cc",
+            bytes: 0,
+            transferBytes: 0,
+            expiresAt: Date.now() + 86400000,
+          })
+          .onConflictDoNothing(),
+      );
       yield* job.tick;
       expect(objects.size).toBe(2);
       yield* job.tick;
@@ -208,5 +222,82 @@ test("eviction scans all pages before deleting the oldest provenance and commits
       const metrics = yield* db.query("test.metrics", (q) => q.select().from(schema.rollup));
       expect(metrics.find((row) => row.metric === "evictions")?.value).toBe(1);
     }).pipe(Effect.provide(eviction)),
+  );
+});
+
+test("same hash contention is retryable and exact capacity is available", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const quota = yield* Quotas;
+      const id = yield* quota.reserve(scope, "aa", 100);
+      const conflict = yield* quota.reserve(scope, "aa", 100).pipe(Effect.result);
+      expect(conflict._tag === "Failure" && conflict.failure._tag).toBe("QuotaBusy");
+      yield* quota.finish(id, 100);
+      expect((yield* quota.status(scope)).overLimit).toBe(false);
+      const overwrite = yield* quota.reserve(scope, "aa", 100);
+      yield* quota.release(overwrite);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+test("expired reservation no longer blocks the hash at the lease boundary", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const quota = yield* Quotas;
+      yield* quota.reserve(scope, "aa", 10, 0);
+      const id = yield* quota.reserve(scope, "aa", 10);
+      yield* quota.finish(id, 10);
+      expect((yield* quota.status(scope)).project.usage.storageBytes).toBe(10);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+test("exact limit is healthy after finishing", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const quota = yield* Quotas;
+      const id = yield* quota.reserve(scope, "aa", 100);
+      yield* quota.finish(id, 100);
+      expect((yield* quota.status(scope)).overLimit).toBe(false);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+test("multipart leases renew while active but cannot revive expired capacity", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const quota = yield* Quotas;
+      const id = yield* quota.reserve(scope, "aa", 60);
+      yield* TestClock.adjust(240_000);
+      yield* quota.renew(id);
+      yield* TestClock.adjust(240_000);
+      expect((yield* quota.status(scope)).project.usage.reservedBytes).toBe(60);
+      yield* TestClock.adjust(60_000);
+      expect((yield* quota.renew(id).pipe(Effect.result))._tag).toBe("Failure");
+      const replacement = yield* quota.reserve(scope, "aa", 60);
+      yield* quota.finish(replacement, 60);
+    }).pipe(Effect.provide(layer), Effect.provide(TestClock.layer())),
+  );
+});
+
+test("pending eviction below quota reports contention rather than quota exhaustion", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      const db = yield* Database;
+      const quota = yield* Quotas;
+      yield* db.query("test.pending", (q) =>
+        q
+          .insert(schema.quotaEviction)
+          .values({ ...scope, id: "job", state: "scanning", startedAt: 0, candidates: [] }),
+      );
+      expect((yield* quota.status(scope)).overLimit).toBe(false);
+      const result = yield* quota.reserve(scope, "aa", 1).pipe(Effect.result);
+      expect(result._tag === "Failure" && result.failure._tag).toBe("QuotaBusy");
+    }).pipe(Effect.provide(layer)),
   );
 });

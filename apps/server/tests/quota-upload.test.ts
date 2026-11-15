@@ -79,7 +79,7 @@ test("HTTP quota admission reports over_limit while stored reads keep working", 
             remove: (key) => bucket.delete([key]).pipe(Effect.mapError(failed)),
           }).pipe(Effect.provideService(Quotas, quotas)),
       });
-      const serve = (hash: string, method = "GET", body?: string) =>
+      const serve = (hash: string, method = "GET", body?: string, length?: string) =>
         handler.pipe(
           Effect.provideService(
             Request.HttpServerRequest,
@@ -88,7 +88,7 @@ test("HTTP quota admission reports over_limit while stored reads keep working", 
                 method,
                 headers: {
                   authorization: "Bearer test",
-                  ...(body ? { "content-length": String(body.length) } : {}),
+                  ...(body ? { "content-length": length ?? String(body.length) } : {}),
                 },
                 body,
               }),
@@ -96,11 +96,19 @@ test("HTTP quota admission reports over_limit while stored reads keep working", 
           ),
           Effect.map(Response.toWeb),
         );
+      const held = yield* quotas.reserve({ orgId: "o", projectId: "p" }, "aa", 60);
+      const busy = yield* serve("aa", "PUT", "a".repeat(60));
+      expect(busy.status).toBe(429);
+      expect(busy.headers.get("retry-after")).toBe("1");
+      yield* quotas.release(held);
       expect((yield* serve("aa", "PUT", "a".repeat(60))).status).toBe(202);
       expect((yield* serve("bb", "PUT", "b".repeat(50))).status).toBe(403);
       expect((yield* serve("bb", "PUT", "b".repeat(40))).status).toBe(202);
+      expect((yield* serve("cc", "PUT", "c", "abc")).status).toBe(400);
+      expect((yield* serve("cc", "PUT", "c", "-1")).status).toBe(400);
+      expect((yield* serve("cc", "PUT", "c", "1001")).status).toBe(413);
       const status = yield* serve("status");
-      expect(yield* Effect.promise(() => status.json())).toEqual({ status: "over_limit" });
+      expect(yield* Effect.promise(() => status.json())).toEqual({ status: "enabled" });
       const read = yield* serve("aa");
       expect(read.status).toBe(200);
       expect(yield* Effect.promise(() => read.text())).toBe("a".repeat(60));
@@ -210,6 +218,94 @@ test.each(["accounting", "purge"] as const)(
   },
 );
 
+test("interruption releases admitted upload capacity", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const quotas = yield* Quotas;
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "o", slug: "o", name: "O", createdAt: new Date(0) }),
+        q
+          .insert(schema.project)
+          .values({ id: "p", orgId: "o", slug: "p", name: "P", createdAt: 0 }),
+      ]);
+      const result = yield* admitQuotaUpload(
+        { prefix: "o/p", credential, maxUploadBytes: 100 },
+        "aa",
+        10,
+        100,
+        Effect.interrupt,
+        { head: () => Effect.succeed(null), remove: () => Effect.void },
+      ).pipe(Effect.exit);
+      expect(result._tag).toBe("Failure");
+      expect(
+        (yield* quotas.status({ orgId: "o", projectId: "p" })).project.usage.reservedBytes,
+      ).toBe(0);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(
+        Request.HttpServerRequest,
+        Request.fromWeb(new globalThis.Request("http://localhost/v8/artifacts/aa")),
+      ),
+    ),
+  );
+});
+
+test("multipart creation uses a short renewable reservation rather than the ticket lifetime", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const quotas = yield* Quotas;
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "o", slug: "o", name: "O", createdAt: new Date(0) }),
+        q
+          .insert(schema.project)
+          .values({ id: "p", orgId: "o", slug: "p", name: "P", createdAt: 0 }),
+      ]);
+      let lease = 0;
+      const response = yield* multipartRoute(
+        { prefix: "o/p", credential, maxUploadBytes: 100 },
+        Effect.die("not used"),
+        () => Effect.void,
+        () => Effect.void,
+      ).pipe(
+        Effect.provideService(Quotas, quotas),
+        Effect.provideService(MultipartUploads, {
+          create: (owner) =>
+            Effect.gen(function* () {
+              const rows = yield* db.query("test.reservation", (q) =>
+                q.select().from(schema.quotaReservation),
+              );
+              lease = rows[0]!.expiresAt - Date.now();
+              return { id: "upload", partSize: 10, expiresAt: owner.expiresAt! };
+            }).pipe(Effect.orDie),
+          resolve: () => Effect.die("not used"),
+          part: () => Effect.die("not used"),
+          abort: () => Effect.void,
+          complete: () => Effect.die("not used"),
+          remove: () => Effect.void,
+        }),
+        Effect.provideService(
+          Request.HttpServerRequest,
+          Request.fromWeb(
+            new globalThis.Request("http://localhost/v8/x/uploads", {
+              method: "POST",
+              body: JSON.stringify({ hash: "aa", size: 10 }),
+            }),
+          ),
+        ),
+      );
+      expect(response.status).toBe(201);
+      expect(lease).toBeGreaterThan(0);
+      expect(lease).toBeLessThanOrEqual(300_000);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
 test("quota finish infrastructure failure retains the stored artifact", async () => {
   let removed = false;
   let released = false;
@@ -230,6 +326,7 @@ test("quota finish infrastructure failure retains the stored artifact", async ()
     ).pipe(
       Effect.provideService(Quotas, {
         reserve: () => Effect.succeed(crypto.randomUUID()),
+        renew: () => Effect.succeed(undefined),
         finish: () => Effect.fail(new QuotaUnavailable()),
         release: () =>
           Effect.sync(() => {

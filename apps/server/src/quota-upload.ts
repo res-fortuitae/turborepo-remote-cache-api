@@ -19,39 +19,45 @@ export const admitQuotaUpload = <R>(
     const credential = scope.credential;
     if (!credential || credential.credentialType === "legacy") return yield* upload;
     const quotas = yield* Quotas;
-    const reservation = yield* quotas.reserve(
-      { orgId: credential.orgId, projectId: credential.projectId },
-      hash,
-      bytes ?? Math.min(scope.maxUploadBytes, maximumBytes),
+    return yield* Effect.acquireUseRelease(
+      quotas.reserve(
+        { orgId: credential.orgId, projectId: credential.projectId },
+        hash,
+        bytes ?? Math.min(scope.maxUploadBytes, maximumBytes),
+      ),
+      (reservation) =>
+        Effect.gen(function* () {
+          const response = yield* upload;
+          const stored = yield* storage.head(`${scope.prefix}/${hash}`);
+          if (!stored) {
+            return yield* new ApiError({
+              status: 503,
+              code: "quota_storage",
+              message: "Upload accounting unavailable",
+            });
+          }
+          const finished = yield* quotas.finish(reservation, stored.size).pipe(Effect.result);
+          if (finished._tag === "Failure") {
+            // Accounting failure is not evidence that the stored artifact is invalid.
+            return yield* Effect.fail(finished.failure);
+          }
+          return response;
+        }),
+      (reservation) => quotas.release(reservation),
     );
-    const result = yield* upload.pipe(Effect.result);
-    if (result._tag === "Failure") {
-      yield* quotas.release(reservation);
-      return yield* Effect.fail(result.failure);
-    }
-    const stored = yield* storage.head(`${scope.prefix}/${hash}`);
-    if (!stored) {
-      yield* quotas.release(reservation);
-      return yield* new ApiError({
-        status: 503,
-        code: "quota_storage",
-        message: "Upload accounting unavailable",
-      });
-    }
-    const finished = yield* quotas.finish(reservation, stored.size).pipe(Effect.result);
-    if (finished._tag === "Failure") {
-      // Accounting failure is not evidence that the stored artifact is invalid.
-      yield* quotas.release(reservation);
-      return yield* Effect.fail(finished.failure);
-    }
-    return result.success;
   }).pipe(
     Effect.mapError((error) =>
       error instanceof ApiError
         ? error
         : new ApiError({
-            status: error._tag === "QuotaExceeded" ? 403 : 503,
-            code: error._tag === "QuotaExceeded" ? "over_limit" : "quota_unavailable",
+            status: error._tag === "QuotaExceeded" ? 403 : error._tag === "QuotaBusy" ? 429 : 503,
+            code:
+              error._tag === "QuotaExceeded"
+                ? "over_limit"
+                : error._tag === "QuotaBusy"
+                  ? "upload_busy"
+                  : "quota_unavailable",
+            retryAfter: error._tag === "QuotaBusy" ? 1 : undefined,
             message: "Upload quota exceeded or unavailable",
           }),
     ),

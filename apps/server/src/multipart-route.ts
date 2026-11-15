@@ -76,28 +76,33 @@ export const multipartRoute = <R>(
         if (headers[header]) metadata[key] = headers[header];
       }
       const expiresAt = (yield* Clock.currentTimeMillis) + 86_400_000;
-      const reservation =
-        quotas._tag === "Some"
-          ? yield* quotas.value.reserve(
-              { orgId: owner.orgId, projectId: owner.projectId },
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const reservation =
+            quotas._tag === "Some"
+              ? yield* quotas.value.reserve(
+                  { orgId: owner.orgId, projectId: owner.projectId },
+                  body.hash,
+                  body.size,
+                )
+              : undefined;
+          const created = yield* restore(
+            uploads.create(
+              { ...owner, expiresAt, quotaReservation: reservation },
               body.hash,
               body.size,
-              90_000_000,
-            )
-          : undefined;
-      const created = yield* uploads
-        .create(
-          { ...owner, expiresAt, quotaReservation: reservation },
-          body.hash,
-          body.size,
-          metadata,
-        )
-        .pipe(
-          Effect.tapError(() =>
-            reservation && quotas._tag === "Some" ? quotas.value.release(reservation) : Effect.void,
-          ),
-        );
-      return yield* Response.json(created, { status: 201 });
+              metadata,
+            ),
+          ).pipe(
+            Effect.onExit((exit) =>
+              exit._tag === "Failure" && reservation && quotas._tag === "Some"
+                ? quotas.value.release(reservation)
+                : Effect.void,
+            ),
+          );
+          return yield* Response.json(created, { status: 201 });
+        }),
+      );
     }
     if (match[1]) {
       const ticket = yield* uploads.resolve(match[1], owner, match[4] === "abort");
@@ -117,6 +122,8 @@ export const multipartRoute = <R>(
           code: "quota_reservation_required",
           message: "Restart this upload to reserve quota capacity",
         });
+      if (ticket.quotaReservation && quotas._tag === "Some" && match[2] && request.method === "PUT")
+        yield* quotas.value.renew(ticket.quotaReservation);
       if (match[2] && match[3] && request.method === "PUT")
         return yield* Response.json(
           yield* uploads.part(
