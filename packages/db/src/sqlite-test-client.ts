@@ -11,6 +11,8 @@ export function sqliteTestClient(sqlite: SQLite): D1Database {
     ) {}
 
     bind(...values: unknown[]): Statement {
+      if (values.length > 100) throw new Error("D1 allows at most 100 bound parameters");
+
       return new Statement(
         this.sql,
         values.map((value) => {

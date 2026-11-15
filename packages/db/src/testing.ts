@@ -39,3 +39,5 @@ export const D1ClientTest = Layer.effect(
 );
 
 export const DatabaseTest = DatabaseLive.pipe(Layer.provide(D1ClientTest));
+
+export { DatabaseLocalTest } from "./local-d1-test.ts";

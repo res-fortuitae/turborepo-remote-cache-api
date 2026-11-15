@@ -41,3 +41,19 @@ First-user ownership bootstrap is also an application-owned batch. Its
 including when an owner already exists. An audit insert failure prevents the role
 change. Known failed update guards resolve as aborted; a successful single-row
 adapter result confirms the write without a second state read.
+
+## Outbox recovery
+
+Export acknowledgements use at most 99 event IDs plus one timestamp per D1
+statement, within D1's 100 binding limit even for larger drain sizes. New events
+are schema-validated before recording or standalone delivery.
+
+A persisted payload that fails schema validation is quarantined with
+`audit_event.export_error`. The drain logs the row ID and quarantine count, then
+continues exporting healthy rows. Its return count includes quarantined rows so
+scheduled drains continue past a full malformed batch. Quarantine leaves the
+payload, hash, chain position and `exported_at` unchanged; these rows are never
+pruned and remain available to integrity verification and operator investigation.
+After investigating and repairing the underlying problem, an operator can clear
+`export_error` to retry delivery. Do not rewrite hashed payloads to bypass
+validation. Sink delivery remains at least once, and consumers deduplicate by ID.

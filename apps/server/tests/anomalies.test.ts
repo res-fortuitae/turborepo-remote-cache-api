@@ -323,18 +323,19 @@ test("established UTC hours alert on out-of-hours writes and ignore changing run
         if (new Date(hour).getUTCHours() === nowHour) hour -= 3_600_000;
         return hour;
       });
-      yield* db.query("test.baseline", (q) =>
-        q.insert(schema.anomalyHour).values(
-          [...new Set(previous)].map((hour) => ({
+      // Keep fixture inserts within D1's 100-binding statement limit.
+      for (const hour of new Set(previous)) {
+        yield* db.query("test.baseline", (q) =>
+          q.insert(schema.anomalyHour).values({
             orgId: "o",
             projectId: "p",
             hour,
             writes: 1,
             signed: 1,
             checked: true,
-          })),
-        ),
-      );
+          }),
+        );
+      }
       // Ensure 24 distinct prior active hours while excluding the current UTC hour.
       yield* db.query("test.extra", (q) =>
         q

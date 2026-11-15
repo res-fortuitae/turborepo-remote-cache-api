@@ -16,6 +16,7 @@ import {
   canonicalJson,
   hashEvent,
 } from "./audit-log.ts";
+import { drainOutboxJob } from "./jobs.ts";
 import { AuditLogTest } from "./testing.ts";
 
 const isAuditEvent = Schema.is(AuditEvent);
@@ -214,5 +215,98 @@ test("D1-only fallback persists standalone denials in the hash chain and never p
       expect(yield* audit.prune(-1)).toBe(0);
       expect(yield* countRows).toBe(2);
     }).pipe(Effect.provide(AuditLogD1Only.pipe(Layer.provideMerge(DatabaseTest))), Effect.scoped),
+  );
+});
+
+for (const backlog of [0, 1, 99, 100, 101, 250]) {
+  test(`drains ${backlog} pending events without resending`, async () => {
+    await run(
+      Effect.gen(function* () {
+        const audit = yield* AuditLog;
+        for (let i = 0; i < backlog; i++) yield* audit.commit(input(`event.${i}`), () => []);
+        let processed = 0;
+        while (true) {
+          const count = yield* audit.drainOutbox();
+          processed += count;
+          if (count === 0) break;
+        }
+        expect(processed).toBe(backlog);
+        const sent = yield* (yield* AuditSinkMemory).events;
+        expect(new Set(sent.map((event) => event.id)).size).toBe(backlog);
+        expect(sent.length).toBe(backlog);
+        expect(yield* audit.drainOutbox()).toBe(0);
+      }),
+    );
+  });
+}
+
+test("malformed persisted payload does not block healthy rows", async () => {
+  await run(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      const database = yield* Database;
+      yield* audit.commit(input("bad"), () => []);
+      yield* database.query("corrupt", (db) =>
+        db.run(sql`update audit_event set payload = json_set(payload, '$.actor.id', '')`),
+      );
+      yield* audit.commit(input("good"), () => []);
+      expect(yield* audit.drainOutbox()).toBe(2);
+      expect(yield* audit.drainOutbox()).toBe(0);
+      expect((yield* (yield* AuditSinkMemory).events).map((event) => event.action)).toEqual([
+        "good",
+      ]);
+      const rows = yield* database.query("quarantine", (db) => db.select().from(schema.auditEvent));
+      expect(rows.filter((row) => row.exportError !== null)).toHaveLength(1);
+      expect(rows.find((row) => row.exportError !== null)?.exportedAt).toBeNull();
+      expect(yield* audit.prune(-1)).toBe(0);
+    }),
+  );
+});
+
+test("invalid input cannot enter the outbox or standalone sink", async () => {
+  await run(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      const invalid = {
+        ...input("invalid"),
+        actor: { type: "user" as const, id: "", display: "Ada" },
+      };
+      expect((yield* Effect.result(audit.commit(invalid, () => [])))._tag).toBe("Failure");
+      expect((yield* Effect.result(audit.recordStandalone(invalid)))._tag).toBe("Failure");
+      expect(yield* countRows).toBe(0);
+      expect(yield* (yield* AuditSinkMemory).events).toEqual([]);
+    }),
+  );
+});
+
+test("large explicit drain limits are chunked and retention advances", async () => {
+  await run(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      for (let i = 0; i < 250; i++) yield* audit.commit(input(`event.${i}`), () => []);
+      expect(yield* audit.drainOutbox(250)).toBe(250);
+      expect(yield* audit.drainOutbox()).toBe(0);
+      expect(yield* audit.prune(-1)).toBe(249);
+    }),
+  );
+});
+
+test("job advances past a full quarantined batch", async () => {
+  await run(
+    Effect.gen(function* () {
+      const audit = yield* AuditLog;
+      const database = yield* Database;
+      for (let i = 0; i < 100; i++) yield* audit.commit(input(`bad.${i}`), () => []);
+      yield* database.query("corrupt", (db) =>
+        db.run(sql`update audit_event set payload = json_set(payload, '$.actor.id', '')`),
+      );
+      yield* TestClock.adjust(1);
+      yield* audit.commit(input("healthy"), () => []);
+      expect(yield* drainOutboxJob).toBe(101);
+      expect(yield* drainOutboxJob).toBe(0);
+      expect((yield* (yield* AuditSinkMemory).events).map((event) => event.action)).toEqual([
+        "healthy",
+      ]);
+    }),
   );
 });

@@ -127,6 +127,7 @@ export const auditEvent = sqliteTable(
     prevHash: text("prev_hash"),
     hash: text(),
     exportedAt: integer("exported_at"),
+    exportError: text("export_error"),
     chain: text(),
     sequence: integer(),
   },
