@@ -58,7 +58,7 @@ const authorization = Effect.gen(function* () {
   const audit = yield* Effect.serviceOption(AuthorizationAudit);
 
   const can = Effect.fn("Authorization.can")(
-    function* (principal: Principal, action: Action, resource: Resource) {
+    function* (principal: Principal, action: Action, resource: Resource, validityAt?: number) {
       const now = yield* Clock.currentTimeMillis;
       const state = yield* settings.resource(resource.orgId, resource.projectId);
       const policy = yield* settings.policy(resource.orgId, ceilings);
@@ -100,7 +100,14 @@ const authorization = Effect.gen(function* () {
         facts = { ...facts, ...membership, orgPermission, projectRole: role };
       }
 
-      return decide(principal, action, resource, facts, policy, Math.floor(now / 1000));
+      return decide(
+        principal,
+        action,
+        resource,
+        facts,
+        policy,
+        Math.floor((validityAt ?? now) / 1000),
+      );
     },
     Effect.mapError(
       (cause) =>
@@ -117,8 +124,9 @@ const authorization = Effect.gen(function* () {
       principal: Principal,
       action: Action,
       resource: Resource,
+      validityAt?: number,
     ) {
-      const decision = yield* evaluate(principal, action, resource);
+      const decision = yield* evaluate(principal, action, resource, validityAt);
 
       if (!decision.allowed) {
         if (Option.isSome(audit))

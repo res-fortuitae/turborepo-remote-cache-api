@@ -41,6 +41,7 @@ export class CredentialResolver extends Context.Service<
   {
     readonly resolve: (
       authorization: Redacted.Redacted<string>,
+      validityAt?: number,
     ) => Effect.Effect<ResolvedCredential, CredentialInvalid | CredentialUnavailable>;
   }
 >()("@repo/credentials/CredentialResolver") {}
@@ -80,7 +81,7 @@ export const CredentialResolverLive = Layer.effect(
     const legacy = yield* Effect.serviceOption(LegacyCredentialConfig);
 
     return {
-      resolve: Effect.fn("CredentialResolver.resolve")(function* (authorization) {
+      resolve: Effect.fn("CredentialResolver.resolve")(function* (authorization, validityAt) {
         const match = /^Bearer ([^\s,]+)$/i.exec(Redacted.value(authorization));
 
         if (!match) return yield* invalid();
@@ -89,12 +90,20 @@ export const CredentialResolverLive = Layer.effect(
         // Recognized credential types never fall back to the shared migration token.
         if (token.startsWith("tcache_"))
           return resolved(
-            yield* apiKey.verify(Redacted.make(token)).pipe(Effect.mapError(invalid)),
+            yield* apiKey
+              .verify(Redacted.make(token))
+              .pipe(
+                Effect.mapError(() =>
+                  validityAt === undefined
+                    ? invalid()
+                    : new CredentialUnavailable({ message: "API-key recheck unavailable" }),
+                ),
+              ),
             "apiKey",
           );
 
         if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
-          const principal = yield* jwt.verify(token).pipe(
+          const principal = yield* jwt.verify(token, validityAt).pipe(
             Effect.catchTags({
               CacheTokenInvalid: () => Effect.fail(invalid()),
               CacheTokenRevoked: () => Effect.fail(invalid()),

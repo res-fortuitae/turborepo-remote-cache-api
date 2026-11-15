@@ -7,6 +7,7 @@ export class ArtifactStorageError extends Schema.TaggedError<ArtifactStorageErro
 
 export interface ArtifactMetadata {
   uploadSession?: string;
+  uploadInvalidated?: string;
   uploadedAt?: string;
   credentialType?: string;
   credentialId?: string;
@@ -41,6 +42,7 @@ export interface ArtifactPutOptions {
 
 /** The host supplies a binding, never a global bucket. */
 export interface ArtifactBucket<R = never> {
+  invalidateUpload?(key: string, session: string): Effect.Effect<boolean, unknown, R>;
   delete(keys: string[]): Effect.Effect<void, unknown, R>;
   head(key: string): Effect.Effect<StoredArtifact | null, unknown, R>;
   get(key: string): Effect.Effect<StoredArtifactBody | null, unknown, R>;
@@ -85,8 +87,18 @@ export const ArtifactStoreLive = Layer.effect(
       Effect.mapError(effect, (cause) => new ArtifactStorageError({ cause }));
 
     return {
-      head: (prefix, hash) => storage(bucket.head(`${prefix}/${hash}`)),
-      get: (prefix, hash) => storage(bucket.get(`${prefix}/${hash}`)),
+      head: (prefix, hash) =>
+        storage(bucket.head(`${prefix}/${hash}`)).pipe(
+          Effect.map((object) =>
+            object?.customMetadata?.uploadInvalidated === "true" ? null : object,
+          ),
+        ),
+      get: (prefix, hash) =>
+        storage(bucket.get(`${prefix}/${hash}`)).pipe(
+          Effect.map((object) =>
+            object?.customMetadata?.uploadInvalidated === "true" ? null : object,
+          ),
+        ),
       put: (prefix, hash, body, options) => storage(bucket.put(`${prefix}/${hash}`, body, options)),
       remove: (prefix, hash) => storage(bucket.delete([`${prefix}/${hash}`])),
     } satisfies typeof ArtifactStore.Service;
