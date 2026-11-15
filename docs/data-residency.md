@@ -44,29 +44,48 @@ requires a planned migration to new resources, verification of the destination,
 cache purging, and explicit retirement of old data. Do not use a redeploy as a
 residency migration.
 
-## Integration contract for the planned platform
+## Platform storage policy
 
-This baseline has no D1, Coordinator, KV, Better Auth, Basin, audit history, backup
-export, or capabilities page. The shared policy in `apps/server/src/deployment.ts`
-prepares those integrations; flags express permission, not service availability.
-The following must be wired as those services are implemented (STV-428, STV-500,
-and STV-496) before claiming platform-wide residency:
+The deployment-bound `STORAGE_JURISDICTION` setting is required and validated at
+request layer construction and Coordinator lookups. Missing or invalid values fail closed. It is generated
+from `deploy.config.ts`, not selected by an incoming request.
 
-- Spread `residency.storage` into **every** application R2 bucket declaration:
-  artifacts, audit checkpoints/backups, and analytics/audit catalogs. Apply the
-  same options to D1 on creation; omit location hints when jurisdiction is set.
-- Address Coordinator objects through the matching jurisdictional namespace:
-  `namespace.jurisdiction(residency.jurisdiction)` when configured, before any ID
-  creation or lookup. Use the resulting namespace consistently; the same object
-  name in a different jurisdiction identifies a different object.
-- Honor `allowKvSessionCache`. In jurisdiction mode, omit Better Auth's KV session
-  cache and read sessions from D1. KV remains globally replicated: allow only JWKS
-  and non-personal analytics caches; never personal data, session tokens, or users.
-- Honor `allowBasin` before declaring any Basin Pipelines/Catalog resources.
-  In jurisdiction mode, use hourly D1 counters for lite analytics, retain audit
-  history in D1 for a longer hot window, and export weekly to the restricted backup
-  bucket. Surface `basinDisabledReason` on the capabilities page and in doctor
-  output. These fallback services are not implemented in this baseline.
+- Application R2 buckets (artifacts, backups and audit checkpoints) and D1 receive
+  jurisdiction restrictions at creation.
+- Every Coordinator lookup, including API-key epoch checks, uses the matching
+  jurisdictional namespace before resolving a name. It stores revocation epochs,
+  cache generations and audit chain heads.
+- Restricted deployments omit Better Auth secondary storage entirely. Sessions,
+  users and API-key records use D1; no auth records are written to KV. This adds
+  D1 reads to session validation. Default deployments retain the KV cache.
+- Remaining KV uses are public JWKS, project activity throttle flags, non-personal
+  analytics query caches and a health probe. KV is globally replicated.
+- Restricted deployments disable Basin resources and use D1 analytics and audit
+  history. Audit checkpoints use the restricted bucket. The backup bucket is
+  reserved for operator exports; no automatic weekly backup job is installed.
+
+Local development still enforces the auth KV policy. The deployment-bound local
+runtime flag skips Coordinator namespace restrictions only in local workerd, which
+does not implement them; Coordinator state stays on local disk. Deployed Workers
+always use the configured jurisdiction. Namespace selection is tested with spies
+for both restricted jurisdictions.
+
+## Upgrading an existing restricted installation
+
+This fix does not migrate or delete deployed data. Disabling secondary storage
+stops new auth KV writes but does not erase existing `auth:` entries; retire those
+copies explicitly as part of an operator-controlled migration.
+
+A jurisdiction-scoped Coordinator name identifies a **different object** from
+its unrestricted counterpart. Never switch a live installation blindly: epochs
+and cache generations would reset to zero and audit heads would start empty.
+Quiesce traffic and snapshot all existing scope state and chain heads. Transfer
+and verify those values in the destination before admitting traffic; this checkout
+has no automatic state-transfer tool. Alternatively create a fresh restricted
+stack, retire all old credentials/signing keys and sessions, invalidate old cache
+copies, and establish an explicitly separate audit chain while preserving the old
+history and checkpoints. A rollback must also preserve any epochs and generations
+advanced since cutover. Retire old globally placed state only after verification.
 
 Cloudflare's Basin restriction was verified on **2026-10-23**. Re-check the linked
 documentation each release; enable Basin in jurisdiction mode only after Cloudflare

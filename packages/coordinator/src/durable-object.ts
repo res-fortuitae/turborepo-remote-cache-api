@@ -88,23 +88,29 @@ const fromStub = <A>(call: Rpc<A>) =>
 /** Capture a namespace during Worker initialization; RPC stubs are request independent. */
 export const makeCoordinatorNamespace = (
   namespace: Effect.Success<typeof Coordinator>,
-): typeof CoordinatorNamespace.Service => ({
-  getByName: (name) => {
-    const stub = namespace.getByName(name);
+  jurisdiction?: "eu" | "fedramp",
+): typeof CoordinatorNamespace.Service => {
+  const scoped = jurisdiction === undefined ? namespace : namespace.jurisdiction(jurisdiction);
 
-    return {
-      scopeState: () => fromStub(stub.scopeState()),
-      bumpCacheGeneration: () => fromStub(stub.bumpCacheGeneration()),
-      revocationEpoch: () => fromStub(stub.revocationEpoch()),
-      bumpRevocationEpoch: () => fromStub(stub.bumpRevocationEpoch()),
-      chainHead: () => fromStub(stub.chainHead()),
-      advanceChain: (expectedSequence, hash) => fromStub(stub.advanceChain(expectedSequence, hash)),
-    };
-  },
-});
+  return {
+    getByName: (name) => {
+      const stub = scoped.getByName(name);
+
+      return {
+        scopeState: () => fromStub(stub.scopeState()),
+        bumpCacheGeneration: () => fromStub(stub.bumpCacheGeneration()),
+        revocationEpoch: () => fromStub(stub.revocationEpoch()),
+        bumpRevocationEpoch: () => fromStub(stub.bumpRevocationEpoch()),
+        chainHead: () => fromStub(stub.chainHead()),
+        advanceChain: (expectedSequence, hash) =>
+          fromStub(stub.advanceChain(expectedSequence, hash)),
+      };
+    },
+  };
+};
 
 /** Wraps the Worker's binding in CoordinatorNamespace. */
 export const CoordinatorNamespaceLive = Layer.effect(
   CoordinatorNamespace,
-  Effect.map(Coordinator, makeCoordinatorNamespace),
+  Effect.map(Coordinator, (namespace) => makeCoordinatorNamespace(namespace)),
 );
