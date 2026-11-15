@@ -111,9 +111,10 @@ those scripts; no secret is silently regenerated or overwritten.
 
 Setup validates and creates config without overwriting it, then runs the API's
 `bootstrap` script when available. Secrets remain in the root `.env`; setup does
-not generate them or deploy infrastructure. The first newly registered user
-claims instance ownership, so control initial OAuth access before publishing
-the instance. See [identity, organizations and passkeys](docs/identity.md).
+not generate them or deploy infrastructure. Set `bootstrapOwnerEmail` in `deploy.config.ts` before the first sign-in. Only that
+verified email can claim ownership, and only while no other users exist. Without
+this setting signups remain members. Existing ownerless databases require deliberate
+offline recovery; a later registration cannot claim them. See [identity, organizations and passkeys](docs/identity.md).
 The setup script's optional bootstrap handoff remains unavailable; use the
 scoped API-key management API after signing in. Shared-token cache access
 requires `features.legacyToken: true`; see [cache credentials](docs/cache-credentials.md).

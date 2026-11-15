@@ -54,6 +54,10 @@ beforeAll(async () => {
       }
 
       calls.push(url.pathname);
+      if (url.pathname === "/user/memberships/orgs/private-org") {
+        expect(new Headers(init?.headers).get("authorization")).toMatch(/^Bearer /);
+        return Promise.resolve(Response.json({ state: "active" }));
+      }
       const target = new URL(url.pathname + url.search, github.url).href;
 
       const forwarded =
@@ -285,8 +289,8 @@ test("concurrent callbacks keep each GitHub profile bound to its own account", a
       );
 
       const users = yield* database.query("test.owners", (db) => db.select().from(schema.user));
-      expect(users.filter((user) => user.role === "owner")).toHaveLength(1);
-      expect(users.filter((user) => user.role === "member")).toHaveLength(1);
+      expect(users.filter((user) => user.role === "owner")).toHaveLength(0);
+      expect(users.filter((user) => user.role === "member")).toHaveLength(2);
 
       const profiles = yield* Effect.all([providerUser("octocat"), providerUser("ada")]);
       expect(accounts.map((account) => [account.accountId, account.githubLogin]).sort()).toEqual(
@@ -374,6 +378,28 @@ test("instance signup domain policy gates new users and returning OAuth identiti
       expect((yield* finish("ada")).headers.get("location")).not.toBe("/dashboard");
       const users = yield* database.query("test.users", (db) => db.select().from(schema.user));
       expect(users).toHaveLength(1);
+    }),
+  );
+});
+
+test("private GitHub membership works through OAuth and encrypted-token session checks", async () => {
+  await run(
+    Effect.gen(function* () {
+      const database = yield* Database;
+      yield* database.query("test.policy", (db) =>
+        db.insert(schema.instanceSettings).values({
+          id: 1,
+          schemaVersion: 1,
+          settings: {
+            ...JSON.parse(JSON.stringify(defaultInstancePolicy)),
+            allowedGithubOrgs: ["private-org"],
+          },
+          updatedAt: Date.now(),
+        }),
+      );
+      const response = yield* finish("octocat");
+      expect(response.headers.get("location")).toBe("/dashboard");
+      expect(calls.filter((path) => path === "/user/memberships/orgs/private-org")).toHaveLength(2);
     }),
   );
 });

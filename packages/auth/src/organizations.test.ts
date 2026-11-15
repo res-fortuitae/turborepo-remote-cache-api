@@ -1,3 +1,4 @@
+import { defaultInstancePolicy } from "@repo/deploy-config";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun test boundary. */
 import { expect, test } from "bun:test";
 import { Database, schema } from "@repo/db";
@@ -392,3 +393,43 @@ test("members can read their own custom permissions without ac:read or inspectin
     }).pipe(Effect.provide(AuthTest)),
   );
 });
+
+test("organization email policy blocks invites and rechecks pending invitations at acceptance", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const owner = yield* seed("owner", "owner");
+      const member = yield* seed("member");
+      const response = yield* post(auth, owner, "create", { name: "Policy", slug: "policy" });
+      const org = yield* Effect.promise(async () => responseOrg(await response.json()));
+      const invited = yield* post(auth, owner, "invite", {
+        organizationId: org.id,
+        email: "member@example.com",
+      });
+      expect(invited.status).toBe(200);
+      const data = yield* Effect.promise(async () => invitationResponse(await invited.json()));
+      const db = yield* Database;
+      yield* db.query("test.tightenOrg", (db) =>
+        db.insert(schema.organizationPolicy).values({
+          orgId: org.id,
+          settings: {
+            ...JSON.parse(JSON.stringify(defaultInstancePolicy)),
+            allowedEmailDomains: ["other.test"],
+          },
+          updatedAt: Date.now(),
+        }),
+      );
+      expect(
+        (yield* post(auth, owner, "invite", { organizationId: org.id, email: "new@example.com" }))
+          .status,
+      ).toBe(403);
+      const signature =
+        new URLSearchParams(new URL(data.url).hash.split("?")[1]).get("signature") ?? "";
+      expect(
+        (yield* post(auth, member, "accept-signed-invitation", {
+          invitationId: data.invitation.id,
+          signature,
+        })).status,
+      ).toBe(403);
+    }).pipe(Effect.provide(AuthTest)),
+  ));

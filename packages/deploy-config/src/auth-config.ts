@@ -26,6 +26,7 @@ export const AuthSettings = Schema.Struct({
       maxMembersPerGroup: Schema.Int.check(Schema.isGreaterThan(0)),
     }),
   ),
+  bootstrapOwnerEmail: Schema.optional(Schema.NonEmptyString),
   identityCeilings: Schema.optional(IdentityCeilings),
 });
 

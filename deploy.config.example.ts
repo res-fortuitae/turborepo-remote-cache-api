@@ -9,6 +9,8 @@ export default defineDeployConfig({
   // oidcAudiences: ["https://cache.example.com"],
   // Custom/self-hosted OIDC uses pinned public RSA keys; see packages/oidc/README.md.
   // oidcCustomIssuers: [{ issuer: "https://identity.your-company.com", keys: [...] }],
+  // Set before the first sign-in; only this verified email can bootstrap an empty instance.
+  // bootstrapOwnerEmail: "operator@example.com",
   jurisdiction: "default",
   // Public identifiers only. Credentials belong in the root .env or a secret store.
   // githubApp: { appId: 123, clientId: "Iv1.example", slug: "my-cache" },

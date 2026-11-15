@@ -33,8 +33,14 @@ test("conditional owner bootstrap and its audit commit together and preserve the
     Effect.gen(function* () {
       const database = yield* seed;
       const audit = yield* AuditLog;
-      yield* bootstrapOwner(audit, "first");
-      yield* bootstrapOwner(audit, "second");
+      yield* database.query("test.onlyFirst", (db) =>
+        db.run(sql`delete from user where id = 'second'`),
+      );
+      yield* bootstrapOwner(audit, "first", "wrong@example.com");
+      const before = yield* database.query("test.before", (db) => db.select().from(schema.user));
+      expect(before.every((user) => user.role !== "owner")).toBe(true);
+      yield* bootstrapOwner(audit, "first", "first@example.com");
+      yield* bootstrapOwner(audit, "second", "second@example.com");
       const users = yield* database.query("test.users", (db) => db.select().from(schema.user));
       expect(users.filter((user) => user.role === "owner").map((user) => user.id)).toEqual([
         "first",
@@ -43,6 +49,7 @@ test("conditional owner bootstrap and its audit commit together and preserve the
         db.select().from(schema.auditEvent),
       );
       expect(events.map((row) => row.payload.action)).toEqual([
+        "instance.owner.bootstrap.checked",
         "instance.owner.bootstrap.checked",
         "instance.owner.bootstrap.checked",
       ]);
@@ -59,11 +66,24 @@ test("a real audit insert failure prevents the ownership change", () =>
           sql`CREATE TRIGGER fail_bootstrap_audit BEFORE INSERT ON audit_event BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`,
         ),
       );
-      expect((yield* Effect.result(bootstrapOwner(audit, "first")))._tag).toBe("Failure");
+      expect((yield* Effect.result(bootstrapOwner(audit, "first", "first@example.com")))._tag).toBe(
+        "Failure",
+      );
       const users = yield* database.query("test.users", (db) => db.select().from(schema.user));
       expect(users.every((user) => user.role === "member")).toBe(true);
       expect(
         yield* database.query("test.audit", (db) => db.select().from(schema.auditEvent)),
       ).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.scoped),
+  ));
+
+test("ownerless upgrades with existing users refuse bootstrap", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const database = yield* seed;
+      const audit = yield* AuditLog;
+      yield* bootstrapOwner(audit, "first", "first@example.com");
+      const users = yield* database.query("test.users", (db) => db.select().from(schema.user));
+      expect(users.every((user) => user.role === "member")).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped),
   ));

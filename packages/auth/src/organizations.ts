@@ -1,3 +1,4 @@
+import { checkStoredIdentity, checkEmailPolicy } from "./identity-policy.ts";
 import type { SessionReader } from "./session-reader.ts";
 import type { AuditInput, AuditLogService } from "@repo/audit";
 import {
@@ -102,79 +103,33 @@ export const organizationPlugins = (
     return member;
   };
 
-  const eligibleEmail = async (email: string) => {
-    const policy = await readInstancePolicy(db, config);
-
-    if (
-      policy.allowedEmailDomains.length &&
-      !policy.allowedEmailDomains.some(
-        (domain) => domain.toLowerCase() === email.split("@")[1]?.toLowerCase(),
-      )
-    )
-      throw new APIError("FORBIDDEN", {
-        message: "Recipient is outside the instance signup policy",
-      });
-
+  const effectivePolicy = async (orgId: string) => {
+    const instance = await readInstancePolicy(db, config);
+    const [row] = await db
+      .select()
+      .from(schema.organizationPolicy)
+      .where(eq(schema.organizationPolicy.orgId, orgId));
+    return row
+      ? tightenPolicy(instance, Schema.decodeUnknownSync(InstancePolicy)(row.settings))
+      : instance;
+  };
+  const eligibleEmail = async (email: string, orgId: string) => {
+    const policy = await effectivePolicy(orgId);
+    checkEmailPolicy(policy, email, true);
     if (policy.allowedGithubOrgs.length) {
-      const [recipient] = await db
+      const [user] = await db
         .select()
         .from(schema.user)
         .where(sql`lower(${schema.user.email}) = ${email.toLowerCase()}`);
-
-      if (!recipient)
-        throw new APIError("FORBIDDEN", {
-          message: "Recipient must sign in under the GitHub signup policy first",
-        });
+      if (!user)
+        throw new APIError("FORBIDDEN", { message: "Recipient must sign in with GitHub first" });
+      await checkStoredIdentity(db, config, policy, user);
     }
   };
-
-  const recipientEligible = async (userId: string, email: string) => {
-    await eligibleEmail(email);
-    const policy = await readInstancePolicy(db, config);
-
-    if (!policy.allowedGithubOrgs.length) return;
-
-    const [account] = await db
-      .select()
-      .from(schema.account)
-      .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, "github")));
-
-    if (!account?.githubLogin) throw new APIError("FORBIDDEN");
-
-    const identity = await fetch(
-      `https://api.github.com/users/${encodeURIComponent(account.githubLogin)}`,
-      {
-        headers: { Accept: "application/vnd.github+json", "User-Agent": "turborepo-remote-cache" },
-        signal: AbortSignal.timeout(5000),
-      },
-    );
-
-    if (!identity.ok) throw new APIError("FORBIDDEN");
-
-    const profile = z
-      .object({ id: z.union([z.string(), z.number()]) })
-      .parse(await identity.json());
-
-    if (String(profile.id) !== account.accountId)
-      throw new APIError("FORBIDDEN", { message: "GitHub username changed; sign in again" });
-    let allowed = false;
-
-    for (const org of policy.allowedGithubOrgs) {
-      const response = await fetch(
-        `https://api.github.com/orgs/${encodeURIComponent(org)}/members/${encodeURIComponent(account.githubLogin)}`,
-        {
-          headers: {
-            Accept: "application/vnd.github+json",
-            "User-Agent": "turborepo-remote-cache",
-          },
-          signal: AbortSignal.timeout(5000),
-        },
-      );
-
-      if (response.status === 204) allowed = true;
-    }
-
-    if (!allowed) throw new APIError("FORBIDDEN");
+  const recipientEligible = async (userId: string, email: string, orgId: string) => {
+    const [user] = await db.select().from(schema.user).where(eq(schema.user.id, userId));
+    if (!user || user.email.toLowerCase() !== email.toLowerCase()) throw new APIError("FORBIDDEN");
+    await checkStoredIdentity(db, config, await effectivePolicy(orgId), user);
   };
 
   return [
@@ -475,19 +430,20 @@ export const organizationPlugins = (
                   message: "GitHub recipient must sign in once before a username invitation",
                 });
               email = recipient.email.toLowerCase();
-              await recipientEligible(recipient.id, email);
+              await recipientEligible(recipient.id, email, ctx.body.organizationId);
             }
 
             if (!email)
               throw new APIError("BAD_REQUEST", { message: "Email or GitHub username required" });
-            await eligibleEmail(email);
+            await eligibleEmail(email, ctx.body.organizationId);
 
             const [knownRecipient] = await db
               .select()
               .from(schema.user)
               .where(sql`lower(${schema.user.email}) = ${email}`);
 
-            if (knownRecipient) await recipientEligible(knownRecipient.id, email);
+            if (knownRecipient)
+              await recipientEligible(knownRecipient.id, email, ctx.body.organizationId);
             const key = `${user.id}:${ctx.body.organizationId}:${Math.floor(Date.now() / 3600000)}`;
 
             const [window] = await db
@@ -625,7 +581,7 @@ export const organizationPlugins = (
             )
               throw new APIError("FORBIDDEN");
             await activeOrg(invitation.organizationId);
-            await recipientEligible(user.id, user.email);
+            await recipientEligible(user.id, user.email, invitation.organizationId);
 
             if (
               !(await verifyInviteLink(

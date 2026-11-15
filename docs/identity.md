@@ -2,9 +2,12 @@
 
 Better Auth serves the instance API under `/api/auth`. Instance roles (`owner`,
 `admin`, `auditor`, `member`) are independent of organization membership.
-The first newly registered user claims ownership with an atomic D1 update.
-An upgrade with existing users assigns ownership on the next new registration;
-operators should control initial access before enabling public sign-in.
+An operator must set `deploy.config.ts.bootstrapOwnerEmail` before first sign-in.
+Only a verified matching email can become owner through the atomic bootstrap update,
+and only if no other users exist. With no setting, registrations remain members.
+Remove the setting after setup. Existing owners are unaffected by upgrades. For an
+ownerless database with users, stop sign-in and use a reviewed offline database
+recovery to promote a verified operator identity; new registrations cannot bootstrap it.
 
 Owners/admins use `GET/POST /api/auth/instance/settings` (`{ policy }` on POST).
 `deploy.config.ts.identityCeilings` limits token TTL, API-key lifetime, retention,
@@ -33,10 +36,17 @@ The grant is bound to the live session, and its audit event belongs to the org.
 Deletion refuses orgs with projects. Archived org access is denied by org auth.
 
 Signup email domain restrictions require a verified provider email. Allowed
-GitHub organizations use GitHub's public membership check and fail closed on
-private/unavailable memberships. An allowlisted organization must expose the
-user's membership publicly. When both restrictions are configured, both apply.
-Policies apply to returning OAuth sign-ins and account linking too.
+GitHub organizations use the authenticated `/user/memberships/orgs/{org}` endpoint
+with the user’s OAuth token and `read:org` scope. Active private memberships are
+accepted; missing, pending, expired-token and unavailable checks fail closed.
+Existing users may need to authorize GitHub again to grant `read:org`. When both restrictions are configured, both apply.
+Policies apply to returning OAuth sign-ins, account linking, and every session
+creation (including returning magic links and passkeys). Non-OAuth sign-ins use
+the linked encrypted GitHub token when organization checks are required. Existing
+sessions are not revoked on policy changes; administrators can revoke them explicitly.
+Invitation creation and signed acceptance enforce the effective organization
+allowlists as well as the instance policy. Tightening policy blocks pending
+invitations at acceptance. Existing organization members are not removed automatically.
 
 ## Organizations and invitations
 
