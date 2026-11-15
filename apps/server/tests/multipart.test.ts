@@ -1,10 +1,12 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- HTTP and streaming adapters at the Bun boundary. */
 import { expect, test } from "bun:test";
 import { MultipartCreated } from "@repo/api-spec";
-import { MultipartUploadsLive, MultipartBucket, MultipartSecret } from "@repo/artifacts";
+import { MultipartUploadsLive, MultipartBucket, MultipartSecret, Quotas } from "@repo/artifacts";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import type { ResolvedCredential } from "@repo/credentials";
-import { Effect, Layer, Redacted, Stream, Schema } from "effect";
+import { Database, schema } from "@repo/db";
+import { QuotasTest } from "@repo/artifacts/testing";
+import { Clock, Effect, Layer, Redacted, Stream, Schema } from "effect";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
 import { artifactApi, ApiError } from "../src/api.ts";
@@ -12,7 +14,11 @@ import { multipartRoute } from "../src/multipart-route.ts";
 import { createArtifactCache } from "../src/edge-cache.ts";
 import { memoryBucket } from "./support/in-process.ts";
 
-export const multipartFixture = () => {
+export const multipartFixture = (
+  quotas?: typeof Quotas.Service,
+  clock?: Clock.Clock,
+  onCreate?: () => void,
+) => {
   const bucket = memoryBucket();
   const uploads = new Map<
     string,
@@ -21,6 +27,7 @@ export const multipartFixture = () => {
   const operations: string[] = [];
   let generation = 0;
   let race = false;
+  let recheckFailure = false;
   const layer = MultipartUploadsLive.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -28,6 +35,7 @@ export const multipartFixture = () => {
         Layer.succeed(MultipartBucket, {
           create: (key, meta) =>
             Effect.sync(() => {
+              onCreate?.();
               const id = crypto.randomUUID();
               uploads.set(id, { key, meta, parts: new Map() });
               operations.push("create");
@@ -44,8 +52,10 @@ export const multipartFixture = () => {
               }),
             ),
           complete: (ticket) =>
-            Effect.sync(() => {
-              const upload = uploads.get(ticket.uploadId)!;
+            Effect.try(() => {
+              const upload = uploads.get(ticket.uploadId);
+              if (!upload) throw new Error("Upload already completed");
+              uploads.delete(ticket.uploadId);
               const bytes = new Uint8Array(Bun.concatArrayBuffers([...upload.parts.values()]));
               bucket.objects.set(upload.key, {
                 bytes,
@@ -110,11 +120,17 @@ export const multipartFixture = () => {
     multipart: (scope, recheck) =>
       multipartRoute(
         scope,
-        recheck,
+        recheck.pipe(
+          Effect.flatMap((scope) =>
+            recheckFailure
+              ? Effect.fail(new ApiError({ status: 403, code: "forbidden", message: "Revoked" }))
+              : Effect.succeed(scope),
+          ),
+        ),
         () => Effect.void,
         () => Effect.void,
       ).pipe(
-        Effect.provide(layer),
+        Effect.provide(quotas ? Layer.merge(layer, Layer.succeed(Quotas, quotas)) : layer),
         Effect.mapError((error) =>
           error instanceof ApiError
             ? error
@@ -141,6 +157,7 @@ export const multipartFixture = () => {
             }),
           ),
         ),
+        Effect.provide(clock ? Layer.succeed(Clock.Clock, clock) : Layer.empty),
         Effect.provideService(CanonicalOrigin, "http://localhost"),
         Effect.map(Response.toWeb),
       ),
@@ -149,6 +166,9 @@ export const multipartFixture = () => {
     serve,
     bucket,
     operations,
+    setRecheckFailure: (value: boolean) => {
+      recheckFailure = value;
+    },
     setRace: () => {
       race = true;
     },
@@ -278,4 +298,124 @@ test("multipart survives bound JWT refresh but refuses a different proof key", a
       )
     ).status,
   ).toBe(202);
+});
+
+test("completion replay with real quotas preserves the artifact and ledgers", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const quotas = yield* Quotas;
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "o", slug: "o", name: "O", createdAt: new Date() }),
+        q
+          .insert(schema.project)
+          .values({ id: "p", orgId: "o", slug: "p", name: "P", createdAt: 0 }),
+      ]);
+      yield* Effect.promise(async () => {
+        const fixture = multipartFixture(quotas);
+        const id = await create(fixture.serve);
+        const path = `/v8/x/uploads/${id}`;
+        const part = await fixture.serve(`${path}/parts/1`, "PUT", "write", "hello", {
+          "content-length": "5",
+        });
+        const manifest = JSON.stringify({ parts: [await part.json()] });
+        expect((await fixture.serve(`${path}/complete`, "POST", "write", manifest)).status).toBe(
+          202,
+        );
+        expect((await fixture.serve(`${path}/complete`, "POST", "write", manifest)).status).toBe(
+          202,
+        );
+        expect(fixture.bucket.objects.get("o/p/abc")?.size).toBe(5);
+        fixture.setRecheckFailure(true);
+        expect((await fixture.serve(`${path}/complete`, "POST", "write", manifest)).status).toBe(
+          403,
+        );
+        expect(fixture.bucket.objects.get("o/p/abc")?.size).toBe(5);
+        fixture.setRecheckFailure(false);
+        const newerId = await create(fixture.serve);
+        const newerPath = `/v8/x/uploads/${newerId}`;
+        const newerPart = await fixture.serve(`${newerPath}/parts/1`, "PUT", "write", "world", {
+          "content-length": "5",
+        });
+        expect(
+          (
+            await fixture.serve(
+              `${newerPath}/complete`,
+              "POST",
+              "write",
+              JSON.stringify({ parts: [await newerPart.json()] }),
+            )
+          ).status,
+        ).toBe(202);
+        expect((await fixture.serve(`${path}/complete`, "POST", "write", manifest)).status).toBe(
+          503,
+        );
+        expect(new TextDecoder().decode(fixture.bucket.objects.get("o/p/abc")?.bytes)).toBe(
+          "world",
+        );
+      });
+      const rows = yield* db.query("test.ledger", (q) => q.select().from(schema.artifactUsage));
+      expect(rows.map((r) => r.bytes)).toEqual([5]);
+      const status = yield* quotas.status({ orgId: "o", projectId: "p" });
+      expect(status.project.usage.storageBytes).toBe(5);
+      expect(status.project.usage.requests).toBe(2);
+    }).pipe(Effect.provide(QuotasTest)),
+  );
+});
+
+test("reservation survives a sweep immediately before ticket expiry", async () => {
+  let now = 1000000;
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => now,
+    currentTimeMillis: Effect.sync(() => now),
+    currentTimeNanosUnsafe: () => BigInt(now) * 1000000n,
+    currentTimeNanos: Effect.sync(() => BigInt(now) * 1000000n),
+    monotonicTimeNanosUnsafe: () => BigInt(now) * 1000000n,
+    monotonicTimeNanos: Effect.sync(() => BigInt(now) * 1000000n),
+    sleep: () => Effect.void,
+  };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const quotas = yield* Quotas;
+      yield* db.batch((q) => [
+        q
+          .insert(schema.organization)
+          .values({ id: "o", slug: "o", name: "O", createdAt: new Date() }),
+        q.insert(schema.project).values([
+          { id: "p", orgId: "o", slug: "p", name: "P", createdAt: 0 },
+          { id: "q", orgId: "o", slug: "q", name: "Q", createdAt: 0 },
+        ]),
+      ]);
+      const fixture = multipartFixture(quotas, clock, () => {
+        now += 10;
+      });
+      const id = yield* Effect.promise(() => create(fixture.serve));
+      const payload = JSON.parse(Buffer.from(id.split(".")[0]!, "base64url").toString());
+      now = payload.expiresAt - 1;
+      yield* quotas.reserve({ orgId: "o", projectId: "q" }, "bb", 1);
+      yield* Effect.promise(async () => {
+        const path = `/v8/x/uploads/${id}`;
+        const part = await fixture.serve(`${path}/parts/1`, "PUT", "write", "hello", {
+          "content-length": "5",
+        });
+        expect(
+          (
+            await fixture.serve(
+              `${path}/complete`,
+              "POST",
+              "write",
+              JSON.stringify({ parts: [await part.json()] }),
+            )
+          ).status,
+        ).toBe(202);
+        expect(fixture.bucket.objects.get("o/p/abc")?.size).toBe(5);
+      });
+      expect(
+        (yield* quotas.status({ orgId: "o", projectId: "p" })).project.usage.storageBytes,
+      ).toBe(5);
+    }).pipe(Effect.provide(QuotasTest), Effect.provideService(Clock.Clock, clock)),
+  );
 });

@@ -153,6 +153,7 @@ test.each(["accounting", "purge"] as const)(
           complete: () =>
             Effect.sync(() => {
               stored = true;
+              return true;
             }),
           remove: () =>
             Effect.sync(() => {
