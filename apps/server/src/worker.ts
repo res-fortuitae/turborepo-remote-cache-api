@@ -1,3 +1,4 @@
+import { authStorageLayer, residencyFromEnvironment } from "./residency-storage.ts";
 import { Alerts } from "@repo/mailer";
 import { Anomalies, AnomaliesLive, AnomalyAlerts, AnomalyDeliveryError } from "@repo/artifacts";
 import { anomalyPath, anomaliesRoute } from "./anomalies-route.ts";
@@ -77,9 +78,8 @@ import {
   reconcileAuthAuditJob,
   apiKeyDigestJob,
   ApiKeyEpochs,
-  AuthKvNamespace,
   AuthLive,
-  SecondaryStorageLive,
+  AuthKvNamespace,
 } from "@repo/auth";
 import {
   CoordinatorClient,
@@ -240,6 +240,8 @@ const AuthEnvironment = Schema.Struct({
 });
 
 interface DeploymentEnvironment {
+  STORAGE_JURISDICTION: string;
+  LOCAL_RUNTIME: string;
   ANALYTICS_SAMPLE_RATES: string;
   MAX_ARTIFACT_BYTES: string;
   MAX_DIRECT_UPLOAD_BYTES: string;
@@ -289,6 +291,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const env: DeploymentEnvironment = {
+      STORAGE_JURISDICTION: config.jurisdiction ?? "default",
+      LOCAL_RUNTIME: String(dev),
       ANALYTICS_SAMPLE_RATES: JSON.stringify(config.analyticsSampleRates ?? {}),
       MAX_ARTIFACT_BYTES: String(config.limits.maxArtifactBytes ?? 10_000_000_000),
       MAX_DIRECT_UPLOAD_BYTES: String(
@@ -418,6 +422,18 @@ export default class Api extends Cloudflare.Worker<Api>()(
     // Alchemy resolves the custom domain, workers.dev URL, or local dev URL.
     // Deferred until request execution: the environment is absent at plan time.
     const publicUrl = yield* Cloudflare.Worker.URL;
+
+    // Alchemy also evaluates this initializer while planning, before env bindings exist.
+    // Resolve policy only when building request layers or looking up an object.
+    const residency = () => residencyFromEnvironment(environment.STORAGE_JURISDICTION);
+    const coordinator = {
+      getByName: (name: string) => {
+        const policy = residency();
+        // workerd cannot emulate jurisdiction namespaces; local state stays on disk.
+        const jurisdiction = environment.LOCAL_RUNTIME === "true" ? undefined : policy.jurisdiction;
+        return makeCoordinatorNamespace(coordinatorNamespace, jurisdiction).getByName(name);
+      },
+    };
 
     const edgeCacheEnabled = environment.EDGE_CACHE_ENABLED === "true";
     const execution = yield* Cloudflare.Workers.WorkerExecutionContext;
@@ -739,9 +755,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const coordinatorLayer = CoordinatorClientLive.pipe(
-      Layer.provide(
-        Layer.succeed(CoordinatorNamespace, makeCoordinatorNamespace(coordinatorNamespace)),
-      ),
+      Layer.provide(Layer.succeed(CoordinatorNamespace, coordinator)),
     );
 
     const limitsLayer = Layer.succeed(ProjectLimits, {
@@ -801,15 +815,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
           Layer.effect(
             ApiKeyEpochs,
             Effect.map(CoordinatorClient, (client) => ({
-              read: (scope) =>
-                makeCoordinatorNamespace(coordinatorNamespace)
-                  .getByName(`epoch:${scope}`)
-                  .revocationEpoch(),
+              read: (scope) => coordinator.getByName(`epoch:${scope}`).revocationEpoch(),
               bump: client.revokeAll,
             })),
           ).pipe(Layer.provide(coordinatorLayer)),
           auditLayer,
-          SecondaryStorageLive.pipe(Layer.provide(Layer.effect(AuthKvNamespace, kv.raw))),
+          Layer.unwrap(Effect.sync(() => authStorageLayer(residency()))).pipe(
+            Layer.provide(Layer.effect(AuthKvNamespace, kv.raw)),
+          ),
           authConfig,
           selectedLayers,
           mailerLayer,
