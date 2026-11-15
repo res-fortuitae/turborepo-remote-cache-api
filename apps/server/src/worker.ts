@@ -792,6 +792,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     );
 
     const verifierLayer = CacheTokenVerifierLive.pipe(
+      Layer.provide(databaseLayer),
       Layer.provide(
         Layer.mergeAll(
           coordinatorLayer,

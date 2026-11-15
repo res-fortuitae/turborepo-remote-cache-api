@@ -70,7 +70,10 @@ export const projectsApi = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = new URL(request.url, "http://localhost");
   const auth = yield* Auth;
-  const session = yield* auth.requireFreshSession(new Headers(request.headers));
+  // CLI linking needs authorized project discovery, never management routes.
+  const discovery =
+    request.method === "GET" && (collection.test(url.pathname) || item.test(url.pathname));
+  const session = yield* auth.requireFreshSession(new Headers(request.headers), discovery);
 
   if (request.method !== "GET") {
     const origin = yield* CanonicalOrigin;

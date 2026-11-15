@@ -33,8 +33,8 @@ Authorized API-key cache responses use the exported `API_KEY_WARNING`, including
 responses served from the edge cache. The instance/org `apiKeys` policy is enforced both at issuance and
 verification; org policy can only tighten the instance policy.
 
-Verification uses 60-second KV projections for key metadata and policy. Cache
-misses rebuild from D1; warm requests perform no D1 lookup. Verification does not
+Verification reads key state and effective instance/organization policy from D1 on
+every request. KV projections are never authorization authorities. Verification does not
 call the plugin's verifier, which updates `lastRequest` even with rate limiting
 disabled in Better Auth 1.7.12. Plugin `remaining`, refill, request-count and
 last-request fields are untouched. Rate limits belong to the Workers binding
@@ -44,14 +44,11 @@ usage more than once a minute. The Worker awaits that rare update inline, becaus
 Better Auth verifies keys outside the request's execution context. Sampling
 failures are logged and never reject a valid key. This is sampling, not a usage ledger.
 
-Normal revocation disables D1 and deletes its KV projection; remote locations can
-retain access for approximately 60 seconds. Policy changes have the same cache
-window. Emergency revocation first bumps the project's Coordinator epoch, then
-disables the key. The API-key adapter reads epochs directly on each verification,
-without the JWT client's five-second epoch cache, so stale KV key projections are
-rejected immediately after the bump. All previously issued project keys become
-invalid; issue replacements after the incident. The later cache resolver must
-also enforce current organization/project authorization.
+Normal revocation disables the key in D1. The next verification rejects it, even
+when KV still returns a previously valid projection. Policy restrictions apply on
+the next verification too. Requests already authorized may finish. Emergency
+revocation additionally bumps the project's Coordinator epoch, invalidating all
+previously issued project keys. Issue replacements after the incident.
 
 A daily 04:43 UTC job persists owner notifications and sends mail when available.
 It includes keys expiring within seven days or unused for fourteen days (including

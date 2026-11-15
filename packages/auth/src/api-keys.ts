@@ -79,7 +79,6 @@ const revokeInput = z
   .object({ keyId: z.string().min(1), emergency: z.boolean().default(false) })
   .strict();
 const decodePolicy = Schema.decodeUnknownSync(InstancePolicy);
-const decodeKey = Schema.decodeUnknownSync(VerifiedApiKey);
 const forbidden = () => new APIError("FORBIDDEN");
 
 export const makeApiKeys = (input: {
@@ -112,31 +111,13 @@ export const makeApiKeys = (input: {
     requestId: crypto.randomUUID(),
     metadata: { emergency },
   });
-  const cached = async <A>(key: string, decode: (value: unknown) => A, load: () => Promise<A>) => {
-    if (storage) {
-      const value = await Effect.runPromise(storage.get(key));
-      if (Option.isSome(value)) {
-        try {
-          return decode(JSON.parse(value.value));
-        } catch {
-          /* Rebuild corrupt cache. */
-        }
-      }
-    }
-    const value = await load();
-    if (storage) await Effect.runPromise(storage.set(key, JSON.stringify(value), 60));
-    return value;
-  };
-  const policy = (orgId: string, cache: boolean) => {
-    const load = async () => {
-      const parent = await readInstancePolicy(db, config);
-      const [org] = await db
-        .select()
-        .from(schema.organizationPolicy)
-        .where(eq(schema.organizationPolicy.orgId, orgId));
-      return org ? tightenPolicy(parent, decodePolicy(org.settings)) : parent;
-    };
-    return cache ? cached(`cache-key-policy:${orgId}`, decodePolicy, load) : load();
+  const policy = async (orgId: string) => {
+    const parent = await readInstancePolicy(db, config);
+    const [org] = await db
+      .select()
+      .from(schema.organizationPolicy)
+      .where(eq(schema.organizationPolicy.orgId, orgId));
+    return org ? tightenPolicy(parent, decodePolicy(org.settings)) : parent;
   };
   const epoch = async (scope: string) => {
     if (!epochs)
@@ -149,7 +130,7 @@ export const makeApiKeys = (input: {
   const verify = async (key: string): Promise<VerifiedApiKey> => {
     if (!/^tcache_[A-Za-z0-9_-]{32,128}$/.test(key)) throw forbidden();
     const hash = await defaultKeyHasher(key);
-    const value = await cached(`cache-key:${hash}`, decodeKey, async () => {
+    const value = await (async () => {
       const [row] = await db
         .select({ key: schema.apikey, stamp: schema.cacheApiKey })
         .from(schema.apikey)
@@ -169,8 +150,8 @@ export const makeApiKeys = (input: {
         orgEpoch: row.stamp.orgEpoch,
         projectEpoch: row.stamp.projectEpoch,
       };
-    });
-    const currentPolicy = await policy(value.orgId, true);
+    })();
+    const currentPolicy = await policy(value.orgId);
     if (
       value.expiresAt <= Date.now() ||
       currentPolicy.apiKeys === "disallowed" ||
@@ -227,7 +208,7 @@ export const makeApiKeys = (input: {
         throw new APIError("BAD_REQUEST", { message: "Invalid project, scope, name or expiry" });
       const body = parsed.data;
       await permitted(userId, body.organizationId, "create");
-      const limits = await policy(body.organizationId, false);
+      const limits = await policy(body.organizationId);
       if (limits.apiKeys === "disallowed") throw forbidden();
       const expiresIn = body.expiresIn ?? Math.min(30, limits.maxApiKeyLifetimeDays) * 86400;
       if (expiresIn > Math.min(90, limits.maxApiKeyLifetimeDays) * 86400)

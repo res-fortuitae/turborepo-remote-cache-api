@@ -180,7 +180,7 @@ describe("rejections", () => {
               .setProtectedHeader({ alg: "EdDSA", typ: "JWT", kid: key.kid })
               .setIssuer(iss)
               .setAudience(aud)
-              .setSubject("user:1")
+              .setSubject("oidc:test:1")
               .setJti("j")
               .setIssuedAt(0)
               .setNotBefore(0)
@@ -189,7 +189,7 @@ describe("rejections", () => {
           );
 
         const good = yield* sign(CACHE_TOKEN_TEST_ISSUER, CACHE_TOKEN_TEST_ISSUER);
-        expect((yield* verify(good)).subject).toBe("user:1");
+        expect((yield* verify(good)).subject).toBe("oidc:test:1");
         expect(
           reason(yield* failure(verify(yield* sign("https://evil.test", CACHE_TOKEN_TEST_ISSUER)))),
         ).toBe("claims");

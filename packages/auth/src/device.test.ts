@@ -29,6 +29,7 @@ for (const decision of ["approve", "deny"] as const)
         yield* db.batch((db) => [
           db.insert(schema.user).values({
             id: "ada",
+            role: "owner",
             name: "Ada",
             email: "ada@example.com",
             emailVerified: true,
@@ -120,6 +121,26 @@ for (const decision of ["approve", "deny"] as const)
         if (decision === "approve") {
           expect(redeemed.status).toBe(200);
           expect(typeof value.access_token).toBe("string");
+          const deviceHeaders = new Headers({ authorization: `Bearer ${value.access_token}` });
+          expect((yield* Effect.flip(auth.requireFreshSession(deviceHeaders)))._tag).toBe(
+            "Unauthenticated",
+          );
+          expect((yield* auth.requireFreshSession(deviceHeaders, true)).user.id).toBe("ada");
+          for (const path of [
+            "/admin/list-users",
+            "/passkey/generate-register-options",
+            "/organization/my-permissions",
+          ]) {
+            const response = yield* auth.handler(
+              new Request(`http://localhost/api/auth${path}`, {
+                headers: {
+                  authorization: `Bearer ${value.access_token}`,
+                  origin: "http://localhost",
+                },
+              }),
+            );
+            expect(response.status).toBe(403);
+          }
           expect((yield* request("/device/token", poll)).status).toBe(400);
         } else expect(value.error).toBe("access_denied");
       }).pipe(Effect.provide(AuthTest.pipe(Layer.provideMerge(SecondaryStorageTest)))),

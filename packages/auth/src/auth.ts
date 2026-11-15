@@ -54,7 +54,10 @@ export interface AuthService {
    * Like `requireSession`, then confirms the session is still live in D1.
    * Use it for sensitive actions: admin changes, elevation, token issue.
    */
-  readonly requireFreshSession: (headers: Headers) => Effect.Effect<
+  readonly requireFreshSession: (
+    headers: Headers,
+    allowDevice?: boolean,
+  ) => Effect.Effect<
     AuthSession & {
       session: typeof schema.session.$inferSelect;
       user: typeof schema.user.$inferSelect;
@@ -151,7 +154,10 @@ export const AuthLive: Layer.Layer<
         }),
       );
 
-    const requireFreshSession = Effect.fn("Auth.requireFreshSession")(function* (headers: Headers) {
+    const requireFreshSession = Effect.fn("Auth.requireFreshSession")(function* (
+      headers: Headers,
+      allowDevice = false,
+    ) {
       const session = yield* requireSession(headers);
       const now = new Date(yield* Clock.currentTimeMillis);
 
@@ -168,7 +174,11 @@ export const AuthLive: Layer.Layer<
 
       const live = rows[0];
 
-      if (live === undefined || live.user.banned)
+      if (
+        live === undefined ||
+        live.user.banned ||
+        (!allowDevice && live.session.token.startsWith("device_"))
+      )
         return yield* new Unauthenticated({ reason: "revoked" });
 
       return {
@@ -197,6 +207,17 @@ export const AuthLive: Layer.Layer<
           limit: 60,
           period: 60,
         });
+
+        // Device sessions authorize only developer-token issuance and session lifecycle.
+        if (
+          !["/api/auth/get-session", "/api/auth/sign-out", "/api/auth/organization/list"].includes(
+            path,
+          )
+        ) {
+          const current = yield* getSession(request.headers);
+          if (Option.isSome(current) && current.value.session.token.startsWith("device_"))
+            return new Response(null, { status: 403 });
+        }
 
         // Stock routes accept mutable plugin controls; expose only the constrained API.
         if (path.startsWith("/api/auth/api-key/")) return new Response(null, { status: 404 });

@@ -2,7 +2,7 @@ import { tryGetCurrentAuthEndpointContext } from "@better-auth/core/context";
 import type { DBAdapter } from "@better-auth/core/db/adapter";
 import { type AuditInput, type AuditLogService } from "@repo/audit";
 import { schema, type DatabaseDrizzle } from "@repo/db";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { Effect } from "effect";
 import { APIError } from "better-auth/api";
 
@@ -151,6 +151,43 @@ export const auditedAdapter = (
       throw new APIError("BAD_REQUEST", { message: "Audit mutation exceeds 1000 rows" });
     return rows;
   };
+  const removeAccess = async (data: Parameters<DBAdapter["deleteMany"]>[0], single: boolean) => {
+    const rows = await snapshots(data, single);
+    return mutate(data.model, "delete", rows, {}, async () => {
+      if (!["member", "team"].includes(data.model) || !rows.length) {
+        if (!single) return adapter.deleteMany(data);
+        await adapter.delete(data);
+        return 0;
+      }
+      let count = 0;
+      for (const row of rows) {
+        const orgId = String(row.organizationId);
+        const principalType = data.model === "member" ? "user" : "team";
+        const principalId = String(data.model === "member" ? row.userId : row.id);
+        const table = data.model === "member" ? schema.member : schema.team;
+        await db.batch([
+          db
+            .delete(schema.projectGrant)
+            .where(
+              and(
+                eq(schema.projectGrant.principalType, principalType),
+                eq(schema.projectGrant.principalId, principalId),
+                inArray(
+                  schema.projectGrant.projectId,
+                  db
+                    .select({ id: schema.project.id })
+                    .from(schema.project)
+                    .where(eq(schema.project.orgId, orgId)),
+                ),
+              ),
+            ),
+          db.delete(table).where(eq(table.id, String(row.id))),
+        ]);
+        count++;
+      }
+      return count;
+    });
+  };
   const wrapped: DBAdapter = {
     ...adapter,
     // D1 has no transactions; preserve this wrapper inside Better Auth's sequential transaction callback.
@@ -173,10 +210,10 @@ export const auditedAdapter = (
       mutate(data.model, "update", await snapshots(data), data.update, () =>
         adapter.updateMany(data),
       ),
-    delete: async (data) =>
-      mutate(data.model, "delete", await snapshots(data, true), {}, () => adapter.delete(data)),
-    deleteMany: async (data) =>
-      mutate(data.model, "delete", await snapshots(data), {}, () => adapter.deleteMany(data)),
+    delete: async (data) => {
+      await removeAccess(data, true);
+    },
+    deleteMany: async (data) => removeAccess(data, false),
   };
   return wrapped;
 };

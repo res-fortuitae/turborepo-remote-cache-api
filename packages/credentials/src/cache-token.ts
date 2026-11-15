@@ -1,3 +1,5 @@
+import { Database, schema } from "@repo/db";
+import { and, eq } from "drizzle-orm";
 import {
   CoordinatorClient,
   CoordinatorClientTest,
@@ -62,6 +64,7 @@ export const CacheTokenClaims = Schema.Struct({
   iss: Schema.String,
   aud: Schema.Union([Schema.String, Schema.Array(Schema.String)]),
   sub: Schema.NonEmptyString,
+  membership: Schema.optional(Schema.String),
   uploadIdentity: Schema.optional(UploadIdentity),
   org: Schema.NonEmptyString,
   prj: Schema.NonEmptyString,
@@ -80,6 +83,7 @@ export type CacheTokenClaims = typeof CacheTokenClaims.Type;
 
 export const CacheTokenRequest = Schema.Struct({
   subject: Schema.NonEmptyString,
+  membership: Schema.optional(Schema.String),
   uploadIdentity: Schema.optional(UploadIdentity),
   org: Schema.NonEmptyString,
   project: Schema.NonEmptyString,
@@ -246,6 +250,7 @@ export const CacheTokenSignerLive: Layer.Layer<
             prj: request.project,
             scope: request.scope,
             epoch: { org, prj },
+            membership: request.membership,
             cnf: request.cnf,
             uploadIdentity: request.uploadIdentity,
           })
@@ -312,6 +317,7 @@ export const CacheTokenVerifierLive: Layer.Layer<
     const config = yield* CacheTokenConfig;
     const coordinator = yield* CoordinatorClient;
     const importKey = makeKeyImporter();
+    const database = yield* Effect.serviceOption(Database);
 
     const findKey = Effect.fn("CacheTokenVerifier.findKey")(function* (
       token: string,
@@ -363,6 +369,27 @@ export const CacheTokenVerifierLive: Layer.Layer<
         const claims = yield* Effect.mapError(decodeClaims(payload), (error) =>
           invalid("claims", error.message),
         );
+
+        if (claims.sub.startsWith("user:")) {
+          const membership = claims.membership;
+          if (!membership || Option.isNone(database))
+            return yield* new CacheTokenRevoked({ scope: `member:${claims.org}` });
+          const rows = yield* database.value
+            .query("CacheTokenVerifier.membership", (db) =>
+              db
+                .select({ id: schema.member.id })
+                .from(schema.member)
+                .where(
+                  and(
+                    eq(schema.member.id, membership),
+                    eq(schema.member.organizationId, claims.org),
+                    eq(schema.member.userId, claims.sub.slice(5)),
+                  ),
+                ),
+            )
+            .pipe(Effect.mapError(() => invalid("claims", "membership unavailable")));
+          if (!rows.length) return yield* new CacheTokenRevoked({ scope: `member:${claims.org}` });
+        }
 
         const revoked = yield* Effect.all(
           [

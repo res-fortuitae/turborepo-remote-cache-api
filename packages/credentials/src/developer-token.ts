@@ -1,8 +1,9 @@
+import { and, eq } from "drizzle-orm";
 import { DeveloperTokenRequest, type ExchangeResponse } from "@repo/api-spec";
 import { AuditLog } from "@repo/audit";
 import { Auth } from "@repo/auth";
 import { Authorization, AuthorizationCeilings } from "@repo/authz";
-import { InstanceSettingsRepo, ProjectRepo } from "@repo/db";
+import { Database, schema, InstanceSettingsRepo, ProjectRepo } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { RateLimiter } from "@repo/ratelimit";
 import { Clock, Context, Effect, Layer, Redacted, Schema } from "effect";
@@ -19,6 +20,7 @@ export class DeveloperTokenError extends Schema.TaggedError<DeveloperTokenError>
 const denied = () => new DeveloperTokenError({ status: 403, code: "forbidden" });
 const make = Effect.gen(function* () {
   const auth = yield* Auth;
+  const database = yield* Database;
   const authorization = yield* Authorization;
   const signer = yield* CacheTokenSigner;
   const settings = yield* InstanceSettingsRepo;
@@ -40,7 +42,7 @@ const make = Effect.gen(function* () {
           period: 60,
         });
         if (headers.get("origin") !== api) return yield* denied();
-        const session = yield* auth.requireFreshSession(headers);
+        const session = yield* auth.requireFreshSession(headers, true);
         if (session.session.impersonatedBy) return yield* denied();
         const request = yield* Schema.decodeUnknownEffect(DeveloperTokenRequest)(input).pipe(
           Effect.mapError(() => new DeveloperTokenError({ status: 400, code: "bad_request" })),
@@ -82,7 +84,20 @@ const make = Effect.gen(function* () {
           Math.floor((session.session.expiresAt.getTime() - now) / 1000),
         );
         if (ttl <= 0) return yield* denied();
+        const [membership] = yield* database.query("DeveloperTokens.membership", (db) =>
+          db
+            .select()
+            .from(schema.member)
+            .where(
+              and(
+                eq(schema.member.organizationId, request.team),
+                eq(schema.member.userId, session.user.id),
+              ),
+            ),
+        );
+        if (!membership) return yield* denied();
         const issued = yield* signer.issue({
+          membership: membership.id,
           subject: `user:${session.user.id}`,
           org: request.team,
           project: project.id,

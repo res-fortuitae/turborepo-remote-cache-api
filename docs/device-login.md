@@ -8,8 +8,12 @@ and rate limits. Denial, expiration, or cancellation requires a fresh request.
 
 The first-party client ID is `tcache`; arbitrary clients, user prebinding, and
 custom scopes are rejected. This flow obtains a Better Auth session, not a cache
-JWT. Developer cache token issuance is separate. Treat the CLI session as an
-account credential: it can exercise the signed-in user's application access.
+JWT. Developer cache token issuance is separate. The resulting session is restricted to developer token issuance, session inspection, read-only organization/project discovery for CLI linking,
+and sign-out. It cannot manage organizations, instance settings, API keys or
+passkeys, or approve another device. Browser sign-in is required for those actions.
+The server persists provenance in a reserved `device_` session-token prefix;
+clients cannot choose or remove it. Fresh-session consumers reject these sessions
+unless explicitly opting into developer issuance.
 
 Sessions prefer the native OS credential store. If unavailable, login warns and
 falls back to `~/.config/tcache/session.json` (directory 0700, file 0600).
@@ -29,3 +33,7 @@ origin and CSRF checks. IP and endpoint limits use the Rate Limiting binding.
 The approval view is `/device` (`/?view=device` still works for older clients);
 it deliberately asks for code confirmation and an explicit decision. The broader
 instance console is tracked separately in STV-473.
+
+When upgrading from unrestricted device sessions, invalidate existing sessions
+before accepting traffic: old sessions have no reliable device provenance. See
+[access revocation](access-revocation.md) for the offline cleanup plan.

@@ -25,7 +25,7 @@ const decodeStorage = Schema.decodeUnknownSync(ProjectStorage);
 const decodeTrustPolicy = Schema.decodeUnknownSync(TrustPolicy);
 const decodeTrustPolicyList = Schema.decodeUnknownSync(TrustPolicyList);
 
-const cookie = async () => {
+const cookie = async (token = "token") => {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode("auth-test-secret-0123456789abcdef0123456789"),
@@ -34,9 +34,9 @@ const cookie = async () => {
     ["sign"],
   );
 
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("token"));
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(token));
 
-  return `better-auth.session_token=${encodeURIComponent(`token.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`)}`;
+  return `better-auth.session_token=${encodeURIComponent(`${token}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`)}`;
 };
 
 type Serve = (
@@ -50,7 +50,10 @@ type Serve = (
   },
 ) => Effect.Effect<Response, unknown>;
 
-const scenario = (task: (serve: Serve) => Effect.Effect<void, unknown, Database>) =>
+const scenario = (
+  task: (serve: Serve) => Effect.Effect<void, unknown, Database>,
+  token = "token",
+) =>
   Effect.runPromise(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -69,7 +72,7 @@ const scenario = (task: (serve: Serve) => Effect.Effect<void, unknown, Database>
         db.insert(schema.session).values({
           id: "s",
           userId: "u",
-          token: "token",
+          token,
           expiresAt: new Date("2099-01-01T00:00:00Z"),
           createdAt: now,
           updatedAt: now,
@@ -81,7 +84,7 @@ const scenario = (task: (serve: Serve) => Effect.Effect<void, unknown, Database>
           .insert(schema.member)
           .values({ id: "m", userId: "u", organizationId: "org", role: "owner", createdAt: now }),
       ]);
-      const signed = yield* Effect.promise(cookie);
+      const signed = yield* Effect.promise(() => cookie(token));
 
       const handler = projectsRoute(
         Layer.mergeAll(Layer.succeed(Auth, auth), Layer.succeed(Projects, projects)),
@@ -422,4 +425,34 @@ test("policy tester is an admin-only CSRF-protected simulation with claim explan
       );
       expect((yield* serve(`${path}/test`, { method: "POST", body })).status).toBe(403);
     }),
+  ));
+
+test("device sessions can discover projects for CLI linking but cannot manage access", () =>
+  scenario(
+    (serve) =>
+      Effect.gen(function* () {
+        const db = yield* Database;
+        yield* db.query("test.project", (db) =>
+          db
+            .insert(schema.project)
+            .values({ id: "p", orgId: "org", slug: "p", name: "Project", createdAt: 1 }),
+        );
+        expect((yield* serve("/orgs/org/projects")).status).toBe(200);
+        expect((yield* serve("/projects/p")).status).toBe(200);
+        for (const path of [
+          "/projects/p/grants",
+          "/projects/p/trust-policies",
+          "/projects/p/access-directory",
+        ]) {
+          expect((yield* serve(path)).status).toBe(401);
+        }
+        expect(
+          (yield* serve("/orgs/org/projects", {
+            method: "POST",
+            body: { name: "Blocked", slug: "blocked" },
+          })).status,
+        ).toBe(401);
+        expect((yield* serve("/projects/p", { method: "DELETE" })).status).toBe(401);
+      }),
+    "device_cli-session",
   ));
