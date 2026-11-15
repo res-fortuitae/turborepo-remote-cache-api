@@ -19,7 +19,7 @@ export {
 } from "./organization-access.ts";
 
 export { readInstancePolicy } from "./instance.ts";
-export { requirePasskeyProof } from "./passkey-proof.ts";
+export { requirePasskeyProof, requireManagementPasskeyProof } from "./passkey-proof.ts";
 
 export {
   ApiKeyLookup,

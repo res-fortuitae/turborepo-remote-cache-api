@@ -1,12 +1,13 @@
 import { IncidentPurge, PurgeFilter, purgeSummary } from "@repo/artifacts";
-import { Auth, requirePasskeyProof } from "@repo/auth";
-import { Authorization, AuthorizationCeilings } from "@repo/authz";
-import { Database, ProjectRepo, InstanceSettingsRepo } from "@repo/db";
+import { Auth } from "@repo/auth";
+import { Authorization } from "@repo/authz";
+import { ProjectRepo } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { BadRequest, Forbidden, NotFound } from "@repo/api-spec";
 import { Effect, Schema } from "effect";
 import * as Request from "effect/http/HttpServerRequest";
 import * as Response from "effect/http/HttpServerResponse";
+import { requireAdminProof } from "./admin-proof.ts";
 import { readManagementJson } from "./projects-route.ts";
 
 export const purgePath = /^\/projects\/([^/]+)\/purges(?:\/([\w-]+)(?:\/(confirm))?)?\/?$/;
@@ -29,14 +30,8 @@ export const purgeRoute = Effect.gen(function* () {
     "update",
     { orgId: project.orgId, projectId: project.id },
   );
-  const settings = yield* InstanceSettingsRepo;
-  const policy = yield* settings.policy(project.orgId, yield* AuthorizationCeilings);
-  if (policy.requirePasskeyForAdmins && request.method !== "GET") {
-    const db = yield* Database;
-    yield* Effect.tryPromise({
-      try: () => requirePasskeyProof(db.drizzle, session.session.id, session.user.id),
-      catch: () => new Forbidden({ message: "A fresh passkey check is required" }),
-    });
+  if (request.method !== "GET") {
+    yield* requireAdminProof(project.orgId, session.user, session.session.id);
   }
   const purge = yield* IncidentPurge;
   if (request.method === "GET" && match[2] && !match[3])

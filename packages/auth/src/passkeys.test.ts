@@ -173,71 +173,77 @@ const authenticator = () => {
   };
 };
 
-test("real passkey registration and verification rotate the session and produce fresh D1 step-up proof", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const auth = yield* Auth;
-      const db = yield* Database;
-      const headers = yield* seed("owner");
-      const device = authenticator();
-      const registration = yield* request(auth, headers, "/passkey/generate-register-options");
-      expect(registration.status).toBe(200);
-      mergeCookies(headers, registration);
+for (const role of ["owner", "admin"]) {
+  test(`real ${role} passkey registration and verification rotate the session and produce fresh D1 step-up proof`, async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const auth = yield* Auth;
+        const db = yield* Database;
+        const headers = yield* seed(role);
+        const device = authenticator();
+        const registration = yield* request(auth, headers, "/passkey/generate-register-options");
+        expect(registration.status).toBe(200);
+        mergeCookies(headers, registration);
 
-      const registrationOptions = yield* Effect.promise(async () =>
-        options(await registration.json()),
-      );
+        const registrationOptions = yield* Effect.promise(async () =>
+          options(await registration.json()),
+        );
 
-      const registered = yield* request(auth, headers, "/passkey/verify-registration", {
-        response: device.registration(registrationOptions.challenge),
-        name: "Test key",
-      });
+        const registered = yield* request(auth, headers, "/passkey/verify-registration", {
+          response: device.registration(registrationOptions.challenge),
+          name: "Test key",
+        });
 
-      expect(registered.status).toBe(200);
-      expect(
-        (yield* request(auth, headers, "/instance/settings", {
-          policy: { ...defaultInstancePolicy, requirePasskeyForAdmins: true },
-        })).status,
-      ).toBe(403);
+        expect(registered.status).toBe(200);
+        expect(
+          (yield* request(auth, headers, "/instance/settings", {
+            policy: { ...defaultInstancePolicy, requirePasskeyForAdmins: true },
+          })).status,
+        ).toBe(403);
 
-      const authentication = yield* request(
-        auth,
-        headers,
-        "/passkey/generate-authenticate-options",
-      );
+        const authentication = yield* request(
+          auth,
+          headers,
+          "/passkey/generate-authenticate-options",
+        );
 
-      expect(authentication.status).toBe(200);
-      mergeCookies(headers, authentication);
-      const authOptions = yield* Effect.promise(async () => options(await authentication.json()));
+        expect(authentication.status).toBe(200);
+        mergeCookies(headers, authentication);
+        const authOptions = yield* Effect.promise(async () => options(await authentication.json()));
 
-      const verified = yield* request(auth, headers, "/passkey/verify-authentication", {
-        response: device.authentication(authOptions.challenge),
-      });
+        const verified = yield* request(auth, headers, "/passkey/verify-authentication", {
+          response: device.authentication(authOptions.challenge),
+        });
 
-      expect(verified.status).toBe(200);
-      mergeCookies(headers, verified);
-      const proofs = yield* db.query("test.proofs", (db) => db.select().from(schema.passkeyProof));
-      expect(proofs).toHaveLength(1);
-      expect(proofs[0]?.sessionId).not.toBe("original-session");
-      expect(
-        (yield* request(auth, headers, "/instance/settings", {
-          policy: { ...defaultInstancePolicy, requirePasskeyForAdmins: true },
-        })).status,
-      ).toBe(200);
-      expect(
-        (yield* request(auth, baseHeaders("original"), "/instance/orgs/elevate", {
-          orgId: "org",
-          reason: "stale",
-        })).status,
-      ).toBe(401);
-      yield* db.query("test.expire", (db) => db.update(schema.passkeyProof).set({ verifiedAt: 0 }));
-      expect(
-        (yield* request(auth, headers, "/instance/settings", { policy: defaultInstancePolicy }))
-          .status,
-      ).toBe(403);
-    }).pipe(Effect.provide(AuthTest)),
-  );
-});
+        expect(verified.status).toBe(200);
+        mergeCookies(headers, verified);
+        const proofs = yield* db.query("test.proofs", (db) =>
+          db.select().from(schema.passkeyProof),
+        );
+        expect(proofs).toHaveLength(1);
+        expect(proofs[0]?.sessionId).not.toBe("original-session");
+        expect(
+          (yield* request(auth, headers, "/instance/settings", {
+            policy: { ...defaultInstancePolicy, requirePasskeyForAdmins: true },
+          })).status,
+        ).toBe(200);
+        expect(
+          (yield* request(auth, baseHeaders("original"), "/instance/orgs/elevate", {
+            orgId: "org",
+            reason: "stale",
+          })).status,
+        ).toBe(401);
+        yield* db.query("test.expire", (db) =>
+          db.update(schema.passkeyProof).set({ verifiedAt: 0 }),
+        );
+        expect(
+          (yield* request(auth, headers, "/instance/settings", { policy: defaultInstancePolicy }))
+            .status,
+        ).toBe(403);
+      }).pipe(Effect.provide(AuthTest)),
+    );
+  });
+}
 
 test("members cannot enroll and unauthenticated callers cannot use passkey login as a first factor", async () => {
   await Effect.runPromise(
