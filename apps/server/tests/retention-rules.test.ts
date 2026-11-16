@@ -64,3 +64,25 @@ test("a full 1000-rule bucket falls back without overwriting any rules", async (
   expect(await Effect.runPromise(adapter.sync("a", "org/a/", 1))).toBe(false);
   expect(writes).toBe(0);
 });
+
+test("deletion removes only the project's native rule", async () => {
+  let rules = [{ id: "project-a" }, { id: "project-b" }];
+  const adapter = makeRetentionRules({
+    accountId: "test",
+    bucketName: "test",
+    token: async () => "test",
+    fetch: Object.assign(
+      async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          rules = JSON.parse(String(init.body)).rules;
+          return Response.json({ success: true });
+        }
+        return Response.json({ success: true, result: { rules } });
+      },
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  expect(await Effect.runPromise(adapter.remove("a"))).toBe(true);
+  expect(rules).toEqual([{ id: "project-b" }]);
+  expect(await Effect.runPromise(adapter.remove("a"))).toBe(true);
+});

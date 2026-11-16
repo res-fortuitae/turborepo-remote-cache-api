@@ -921,3 +921,56 @@ for (const role of ["owner", "admin", "org-owner", "org-admin", "project-admin"]
     }
   }
 }
+
+test("trust policy deleted between lookup and audit commit returns NotFound without success audit", () =>
+  run(
+    Effect.gen(function* () {
+      const database = yield* Database;
+      const projects = yield* Projects;
+      const project = yield* projects.create(actor, "a", { slug: "race", name: "Race" });
+      const policy = yield* projects.saveTrustPolicy(actor, project.id, trustInput);
+      const { AuditLogD1Only } = yield* Effect.promise(() => import("@repo/audit"));
+      const audit = yield* AuditLog.pipe(
+        Effect.provide(AuditLogD1Only),
+        Effect.provideService(Database, database),
+      );
+      const racing = Layer.fresh(ProjectsLive).pipe(
+        Layer.provide(PolicyGuardrailsLive),
+        Layer.provide(Layer.succeed(OidcAudience, ["cache"])),
+        Layer.provide(Layer.mergeAll(ProjectRepoLive, AuthorizationDatabaseLive)),
+        Layer.provide(
+          Layer.succeed(AuditLog, {
+            ...audit,
+            commit: (input, change) =>
+              database
+                .query("test.concurrentDelete", (db) =>
+                  db.delete(schema.trustPolicy).where(eq(schema.trustPolicy.id, policy.id)),
+                )
+                .pipe(Effect.orDie, Effect.andThen(audit.commit(input, change))),
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            AuthConfigTest,
+            Layer.succeed(ProjectLimits, { retentionDays: 30, maxArtifactBytes: 1000 }),
+          ),
+        ),
+        Layer.provide(Layer.succeed(Database, database)),
+      );
+      const result = yield* Effect.result(
+        Effect.gen(function* () {
+          return yield* (yield* Projects).saveTrustPolicy(
+            actor,
+            project.id,
+            { ...trustInput, enabled: false },
+            policy.id,
+          );
+        }).pipe(Effect.provide(racing)),
+      );
+      expect(Result.isFailure(result) && result.failure._tag).toBe("NotFound");
+      const events = yield* database.query("test.audit", (db) =>
+        db.select().from(schema.auditEvent),
+      );
+      expect(events.some((event) => event.payload.action === "trust_policy.update")).toBe(false);
+    }),
+  ));

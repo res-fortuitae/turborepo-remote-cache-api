@@ -352,29 +352,49 @@ const projects = Effect.gen(function* () {
         },
       };
 
-      yield* audit.commit(
-        {
-          ...event(
-            actor,
-            project.orgId,
-            before ? "trust_policy.update" : "trust_policy.create",
-            id,
-          ),
-          metadata: {
-            policyId: row.id,
-            warningCodes: report.warnings.map((warning) => warning.code),
-            allowUntrustedWrites: body.allowUntrustedWrites === true,
+      yield* audit
+        .commit(
+          {
+            ...event(
+              actor,
+              project.orgId,
+              before ? "trust_policy.update" : "trust_policy.create",
+              id,
+            ),
+            metadata: {
+              policyId: row.id,
+              warningCodes: report.warnings.map((warning) => warning.code),
+              allowUntrustedWrites: body.allowUntrustedWrites === true,
+            },
           },
-        },
-        (db) => [
-          before
-            ? db
-                .update(schema.trustPolicy)
-                .set({ provider, enabled, body: row.body })
-                .where(and(eq(schema.trustPolicy.projectId, id), eq(schema.trustPolicy.id, row.id)))
-            : db.insert(schema.trustPolicy).values(row),
-        ],
-      );
+          (db) => [
+            before
+              ? db
+                  .update(schema.trustPolicy)
+                  .set({ provider, enabled, body: row.body })
+                  .where(
+                    and(eq(schema.trustPolicy.projectId, id), eq(schema.trustPolicy.id, row.id)),
+                  )
+              : db.insert(schema.trustPolicy).values(row),
+            // D1 batch is transactional. Abort it (including the audit insert) if
+            // a concurrent deletion made the update a no-op.
+            ...(before
+              ? [
+                  db.run(
+                    sql`select case when changes() = 0 then json('trust_policy_missing') else 1 end`,
+                  ),
+                ]
+              : []),
+          ],
+        )
+        .pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              if (before) yield* findTrustPolicy(id, before.id);
+              return yield* Effect.fail(error);
+            }),
+          ),
+        );
 
       return { ...presentTrustPolicy(row), ...report };
     }),
