@@ -12,6 +12,12 @@ import {
   CardContent,
 } from "@repo/ui/components/card";
 
+import { ConfirmDialog, NativeSelect } from "../components/forms.tsx";
+import { ErrorState } from "../components/common.tsx";
+import { useOrg } from "../lib/org.tsx";
+import { listProjects } from "../lib/projects.ts";
+import { useResource } from "../lib/use-resource.ts";
+
 const filters = [
   "hash",
   "credentialId",
@@ -39,17 +45,33 @@ const labels = {
   until: "Uploaded until (ISO timestamp)",
 };
 export function PurgePage() {
+  const org = useOrg();
+  return <OrgPurgePage key={org.id} />;
+}
+
+function OrgPurgePage() {
+  const org = useOrg();
+  const projects = useResource(`purge-projects:${org.id}`, (signal) =>
+    listProjects(org.id, signal),
+  );
+  const [confirming, setConfirming] = useState(false);
   const [project, setProject] = useState("");
   const [filter, setFilter] = useState<Record<string, string>>({});
   const [job, setJob] = useState<{ project: string; report: PurgeReport }>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const selected = projects.data?.items.find((item) => item.id === project);
   async function request(action: "preview" | "refresh" | "confirm") {
     setBusy(true);
     setMessage("");
     try {
       const selectedProject = action === "preview" ? project : job?.project;
-      if (!selectedProject) throw new Error("Enter a project ID.");
+      if (
+        projects.status !== "ready" ||
+        !selectedProject ||
+        !projects.data.items.some((item) => item.id === selectedProject)
+      )
+        throw new Error("Select a project in the current organization.");
       const body =
         action === "preview"
           ? Schema.decodeUnknownSync(PurgeFilter)(
@@ -84,6 +106,7 @@ export function PurgePage() {
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to reach the server.");
+      if (action === "confirm") throw error;
     } finally {
       setBusy(false);
     }
@@ -114,16 +137,28 @@ export function PurgePage() {
           >
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="purge-project">Project ID</FieldLabel>
-                <Input
+                <FieldLabel htmlFor="purge-project">Project</FieldLabel>
+                <NativeSelect
                   id="purge-project"
                   required
+                  disabled={busy || projects.status !== "ready"}
                   value={project}
                   onChange={(e) => {
                     setProject(e.target.value);
                     setJob(undefined);
+                    setConfirming(false);
                   }}
-                />
+                >
+                  <option value="">Select a project in {org.name}</option>
+                  {projects.data?.items.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} ({item.slug})
+                    </option>
+                  ))}
+                </NativeSelect>
+                {projects.status === "error" && (
+                  <ErrorState error={projects.error} onRetry={projects.reload} />
+                )}
               </Field>
               {filters.map((key) => (
                 <Field key={key}>
@@ -145,19 +180,37 @@ export function PurgePage() {
             </FieldGroup>
             <Button
               type="submit"
-              disabled={busy || !project || !Object.values(filter).some(Boolean)}
+              disabled={
+                busy ||
+                projects.status !== "ready" ||
+                !selected ||
+                !Object.values(filter).some(Boolean)
+              }
             >
               Preview purge
             </Button>
           </form>
         </CardContent>
       </Card>
+      {job && selected && confirming && (
+        <ConfirmDialog
+          key={job.report.id}
+          open={confirming}
+          onOpenChange={setConfirming}
+          title="Permanently delete artifacts?"
+          description={`Delete ${job.report.count} artifacts (${job.report.bytes.toLocaleString()} bytes) from ${selected.name} in ${org.name}. This cannot be undone.`}
+          typed={selected.slug}
+          destructive
+          confirmLabel="Permanently delete artifacts"
+          onConfirm={() => request("confirm")}
+        />
+      )}
       {message && (
         <p role="alert" className="text-sm">
           {message}
         </p>
       )}
-      {job && (
+      {job && selected && (
         <Card>
           <CardHeader>
             <CardTitle>Purge preview</CardTitle>
@@ -183,8 +236,10 @@ export function PurgePage() {
               </Button>
               <Button
                 variant="destructive"
-                disabled={busy || job.report.state !== "ready"}
-                onClick={() => void request("confirm")}
+                disabled={
+                  busy || projects.status !== "ready" || !selected || job.report.state !== "ready"
+                }
+                onClick={() => setConfirming(true)}
               >
                 Confirm permanent deletion
               </Button>

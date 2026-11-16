@@ -5,6 +5,7 @@ import {
   IncidentPurge,
   IncidentPurgeLive,
   PurgeInventory,
+  PurgeError,
   PurgeJobs,
   type PurgeJob,
   type PurgeObject,
@@ -18,29 +19,37 @@ const fixture = (
     events: string[],
     jobs: Map<string, PurgeJob>,
   ) => Effect.Effect<void, unknown>,
+  failCheckpoint = false,
 ) => {
   const jobs = new Map<string, PurgeJob>();
   const objects = new Map<string, PurgeObject>();
   const events: string[] = [];
   const claimed = new Set<string>();
+  let fail = failCheckpoint;
   const layer = IncidentPurgeLive.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(PurgeJobs, {
           get: (id) => Effect.succeed(jobs.get(id) ?? null),
           save: (job, event) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              if (fail && event === "completed") {
+                fail = false;
+                return yield* new PurgeError({ message: "Injected checkpoint failure" });
+              }
               jobs.set(job.id, job);
               events.push(event);
             }),
           claim: (id) =>
             Effect.sync(() => {
+              events.push("claim");
               if (claimed.has(id)) return false;
               claimed.add(id);
               return true;
             }),
           release: (id) =>
             Effect.sync(() => {
+              events.push("release");
               claimed.delete(id);
             }),
           pending: Effect.sync(() =>
@@ -117,7 +126,7 @@ test("dry run selects intersections in one tenant; confirmation and checkpoints 
       expect(objects.size).toBe(2);
       expect(events.filter((e) => e === "invalidate")).toHaveLength(3);
       expect(events.indexOf("confirmed")).toBeLessThan(events.indexOf("delete"));
-      expect(events.at(-1)).toBe("completed");
+      expect(events.at(-2)).toBe("completed");
     }),
   ));
 
@@ -150,4 +159,44 @@ test("preview excludes new writes; confirmation skips overwritten objects and re
         "Failure",
       );
     }),
+  ));
+
+test("mismatched scope never claims or releases a job lease", () =>
+  fixture((purge, _objects, events) =>
+    Effect.gen(function* () {
+      const job = yield* purge.preview("org", "other", "admin", { runId: "bad" });
+      events.length = 0;
+      expect((yield* Effect.result(purge.confirm("org", "project", job.id, "admin")))._tag).toBe(
+        "Failure",
+      );
+      expect(events).toEqual([]);
+    }),
+  ));
+
+test("failed post-delete checkpoint retries without double counting totals", () =>
+  fixture(
+    (purge, objects) =>
+      Effect.gen(function* () {
+        for (let i = 0; i < 105; i++) objects.set(`o/p/${i}`, object(`o/p/${i}`));
+        const job = yield* purge.preview("o", "p", "admin", { runId: "bad" });
+        yield* purge.tick;
+        yield* purge.confirm("o", "p", job.id, "admin");
+        yield* purge.tick;
+        expect((yield* Effect.result(purge.tick))._tag).toBe("Failure");
+        expect(objects.size).toBe(0);
+        expect(yield* purge.get("o", "p", job.id)).toMatchObject({
+          removed: 100,
+          removedBytes: 1000,
+          offset: 100,
+        });
+        yield* purge.tick;
+        yield* purge.tick;
+        expect(yield* purge.get("o", "p", job.id)).toMatchObject({
+          state: "complete",
+          removed: 105,
+          removedBytes: 1050,
+          offset: 105,
+        });
+      }),
+    true,
   ));

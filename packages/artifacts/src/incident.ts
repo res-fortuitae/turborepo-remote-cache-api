@@ -202,6 +202,8 @@ export const IncidentPurgeLive = Layer.effect(
         return job;
       }),
       confirm: Effect.fn("IncidentPurge.confirm")(function* (orgId, projectId, id, actorId) {
+        // Reject foreign scopes before touching their lease; re-read after claiming below.
+        yield* get(orgId, projectId, id);
         const now = yield* Clock.currentTimeMillis;
         if (!(yield* jobs.claim(id, now)))
           return yield* new PurgeError({ message: "Purge job busy; retry" });
