@@ -193,7 +193,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import { makeRetentionRules } from "./retention-rules.ts";
+
 import { authorizeProjectCache } from "./project-cache.ts";
 import {
   ApiKeyVerifierLive,
@@ -895,15 +895,39 @@ export default class Api extends Cloudflare.Worker<Api>()(
       authEnvironment.R2_LIFECYCLE_BUCKET
         ? Layer.effect(
             ProjectRetentionRules,
-            Effect.map(lifecycleToken.value.raw, (secret) =>
-              makeRetentionRules({
-                accountId: authEnvironment.R2_LIFECYCLE_ACCOUNT_ID!,
-                bucketName: authEnvironment.R2_LIFECYCLE_BUCKET!,
-                jurisdiction: authEnvironment.R2_LIFECYCLE_JURISDICTION,
-                token: () => secret.get(),
-                fetch: globalThis.fetch,
-              }),
-            ),
+            Effect.map(lifecycleToken.value.raw, (secret) => ({
+              sync: (projectId: string, prefix: string, days: number) =>
+                Effect.gen(function* () {
+                  const token = yield* Effect.tryPromise(() => secret.get());
+                  const mutate = coordinator.getByName(
+                    `lifecycle:${authEnvironment.R2_LIFECYCLE_ACCOUNT_ID}:${authEnvironment.R2_LIFECYCLE_BUCKET}`,
+                  ).mutateLifecycle!;
+                  return yield* mutate({
+                    accountId: authEnvironment.R2_LIFECYCLE_ACCOUNT_ID!,
+                    bucketName: authEnvironment.R2_LIFECYCLE_BUCKET!,
+                    jurisdiction: authEnvironment.R2_LIFECYCLE_JURISDICTION,
+                    token,
+                    projectId,
+                    prefix,
+                    days,
+                  });
+                }),
+              remove: (projectId: string) =>
+                Effect.gen(function* () {
+                  const token = yield* Effect.tryPromise(() => secret.get());
+                  const ok = yield* coordinator.getByName(
+                    `lifecycle:${authEnvironment.R2_LIFECYCLE_ACCOUNT_ID}:${authEnvironment.R2_LIFECYCLE_BUCKET}`,
+                  ).mutateLifecycle!({
+                    accountId: authEnvironment.R2_LIFECYCLE_ACCOUNT_ID!,
+                    bucketName: authEnvironment.R2_LIFECYCLE_BUCKET!,
+                    jurisdiction: authEnvironment.R2_LIFECYCLE_JURISDICTION,
+                    token,
+                    projectId,
+                  });
+                  if (!ok) return yield* Effect.fail(new Error("Lifecycle removal failed"));
+                  return true;
+                }),
+            })),
           )
         : Layer.empty;
 

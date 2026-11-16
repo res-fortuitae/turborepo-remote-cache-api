@@ -16,7 +16,17 @@ export interface ScopeState {
 }
 
 /** One Coordinator instance. Failures are transport errors from the platform. */
+export interface LifecycleMutation {
+  readonly accountId: string;
+  readonly bucketName: string;
+  readonly jurisdiction?: string;
+  readonly token: string;
+  readonly projectId: string;
+  readonly prefix?: string;
+  readonly days?: number;
+}
 export interface CoordinatorInstance {
+  readonly mutateLifecycle?: (input: LifecycleMutation) => Effect.Effect<boolean, unknown>;
   readonly scopeState: () => Effect.Effect<ScopeState, unknown>;
   readonly bumpCacheGeneration: () => Effect.Effect<number, unknown>;
   readonly revocationEpoch: () => Effect.Effect<number, unknown>;

@@ -46,6 +46,10 @@ credentials fail immediately, including API-key principals when M3 adds issuance
 The maintenance cron revokes the project's JWT epoch and deletes up to 1000 R2
 objects per tick. It resumes persisted cursors after failures, then removes grants,
 policies, rollups and the project row, retaining the tombstone and audit chain.
+Failed deletion jobs persist attempts, next-attempt time and a sanitized error in
+D1, backing off from one minute to one hour so other jobs and retention can progress.
+The final transaction removes project usage, inventory, credentials, operations,
+incidents and purge jobs; audit history and the deletion tombstone remain.
 Both organization deletion paths enqueue the same jobs before removing the parent.
 An upload rechecks access after writing and removes its object if deletion/archive
 raced the upload. Auth precedes edge-cache reads, so cached data cannot bypass a
@@ -69,7 +73,10 @@ rules are preserved. At 1000 total rules, or without control-plane access, the
 sweeper enforces retention. API errors are logged and the sweeper continues.
 
 Cloudflare's [lifecycle API](https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/lifecycle/methods/update/)
-replaces the complete rule set; avoid concurrent manual lifecycle changes while
+replaces the complete rule set. Application writes are serialized through one
+bucket-addressed Coordinator, and completed deletions remove their prefix rule.
+Alchemy redeploys may reset native prefix rules; cron restores them incrementally
+and the sweeper continues enforcing retention. Avoid concurrent manual lifecycle changes while
 reconciliation is active. Retention deletion is asynchronous, as with native R2
 lifecycle, and full scan latency grows with the number of prefixes/pages.
 
@@ -96,7 +103,8 @@ managing grants). Mutations also require the canonical Origin and any configured
 passkey step-up. Policy IDs are scoped to their project; unknown IDs return 404.
 Bodies are capped at 16 KiB. Responses use `Cache-Control: no-store`.
 
-Policy mutations and their audit events commit atomically. Deleting a project or
+Policy mutations and their audit events commit atomically. A policy deleted
+between lookup and update returns 404 and rolls back the success audit. Deleting a project or
 organization disables its policies in the deletion transaction. The additive
 `created_at` column uses epoch zero for policies that predate this version.
 

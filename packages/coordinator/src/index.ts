@@ -21,3 +21,5 @@ export {
   CoordinatorNamespaceLive,
   makeCoordinatorNamespace,
 } from "./durable-object.ts";
+
+export { makeRetentionRules, type RetentionControlPlane } from "./retention-rules.ts";

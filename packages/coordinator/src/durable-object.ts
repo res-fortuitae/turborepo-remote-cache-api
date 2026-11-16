@@ -1,3 +1,5 @@
+import type { LifecycleMutation } from "./client.ts";
+import { makeLifecycleMutation } from "./retention-rules.ts";
 import type { RuntimeContext } from "alchemy";
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
@@ -15,6 +17,7 @@ export class Coordinator extends Cloudflare.DurableObject<
   Coordinator,
   {
     /** Credentials issued before the current epoch are revoked. */
+    mutateLifecycle(input: LifecycleMutation): Rpc<boolean>;
     revocationEpoch(): Rpc<number>;
     scopeState(): Rpc<ScopeState>;
     bumpCacheGeneration(): Rpc<number>;
@@ -33,6 +36,7 @@ const EMPTY_CHAIN: ChainHead = { sequence: 0, hash: null };
 
 export const CoordinatorLive = Coordinator.make(
   Effect.gen(function* () {
+    const mutateLifecycle = makeLifecycleMutation(globalThis.fetch);
     const state = yield* Cloudflare.DurableObjectState;
 
     const revocationEpoch = () =>
@@ -42,6 +46,7 @@ export const CoordinatorLive = Coordinator.make(
       Effect.map(state.storage.get<ChainHead>(CHAIN_KEY), (head) => head ?? EMPTY_CHAIN);
 
     return Effect.succeed({
+      mutateLifecycle,
       revocationEpoch,
       scopeState: () =>
         Effect.all({
@@ -97,6 +102,7 @@ export const makeCoordinatorNamespace = (
       const stub = scoped.getByName(name);
 
       return {
+        mutateLifecycle: (input) => fromStub(stub.mutateLifecycle(input)),
         scopeState: () => fromStub(stub.scopeState()),
         bumpCacheGeneration: () => fromStub(stub.bumpCacheGeneration()),
         revocationEpoch: () => fromStub(stub.revocationEpoch()),

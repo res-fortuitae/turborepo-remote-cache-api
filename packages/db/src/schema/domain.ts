@@ -219,6 +219,9 @@ export const projectDeletion = sqliteTable(
     requestedAt: integer("requested_at").notNull(),
     cursor: text(),
     completedAt: integer("completed_at"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at").notNull().default(0),
+    lastError: text("last_error"),
   },
   (t) => [index("project_deletion_pending").on(t.completedAt, t.requestedAt)],
 );
