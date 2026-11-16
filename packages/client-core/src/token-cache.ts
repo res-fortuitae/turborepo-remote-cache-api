@@ -42,6 +42,8 @@ const make = Effect.gen(function* () {
   let cached: ClientCredential | undefined;
   let retry: { at: number; error: ClientAuthError } | undefined;
   let refreshAt = 0;
+  let assertionHash: string | undefined;
+  let signaturePin: Redacted.Redacted<string> | undefined;
 
   const expires = (credential: ClientCredential) =>
     credential.source === "apiKey" ? Infinity : Date.parse(credential.expiresAt);
@@ -52,6 +54,26 @@ const make = Effect.gen(function* () {
     if (detected !== undefined) {
       const token = yield* provider.token;
 
+      const hash = yield* Effect.promise(async () => {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(Redacted.value(token)),
+        );
+        return Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
+      });
+      if (hash === assertionHash) {
+        if (cached !== undefined && expires(cached) > (yield* Clock.currentTimeMillis))
+          return cached;
+        return yield* new ClientAuthError({
+          reason: "missing_token",
+          message:
+            "CI assertion has already been exchanged and the cache credential expired. Supply a fresh CI assertion or restart the job.",
+        });
+      }
+      // A lost response may still have consumed the assertion at the server.
+      assertionHash = hash;
       const proof = config.boundTokens
         ? yield* signer.proof({ url: `${config.api}/oidc/exchange`, method: "POST" })
         : undefined;
@@ -101,7 +123,8 @@ const make = Effect.gen(function* () {
 
       if (cached !== undefined && now < refreshAt) return cached;
 
-      if (retry !== undefined && now < retry.at) return yield* fail(retry.error);
+      if (retry !== undefined && now < retry.at)
+        return cached !== undefined && expires(cached) > now ? cached : yield* fail(retry.error);
 
       return yield* acquire.pipe(
         Effect.flatMap((received) =>
@@ -117,25 +140,27 @@ const make = Effect.gen(function* () {
               });
             // An exported environment cannot change under a running Turbo process.
             // Pin its first key, but only while the server still includes it in the active overlap.
-            if (
-              cached?.source !== "apiKey" &&
-              cached?.signatureKey &&
-              credential.source !== "apiKey" &&
-              credential.signatureKey
-            ) {
-              const pinned = Redacted.value(cached.signatureKey);
-              const keys = [credential.signatureKey, ...(credential.previousSignatureKeys ?? [])];
-              if (!keys.some((key) => Redacted.value(key) === pinned))
+            if (signaturePin !== undefined && credential.source !== "apiKey") {
+              const pinned = Redacted.value(signaturePin);
+              const keys = [
+                credential.signatureKey,
+                ...(credential.previousSignatureKeys ?? []),
+              ].filter((key) => key !== undefined);
+              if (!keys.some((key) => Redacted.value(key) === pinned)) {
+                cached = undefined;
                 return yield* new ClientAuthError({
                   reason: "invalid_response",
                   message: "Artifact signing key overlap ended. Restart this cache job.",
                 });
+              }
               credential = {
                 ...credential,
-                signatureKey: cached.signatureKey,
+                signatureKey: signaturePin,
                 previousSignatureKeys: keys.filter((key) => Redacted.value(key) !== pinned),
               };
             }
+            if (credential.source !== "apiKey" && credential.signatureKey !== undefined)
+              signaturePin ??= credential.signatureKey;
             yield* messages.mask(credential.token);
 
             if (credential.source !== "apiKey" && credential.signatureKey !== undefined)
@@ -155,12 +180,13 @@ const make = Effect.gen(function* () {
         ),
         Effect.catch((error) =>
           Effect.gen(function* () {
-            cached = undefined;
-            retry = { at: (yield* Clock.currentTimeMillis) + TOKEN_RETRY_DELAY_MILLIS, error };
+            const current = yield* Clock.currentTimeMillis;
+            if (cached !== undefined && expires(cached) <= current) cached = undefined;
+            retry = { at: current + TOKEN_RETRY_DELAY_MILLIS, error };
             // The error exposes only fixed actionable text, never a cause or raw response.
-            yield* messages.warn(`Remote cache disabled: ${error.message}`);
+            yield* messages.warn(`Remote cache credential refresh failed: ${error.message}`);
 
-            return yield* fail(error);
+            return cached ?? (yield* fail(error));
           }),
         ),
       );
@@ -180,6 +206,8 @@ const make = Effect.gen(function* () {
         cached = undefined;
         retry = undefined;
         refreshAt = 0;
+        assertionHash = undefined;
+        signaturePin = undefined;
       }),
     ),
   };

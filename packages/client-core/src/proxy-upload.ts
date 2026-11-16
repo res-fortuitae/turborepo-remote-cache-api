@@ -53,7 +53,7 @@ const control = (response: Response) =>
     catch: failed,
   });
 
-/** One replayable 64 MiB part in memory, never the whole artifact. Each send reauthenticates. */
+/** One replayable 64 MiB part in memory, never the whole artifact. The caller supplies upload-stable ownership. */
 export const uploadStream = (
   request: Request,
   size: number,

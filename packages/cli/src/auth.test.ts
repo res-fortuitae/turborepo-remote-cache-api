@@ -206,6 +206,8 @@ test("proxy refreshes in background and retries safe reads without replaying upl
 
   const directory = await mkdtemp(join(tmpdir(), "tcache-refresh-"));
   const state = join(directory, "session.json");
+  const identity = join(directory, "identity");
+  await writeFile(identity, "ci-assertion-1");
 
   const child = Bun.spawn(
     [
@@ -224,7 +226,7 @@ test("proxy refreshes in background and retries safe reads without replaying upl
         TCACHE_TEAM: "org",
         TCACHE_PROJECT: "project",
         TCACHE_CI_PROVIDER: "custom",
-        TCACHE_ID_TOKEN: "ci-assertion",
+        TCACHE_OIDC_TOKEN_FILE: identity,
       },
       stdout: "ignore",
       stderr: "pipe",
@@ -247,6 +249,7 @@ test("proxy refreshes in background and retries safe reads without replaying upl
       ).status,
     ).toBe(503);
     expect(puts).toBe(1);
+    await writeFile(identity, "ci-assertion-2");
     await Bun.sleep(2500);
     expect(exchanges).toBeGreaterThan(1);
     await fetch(values.TURBO_API + "/v8/artifacts/hash", { headers });

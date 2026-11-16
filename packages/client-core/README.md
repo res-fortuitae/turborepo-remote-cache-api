@@ -38,9 +38,14 @@ loopback; API URLs must be origins without paths, credentials, query or fragment
 Call `TokenCache.get` at job setup and from the host's refresh maintenance loop.
 Concurrent callers share one exchange. Credentials stay in memory, with refresh
 30 seconds before expiry (half-life for shorter tokens). Each refresh rereads the
-provider source. Failed refreshes clear credentials and impose a 30-second retry
+provider source. Failed refreshes retain still-valid credentials and impose a 30-second retry
 cooldown so concurrent callers do not storm the exchange. `clear` invalidates the
-cache/cooldown. No exchange is retried automatically: CI replay IDs are single-use.
+cache/cooldown. Assertion hashes prevent replay of the last attempted identity, including after a lost
+response. An unchanged assertion keeps the cache credential until expiry; then a
+`missing_token` error asks for a fresh assertion or job restart. Renewable sources
+are reread on maintenance. The signing key pin survives refresh failures until
+`clear`; refreshes without that key in the active overlap are rejected.
+No exchange is retried automatically: CI replay IDs are single-use.
 
 Use `TokenCache.peek` on the cache request path. It checks expiry without network,
 provider reads or exchange. The host/proxy owns scheduling and process execution
@@ -127,7 +132,8 @@ listener binding, maintenance timers, process execution and cleanup remain app-o
 
 Large proxy PUTs (64 MiB and above) use the server multipart API automatically.
 The stream holds one 64 MiB replayable part, rather than buffering the entire
-artifact. Each multipart request peeks the current credential and creates a fresh
-DPoP proof, including part retries. This avoids the Worker request-body ceiling.
+artifact. Bound OIDC multipart requests peek the current credential and create a fresh
+DPoP proof, including part retries. Bearer uploads capture one credential for
+creation, parts, completion and abort, preserving upload ownership across refresh. This avoids the Worker request-body ceiling.
 Failed sessions attempt an authenticated abort. Bound upload ownership follows the
 verified job key across JWT refresh, with live authorization on every request.

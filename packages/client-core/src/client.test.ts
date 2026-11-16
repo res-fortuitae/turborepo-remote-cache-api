@@ -452,6 +452,7 @@ test("memory cache coalesces job setup, refreshes near expiry and peek never exc
       yield* cache.peek;
       expect(f.requests).toHaveLength(1);
       yield* TestClock.adjust(95_000);
+      f.env.CACHE_ID_TOKEN = "fresh-ci";
       yield* cache.get;
       expect(f.requests).toHaveLength(2);
       yield* TestClock.adjust(130_000);
@@ -495,6 +496,7 @@ test("failure defaults to remote disabled with one safe warning; strict fails an
         expect(f.warnings.join("")).not.toContain(ciSecret);
         expect(yield* cache.peek).toBeUndefined();
         yield* TestClock.adjust(31_000);
+        f.env.CACHE_ID_TOKEN = "fresh-ci";
         yield* Effect.result(cache.get);
         expect(f.requests).toHaveLength(2);
       }),
@@ -807,6 +809,135 @@ test("running jobs pin their signing key only through the server's bounded overl
       yield* TestClock.adjust(95000);
       expect(yield* cache.get).toBeUndefined();
       expect(yield* cache.peek).toBeUndefined();
+    }),
+    f,
+  );
+});
+
+test("static assertions are not replayed and expiry requires a fresh identity", () => {
+  let exchanges = 0;
+  const f = fixture({
+    flags: { strict: true },
+    response: () =>
+      Effect.gen(function* () {
+        exchanges++;
+        if (exchanges > 1)
+          return Response.json(new Forbidden({ message: "Replay rejected" }), { status: 403 });
+        return Response.json({
+          token: cacheSecret,
+          api,
+          team: "org",
+          project: "prj",
+          scope: "read write",
+          expiresAt: new Date((yield* Clock.currentTimeMillis) + 120_000).toISOString(),
+        });
+      }),
+  });
+  return run(
+    Effect.gen(function* () {
+      const cache = yield* TokenCache;
+      const first = yield* cache.get;
+      yield* TestClock.adjust(95_000);
+      expect(yield* cache.get).toBe(first);
+      expect(f.requests).toHaveLength(1);
+      yield* TestClock.adjust(26_000);
+      expect(yield* reason(cache.get)).toBe("missing_token");
+      expect(yield* cache.peek).toBeUndefined();
+      expect(f.requests).toHaveLength(1);
+      yield* TestClock.adjust(31_000);
+      exchanges = 0;
+      f.env.CACHE_ID_TOKEN = "rotated-identity";
+      expect((yield* cache.get)?.source).toBe("oidc");
+      expect(f.requests).toHaveLength(2);
+    }),
+    f,
+  );
+});
+
+test("failed refresh retains valid credentials and the job signing pin after expiry", () => {
+  let attempts = 0;
+  const old = Redacted.make("old-key");
+  const f = fixture({
+    env: {},
+    flags: { strict: true },
+    developer: {
+      acquire: Effect.gen(function* () {
+        attempts++;
+        if (attempts === 2)
+          return yield* new ClientAuthError({
+            reason: "unreachable",
+            message: "Temporary failure",
+          });
+        return {
+          token: Redacted.make(cacheSecret),
+          api,
+          team: "org",
+          project: "prj",
+          scope: "read write" as const,
+          expiresAt: new Date((yield* Clock.currentTimeMillis) + 120_000).toISOString(),
+          signatureKey: attempts === 1 ? old : Redacted.make("new-key"),
+          previousSignatureKeys: attempts === 1 ? [] : [old],
+        };
+      }),
+    },
+  });
+  return run(
+    Effect.gen(function* () {
+      const cache = yield* TokenCache;
+      const first = yield* cache.get;
+      yield* TestClock.adjust(95_000);
+      expect(yield* cache.get).toBe(first);
+      expect(yield* cache.peek).toBe(first);
+      expect(yield* cache.get).toBe(first);
+      expect(attempts).toBe(2);
+      yield* TestClock.adjust(31_000);
+      expect(yield* cache.peek).toBeUndefined();
+      const next = yield* cache.get;
+      expect(
+        next?.source !== "apiKey" && next?.signatureKey && Redacted.value(next.signatureKey),
+      ).toBe("old-key");
+    }),
+    f,
+  );
+});
+
+test("signing pin persists through failed acquisition and expired cache", () => {
+  let attempts = 0;
+  const old = Redacted.make("old-key");
+  const f = fixture({
+    env: {},
+    developer: {
+      acquire: Effect.gen(function* () {
+        attempts++;
+        if (attempts === 2)
+          return yield* new ClientAuthError({
+            reason: "unreachable",
+            message: "Temporary failure",
+          });
+        return {
+          token: Redacted.make(cacheSecret),
+          api,
+          team: "org",
+          project: "prj",
+          scope: "read" as const,
+          expiresAt: new Date((yield* Clock.currentTimeMillis) + 120_000).toISOString(),
+          signatureKey: attempts === 1 ? old : Redacted.make("new-key"),
+          previousSignatureKeys: [old],
+        };
+      }),
+    },
+  });
+  return run(
+    Effect.gen(function* () {
+      const cache = yield* TokenCache;
+      yield* cache.get;
+      yield* TestClock.adjust(121_000);
+      yield* cache.get;
+      yield* TestClock.adjust(31_000);
+      const next = yield* cache.get;
+      expect(
+        next?.source !== "apiKey" && next?.signatureKey && Redacted.value(next.signatureKey),
+      ).toBe("old-key");
     }),
     f,
   );
