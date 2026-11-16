@@ -185,3 +185,52 @@ test("allows UI component exports for apps and rejects private UI paths and doma
   workspace(root, "ui", "import '@repo/db';", { "@repo/db": "workspace:*" });
   expect(checkBoundaries(root).join("\n")).toContain("forbidden dependency @repo/ui -> @repo/db");
 });
+
+test("checks mock.module workspace dependencies", () => {
+  const root = fixture();
+  workspace(root, "db", `mock.module('@repo/auth', () => ({}));`);
+  workspace(root, "auth", "");
+  expect(checkBoundaries(root).join("\n")).toContain("forbidden dependency @repo/db -> @repo/auth");
+});
+
+test("checks module-relative URL reads that escape a workspace", () => {
+  const root = fixture();
+  workspace(root, "db", `Bun.file(new URL('../../auth/src/index.ts', import.meta.url));`);
+  expect(checkBoundaries(root).join("\n")).toContain("relative import escapes workspace");
+});
+
+test("checks root composition, scripts and tests for private package access", () => {
+  const root = fixture();
+  workspace(root, "db", "");
+  NodeFS.writeFileSync(NodePath.join(root, "package.json"), JSON.stringify({ name: "root" }));
+  for (const file of ["alchemy.run.ts", "scripts/probe.ts", "tests/probe.ts"]) {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, file), `import '@repo/db/src/private';`);
+  }
+  expect(
+    checkBoundaries(root).filter((error) => error.includes("public entry point")),
+  ).toHaveLength(3);
+});
+
+test("rejects root tooling relative reads into package internals", () => {
+  const root = fixture();
+  workspace(root, "db", "");
+  NodeFS.mkdirSync(NodePath.join(root, "scripts"));
+  NodeFS.writeFileSync(
+    NodePath.join(root, "scripts/probe.ts"),
+    `Bun.file(new URL('../packages/db/src/private.ts', import.meta.url));`,
+  );
+  expect(checkBoundaries(root).join("\n")).toContain("root import must use a public entry point");
+});
+
+test("allows local URLs and declared public mocks", () => {
+  const root = fixture();
+  workspace(root, "db", "");
+  workspace(
+    root,
+    "auth",
+    `mock.module('@repo/db/testing', () => ({})); Bun.file(new URL('./fixture.json', import.meta.url));`,
+    { "@repo/db": "workspace:*" },
+  );
+  expect(checkBoundaries(root)).toEqual([]);
+});

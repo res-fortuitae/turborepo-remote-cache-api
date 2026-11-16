@@ -34,6 +34,8 @@ jobs:
           api: ${{ secrets.TCACHE_API }}
           team: ${{ secrets.TCACHE_TEAM }}
           project: ${{ secrets.TCACHE_PROJECT }}
+      - name: Verify committed Action bundle before rebuilding
+        run: bun run --cwd packages/action check:bundle
       - run: bun run build
       - run: bun run check
       - name: Test within the runner CPU budget

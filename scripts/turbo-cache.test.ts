@@ -55,3 +55,22 @@ test("native builds and tests separate platforms while portable builds share key
   expect(mac["@repo/cli#test"]).not.toBe(linux["@repo/cli#test"]);
   expect(mac["@repo/dashboard#build"]).toBe(linux["@repo/dashboard#build"]);
 });
+
+test("server tests hash Action, CLI and client-core acceptance inputs", async () => {
+  const args = ["test", "--filter=@repo/server"];
+  const before = await plan(args);
+  for (const directory of [
+    "packages/action/src",
+    "packages/action/dist",
+    "packages/cli/src",
+    "packages/client-core/src",
+  ]) {
+    const path = join(root, directory, `cache-key-fixture-${crypto.randomUUID()}.ts`);
+    try {
+      await writeFile(path, "// server acceptance input", { flag: "wx" });
+      expect((await plan(args))["@repo/server#test"]).not.toBe(before["@repo/server#test"]);
+    } finally {
+      await unlink(path);
+    }
+  }
+});
