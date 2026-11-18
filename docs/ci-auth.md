@@ -107,3 +107,21 @@ Store a scoped API key as the CI secret `TCACHE_API_KEY`. With no detected issue
 read-only keys and restrict write keys to protected workflows. A broken detected
 OIDC provider never silently downgrades to the API key. The key is a bearer secret;
 rotate it and use an ephemeral runner. No device login is needed in CI.
+
+### Refresh lifetime and static assertions
+
+`exec` rereads identity sources during maintenance, but the server accepts each CI
+assertion only once. The client remembers a hash of the last attempted assertion
+and skips exchange while it is unchanged. Failed refreshes retain the existing
+cache credential until its expiry, including during the 30-second retry cooldown.
+Renewable/projected sources must supply a new assertion to extend the job beyond
+that expiry. Static GitLab, Bitbucket or custom environment assertions cannot
+refresh indefinitely: after cache-token expiry, authentication reports
+`missing_token` with instructions to supply a fresh assertion or restart the job.
+The proxy returns 503 when no valid credential remains. No server TTL extension or
+replay-guard exception is made. A lost exchange response can consume an assertion;
+supply a fresh one rather than retrying it.
+
+The first artifact signing key stays pinned for the job across refresh failures.
+Refresh may keep it only while the server advertises it in the active overlap;
+when overlap ends, restart the job to use the new key.

@@ -108,3 +108,12 @@ For sender-constrained cache JWTs, upload handles are owned by the verified
 does not change ownership. Other proof keys and cross-tenant callers remain denied.
 API-key and unbound JWT handles retain their credential-ID ownership. Upload
 provenance records the actual issuing credential and verified OIDC identity.
+
+For bearer credentials (developer tokens, unbound OIDC tokens and API keys), the
+proxy captures one credential when an upload starts and uses it for creation,
+every part/retry, completion and abort. Refreshing the job token does not change
+the upload owner mid-stream. Bound OIDC uploads continue using current tokens and
+fresh DPoP proofs because ownership follows the job key. This does not extend a
+credential's lifetime: a bearer upload must finish before its captured token
+expires. Expiry, revocation or policy denial still fails the upload and triggers
+best-effort abort; the proxy cannot replay an already-consumed artifact stream.

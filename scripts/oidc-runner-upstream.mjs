@@ -13,6 +13,9 @@ const tokens = new Map();
 const server = createServer(async (request, response) => {
   if (request.url === "/oidc/exchange") {
     exchanges++;
+    await writeFile(join(directory, "identity"), `fixture-identity-${exchanges + 1}`, {
+      mode: 0o600,
+    });
     const token = `fixture-token-${exchanges}`;
     const expiry = Date.now() + 2500;
     tokens.set(token, expiry);
@@ -73,6 +76,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(0, "127.0.0.1", async () => {
+  await writeFile(join(directory, "identity"), "fixture-identity-1", { mode: 0o600 });
   await writeFile(
     join(directory, "upstream.json"),
     JSON.stringify({ api: `http://127.0.0.1:${server.address().port}`, secret }),

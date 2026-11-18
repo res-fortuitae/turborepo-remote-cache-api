@@ -2,7 +2,7 @@ import { bridgeRotatedSignature } from "./signature-rotation.ts";
 import { MULTIPART_PART_BYTES } from "@repo/api-spec";
 import { uploadStream, type UploadSend } from "./proxy-upload.ts";
 import { Context, Effect, Layer, Redacted } from "effect";
-import { TokenCache } from "./token-cache.ts";
+import { TokenCache, type ClientCredential } from "./token-cache.ts";
 import { DpopSigner } from "./dpop.ts";
 import { ClientConfig } from "./config.ts";
 
@@ -63,35 +63,38 @@ const make = Effect.gen(function* () {
   // Only OIDC exchange binds credentials to this proxy key; developer tokens are bearer tokens.
   const stats = { hits: 0, misses: 0, uploads: 0, errors: 0, retries: 0 };
 
-  const send: UploadSend = (path, method, body, headers, signal) =>
-    Effect.gen(function* () {
-      const credential = yield* cache.peek;
+  const send =
+    (captured: ClientCredential): UploadSend =>
+    (path, method, body, headers, signal) =>
+      Effect.gen(function* () {
+        const credential =
+          config.boundTokens && captured.source === "oidc" ? yield* cache.peek : captured;
 
-      if (!credential) return new Response(null, { status: 503 });
-      const url = new URL(path, config.api).href;
-      headers.set(
-        "authorization",
-        `${config.boundTokens && credential.source === "oidc" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
-      );
-
-      if (config.boundTokens && credential.source === "oidc")
+        if (!credential) return new Response(null, { status: 503 });
+        const url = new URL(path, config.api).href;
         headers.set(
-          "dpop",
-          Redacted.value(yield* signer.proof({ url, method, accessToken: credential.token })),
+          "authorization",
+          `${config.boundTokens && credential.source === "oidc" ? "DPoP" : "Bearer"} ${Redacted.value(credential.token)}`,
         );
-      const init: RequestInit & { duplex: "half" } = {
-        method,
-        body,
-        headers,
-        signal,
-        redirect: "manual",
-        duplex: "half",
-      };
 
-      return yield* transport
-        .send(new Request(url, init))
-        .pipe(Effect.catch(() => Effect.succeed(new Response(null, { status: 502 }))));
-    });
+        if (config.boundTokens && credential.source === "oidc")
+          headers.set(
+            "dpop",
+            Redacted.value(yield* signer.proof({ url, method, accessToken: credential.token })),
+          );
+        const init: RequestInit & { duplex: "half" } = {
+          method,
+          body,
+          headers,
+          signal,
+          redirect: "manual",
+          duplex: "half",
+        };
+
+        return yield* transport
+          .send(new Request(url, init))
+          .pipe(Effect.catch(() => Effect.succeed(new Response(null, { status: 502 }))));
+      });
 
   return {
     stats: Effect.sync(() => ({ ...stats })),
@@ -130,7 +133,7 @@ const make = Effect.gen(function* () {
       const length = Number(request.headers.get("content-length"));
 
       if (request.method === "PUT" && length >= MULTIPART_PART_BYTES) {
-        const response = yield* uploadStream(request, length, send, () => {
+        const response = yield* uploadStream(request, length, send(credential), () => {
           stats.retries++;
         });
 

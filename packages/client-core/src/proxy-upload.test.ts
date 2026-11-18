@@ -13,22 +13,25 @@ import {
   TokenCache,
 } from "./index.ts";
 
-test.each(["oidc", "developer"] as const)(
+test.each(["oidc", "developer", "unbound-oidc"] as const)(
   "%s proxy reads and multipart uploads use the credential binding",
-  async (source) => {
+  async (mode) => {
+    const source = mode === "unbound-oidc" ? "oidc" : mode;
+    const bound = mode === "oidc";
     const size = 128 * 1024 * 1024 + 5;
     const proofs = new Set<string>();
     const sizes: number[] = [];
     let failures = 1;
     let completed = false;
+    let rotated = false;
 
     const transport = Layer.succeed(ProxyTransport, {
       send: (request) =>
         Effect.promise(async () => {
           expect(request.headers.get("authorization")).toBe(
-            `${source === "oidc" ? "DPoP" : "Bearer"} cache-secret`,
+            `${bound ? "DPoP" : "Bearer"} cache-secret`,
           );
-          if (source === "oidc") {
+          if (bound) {
             const proof = decodeJwt(request.headers.get("dpop")!);
             expect(proof.htm).toBe(request.method);
             expect(proof.htu).toBe(request.url);
@@ -53,6 +56,7 @@ test.each(["oidc", "developer"] as const)(
 
             if (failures-- > 0) return new Response(null, { status: 503 });
             sizes.push(count);
+            rotated = true;
 
             return Response.json({ partNumber: Number(path.split("/").at(-1)), etag: "etag" });
           }
@@ -88,12 +92,16 @@ test.each(["oidc", "developer"] as const)(
             team: "org",
             project: "p",
             strict: true,
-            boundTokens: true,
+            boundTokens: bound,
             apiKeysAllowed: true,
           }),
           Layer.succeed(TokenCache, {
             get: Effect.succeed(credential),
-            peek: Effect.succeed(credential),
+            peek: Effect.sync(() =>
+              rotated && !bound
+                ? { ...credential, token: Redacted.make("rotated-secret") }
+                : credential,
+            ),
             clear: Effect.void,
           }),
         ),
@@ -136,7 +144,7 @@ test.each(["oidc", "developer"] as const)(
     expect(response.status).toBe(202);
     expect(completed).toBe(true);
     expect(sizes).toEqual([MULTIPART_PART_BYTES, MULTIPART_PART_BYTES, 5]);
-    expect(proofs.size).toBe(source === "oidc" ? 7 : 0);
+    expect(proofs.size).toBe(bound ? 7 : 0);
   },
 );
 

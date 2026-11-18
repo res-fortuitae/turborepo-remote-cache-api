@@ -32,7 +32,7 @@ if (Bun.argv[2] === "start") {
 
   await appendFile(
     Bun.env.GITHUB_ENV!,
-    `TCACHE_PROBE_API=${data.api}\nTCACHE_PROBE_DIRECTORY=${directory}\nTCACHE_CI_PROVIDER=custom\nTCACHE_ID_TOKEN=runner-lifecycle-fixture\n`,
+    `TCACHE_PROBE_API=${data.api}\nTCACHE_PROBE_DIRECTORY=${directory}\nTCACHE_CI_PROVIDER=custom\nTCACHE_OIDC_TOKEN_FILE=${join(directory, "identity")}\n`,
   );
 } else if (Bun.argv[2] === "check") {
   const directory = Bun.env.TCACHE_PROBE_DIRECTORY!;
