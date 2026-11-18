@@ -16,7 +16,8 @@ import { testTurboRoundTrip } from "../apps/server/tests/support/turbo.ts";
  * By default the stack runs locally (workerd with local R2/D1/KV, the
  * `alchemy dev` topology) and needs no Cloudflare account. Set
  * ALCHEMY_TEST_DEV=0 (`bun run test:deployed`) to deploy a real stage, named
- * by ALCHEMY_TEST_STAGE (default `test_$USER`), destroyed afterwards.
+ * by ALCHEMY_TEST_STAGE (default `test_$USER`). Teardown removes disposable
+ * resources, while stateful resources are retained on the default stage.
  */
 const enabled = Bun.env.ALCHEMY_TEST === "1";
 const local = !["0", "false", "no", "off"].includes(Bun.env.ALCHEMY_TEST_DEV ?? "");

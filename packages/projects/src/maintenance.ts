@@ -1,7 +1,7 @@
 import { AuthorizationCeilings } from "@repo/authz";
 import { AuditLog } from "@repo/audit";
 import { Database, InstanceSettingsRepo, schema } from "@repo/db";
-import { and, asc, eq, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { Clock, Context, Effect, Layer } from "effect";
 import { ProjectLimits } from "./projects.ts";
 
@@ -39,6 +39,8 @@ export class ProjectStorage extends Context.Service<
   }
 >()("@repo/projects/ProjectStorage") {}
 
+const HISTORY_PRUNE_BATCH = 500;
+
 const maintenance = Effect.gen(function* () {
   const database = yield* Database;
   const storage = yield* ProjectStorage;
@@ -49,9 +51,32 @@ const maintenance = Effect.gen(function* () {
   const rules = yield* Effect.serviceOption(ProjectRetentionRules);
 
   return {
-    /** One deletion page and one retention page per tick, independent of project count. */
+    /** Bounded history cleanup and one page each of project deletion and retention. */
     tick: Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
+      const cutoff = now - (limits.maintenanceRetentionDays ?? 90) * 86_400_000;
+      for (const table of [schema.notification, schema.artifactOperation]) {
+        yield* database
+          .query("Projects.pruneHistory", (db) =>
+            db
+              .delete(table)
+              .where(
+                inArray(
+                  table.id,
+                  db
+                    .select({ id: table.id })
+                    .from(table)
+                    .where(lt(table.createdAt, cutoff))
+                    .orderBy(asc(table.createdAt))
+                    .limit(HISTORY_PRUNE_BATCH),
+                ),
+              ),
+          )
+          .pipe(
+            Effect.catch((error) => Effect.logError("Maintenance history pruning failed", error)),
+          );
+      }
+
       const [job] = yield* database.query("Projects.pendingDeletion", (db) =>
         db
           .select()

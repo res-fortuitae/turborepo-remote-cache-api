@@ -1,14 +1,39 @@
 /** Release guard: update the workflow and supported-versions table together. */
 import { Schema } from "effect";
 
-const Registry = Schema.Struct({ versions: Schema.Record(Schema.String, Schema.Unknown) });
+const decodeRegistry = Schema.decodeUnknownSync(
+  Schema.Struct({ versions: Schema.Record(Schema.String, Schema.Unknown) }),
+);
 
-if (Bun.argv.includes("--check-latest")) {
+const decodeWorkflow = Schema.decodeUnknownSync(
+  Schema.Struct({
+    jobs: Schema.Struct({
+      matrix: Schema.Struct({
+        strategy: Schema.Struct({
+          matrix: Schema.Struct({ turbo: Schema.Array(Schema.String) }),
+        }),
+      }),
+    }),
+  }),
+);
+
+export const documentsCompatibilityVersion = (workflow: string, docs: string, version: string) => {
+  const { jobs } = decodeWorkflow(Bun.YAML.parse(workflow));
+
+  return (
+    jobs.matrix.strategy.matrix.turbo.includes(version) &&
+    docs
+      .split(/\r?\n/)
+      .some((line) => /^\s*\|/.test(line) && line.split("|")[1]?.trim() === version)
+  );
+};
+
+if (import.meta.main && Bun.argv.includes("--check-latest")) {
   const response = await fetch("https://registry.npmjs.org/turbo", {
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error("Unable to check Turbo versions in npm");
-  const registry = Schema.decodeUnknownSync(Registry)(await response.json());
+  const registry = decodeRegistry(await response.json());
   const stable = Object.keys(registry.versions).filter((version) =>
     /^\d+\.\d+\.\d+$/.test(version),
   );
@@ -25,10 +50,7 @@ if (Bun.argv.includes("--check-latest")) {
   ).text();
   const docs = await Bun.file(new URL("../docs/turbo-compatibility.md", import.meta.url)).text();
   for (const version of [latest, previous, v1]) {
-    if (
-      !workflow.includes(version) ||
-      !new RegExp(`\\|\\s*${version.replaceAll(".", "\\.")}\\s*\\|`).test(docs)
-    )
+    if (!documentsCompatibilityVersion(workflow, docs, version))
       throw new Error(
         `Update Turbo compatibility workflow and docs for ${version}, then run the matrix before release`,
       );

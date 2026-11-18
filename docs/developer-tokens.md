@@ -18,9 +18,9 @@ read-only. The CLI exposes this explicit request as
 `env`, and `proxy`. The option only changes developer issuance, not CI policies or
 API-key scopes. Every successful issuance is audited without the token.
 
-`ttlSeconds` is optional and bounded by 43,200 seconds (12 hours). The signer,
-instance and effective organization policy, and remaining session lifetime may
-all shorten it. The normal instance ceiling remains 900 seconds. Tokens carry
+`ttlSeconds` is optional and accepts 1 through 3,600 seconds. The signer’s
+configuration, effective organization policy, and remaining session lifetime
+may shorten the issued lifetime. The normal instance ceiling remains 900 seconds. Tokens carry
 current org/project revocation epochs. Removing a grant blocks future issuance;
 use the existing epoch revocation path to invalidate already issued tokens.
 Policies requiring artifact signing or sender binding fail closed until the

@@ -1,3 +1,4 @@
+import { MAX_CACHE_TOKEN_TTL_SECONDS } from "@repo/api-spec";
 import { Database, schema } from "@repo/db";
 import { and, eq } from "drizzle-orm";
 import {
@@ -35,7 +36,7 @@ import { CacheScope, UploadIdentity, Principal } from "./principal.ts";
 export const CACHE_TOKEN_ALGORITHM = "EdDSA";
 /** The issue-time default; instance policy and trust policies only lower it. */
 
-export const DEFAULT_CACHE_TOKEN_TTL_SECONDS = 60 * 60;
+export const DEFAULT_CACHE_TOKEN_TTL_SECONDS = MAX_CACHE_TOKEN_TTL_SECONDS;
 
 /** Decoded by the app from deployment config and supplied with `Layer.succeed`. */
 export class CacheTokenConfig extends Context.Service<

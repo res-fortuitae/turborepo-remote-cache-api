@@ -230,6 +230,9 @@ const AuthEnvironment = Schema.Struct({
   R2_LIFECYCLE_BUCKET: Schema.optional(Schema.String),
   R2_LIFECYCLE_JURISDICTION: Schema.optional(Schema.String),
   PROJECT_RETENTION_DAYS: Schema.optional(Schema.NumberFromString),
+  MAINTENANCE_RETENTION_DAYS: Schema.optional(
+    Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  ),
   OIDC_CUSTOM_ISSUERS: Schema.optional(Schema.fromJsonString(CustomOidcIssuers)),
   OIDC_AUDIENCES: Schema.optional(Schema.fromJsonString(OidcAudiences)),
   CAPABILITIES: Schema.optional(Schema.fromJsonString(CapabilityReport)),
@@ -254,6 +257,7 @@ interface DeploymentEnvironment {
   R2_LIFECYCLE_BUCKET?: string;
   R2_LIFECYCLE_JURISDICTION?: string;
   PROJECT_RETENTION_DAYS: string;
+  MAINTENANCE_RETENTION_DAYS?: string;
   EDGE_CACHE_ENABLED: string;
   CAPABILITIES: string;
   OIDC_AUDIENCES?: string;
@@ -308,6 +312,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
       RATE_LIMIT_STAGE: stage,
       LEGACY_TOKEN_ENABLED: String(config.features.legacyToken === true),
       PROJECT_RETENTION_DAYS: String(config.limits.artifactRetentionDays),
+      ...(config.limits.maintenanceRetentionDays === undefined
+        ? {}
+        : { MAINTENANCE_RETENTION_DAYS: String(config.limits.maintenanceRetentionDays) }),
       BOOTSTRAP_OWNER_EMAIL: config.bootstrapOwnerEmail,
       IDENTITY_CEILINGS: JSON.stringify(config.identityCeilings ?? {}),
       EDGE_CACHE_ENABLED: String(resolveDeployment(config).edgeCacheEnabled),
@@ -351,7 +358,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       assets: DashboardAssets,
       domain,
       // Better Auth uses AsyncLocalStorage from node:async_hooks.
-      compatibility: { flags: ["nodejs_compat"] },
+      compatibility: { date: "2026-08-31", flags: ["nodejs_compat"] },
       limits:
         config.limits.cpuMs === undefined || capabilities.workersPlan !== "paid"
           ? undefined
@@ -766,6 +773,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const limitsLayer = Layer.succeed(ProjectLimits, {
       retentionDays: authEnvironment.PROJECT_RETENTION_DAYS ?? 30,
+      maintenanceRetentionDays: authEnvironment.MAINTENANCE_RETENTION_DAYS,
       maxArtifactBytes: Math.min(
         authEnvironment.MAX_ARTIFACT_BYTES ?? 10_000_000_000,
         MULTIPART_PART_BYTES * MAX_MULTIPART_PARTS,

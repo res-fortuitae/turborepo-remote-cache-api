@@ -1,5 +1,9 @@
 import { and, eq } from "drizzle-orm";
-import { DeveloperTokenRequest, type ExchangeResponse } from "@repo/api-spec";
+import {
+  DeveloperTokenRequest,
+  MAX_CACHE_TOKEN_TTL_SECONDS,
+  type ExchangeResponse,
+} from "@repo/api-spec";
 import { AuditLog } from "@repo/audit";
 import { Auth } from "@repo/auth";
 import { Authorization, AuthorizationCeilings } from "@repo/authz";
@@ -78,8 +82,7 @@ const make = Effect.gen(function* () {
         if (policy.requireArtifactSigning && !signing) return yield* denied();
         const now = yield* Clock.currentTimeMillis;
         const ttl = Math.min(
-          request.ttlSeconds ?? 3600,
-          43200,
+          request.ttlSeconds ?? MAX_CACHE_TOKEN_TTL_SECONDS,
           policy.maxTokenTtlSeconds,
           Math.floor((session.session.expiresAt.getTime() - now) / 1000),
         );

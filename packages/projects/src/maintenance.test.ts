@@ -9,7 +9,6 @@ import { Effect, Layer, Result } from "effect";
 import { ProjectLimits } from "./projects.ts";
 import { ProjectMaintenance, ProjectMaintenanceLive, ProjectStorage } from "./maintenance.ts";
 
-const limits = Layer.succeed(ProjectLimits, { retentionDays: 30, maxArtifactBytes: 100 });
 const seed = Effect.gen(function* () {
   const database = yield* Database;
   yield* database.batch((db) => [
@@ -30,14 +29,18 @@ const seed = Effect.gen(function* () {
   ]);
 });
 
-const fixture = (storage: typeof ProjectStorage.Service) =>
+const fixture = (storage: typeof ProjectStorage.Service, maintenanceRetentionDays?: number) =>
   Layer.mergeAll(
     ProjectMaintenanceLive.pipe(
       Layer.provide(
         Layer.mergeAll(
           AuditLogD1Only,
           InstanceSettingsRepoLive,
-          limits,
+          Layer.succeed(ProjectLimits, {
+            retentionDays: 30,
+            maxArtifactBytes: 100,
+            maintenanceRetentionDays,
+          }),
           Layer.succeed(ProjectStorage, storage),
         ),
       ),
@@ -311,5 +314,57 @@ test("deletion removes every project table except durable tombstones and audit h
         [],
       );
     }).pipe(Effect.provide(fixture(storage))),
+  );
+});
+
+test("maintenance prunes old notifications and operations in bounded batches without projects", () => {
+  const storage: typeof ProjectStorage.Service = {
+    list: () => Effect.die("No projects to list"),
+    delete: () => Effect.die("No artifacts to delete"),
+    invalidateCache: () => Effect.void,
+    revoke: () => Effect.void,
+  };
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const database = yield* Database;
+      const now = Date.now();
+      const day = 86_400_000;
+      const records = [
+        ...Array.from({ length: 501 }, (_, i) => ({
+          id: `old-${i}`,
+          createdAt: now - 8 * day - (501 - i),
+        })),
+        { id: "recent", createdAt: now - 6 * day },
+      ];
+      for (let offset = 0; offset < records.length; offset += 10) {
+        const batch = records.slice(offset, offset + 10);
+        yield* database.batch((db) => [
+          db
+            .insert(schema.notification)
+            .values(batch.map((row) => ({ ...row, userId: "user", kind: "quota", detail: "{}" }))),
+          db.insert(schema.artifactOperation).values(
+            batch.map((row) => ({
+              ...row,
+              orgId: "org",
+              projectId: "project",
+              hash: "hash",
+              provenance: {},
+            })),
+          ),
+        ]);
+      }
+      const maintenance = yield* ProjectMaintenance;
+      const remaining = Effect.forEach([schema.notification, schema.artifactOperation], (table) =>
+        database.query("test.remaining", (db) =>
+          db.select({ id: table.id }).from(table).orderBy(table.id),
+        ),
+      );
+      yield* maintenance.tick;
+      expect(yield* remaining).toEqual(
+        Array.from({ length: 2 }, () => [{ id: "old-500" }, { id: "recent" }]),
+      );
+      yield* maintenance.tick;
+      expect(yield* remaining).toEqual([[{ id: "recent" }], [{ id: "recent" }]]);
+    }).pipe(Effect.provide(fixture(storage, 7))),
   );
 });

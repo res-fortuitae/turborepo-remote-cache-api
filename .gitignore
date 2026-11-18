@@ -22,6 +22,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .dev.vars
 .dev.vars.*
 
+# Local private keys
+signing-key*.json
+*.pem
+
 # caches
 .eslintcache
 .cache

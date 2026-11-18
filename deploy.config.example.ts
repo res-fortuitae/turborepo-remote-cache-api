@@ -18,6 +18,7 @@ export default defineDeployConfig({
   // identityCeilings: { maxCacheRequestsPerMinute: 300, maxQueryHashes: 100 },
   limits: {
     artifactRetentionDays: 30,
+    // maintenanceRetentionDays: 90, // Notification and upload operation history.
     // maxArtifactBytes: 10_000_000_000, // Whole artifact, including multipart.
     // maxDirectUploadBytes: 100_000_000, // Can only lower the zone request ceiling.
   },

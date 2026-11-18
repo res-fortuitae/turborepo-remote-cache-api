@@ -248,8 +248,8 @@ On the first deploy, Alchemy asks how to connect to Cloudflare:
 The first deploy also bootstraps Alchemy's state store in your Cloudflare account.
 It then builds the dashboard, creates the R2 buckets, D1 database (with migrations),
 KV namespace, Durable Object, Secrets Store secrets, rate limiter and Worker, and
-prints the Worker `url`. Run the same command again to apply changes. Deploy and
-destroy target `stages.production`; pass `--stage <name>` for another stage.
+prints the Worker `url`. Run the same command again to apply changes. Deploy
+defaults to `stages.production`. Destroy requires `--stage <name>`.
 
 ### 9. Sign in and create your first project
 
@@ -297,7 +297,7 @@ TURBO_API=<url> TURBO_TOKEN=<TURBO_TOKEN from .env> bun packages/cli/src/bin.ts 
 | Capabilities show `unknown` plan             | Your token can't read billing. Set `workersPlan` in `deploy.config.ts`.                       |
 | CI falls back to local cache                 | Check `id-token: write`, the `api`/`team`/`project` inputs, and the project's trust policies. |
 
-To remove a deployment, run `bun run destroy`. Read
+To remove a deployment, run `bun run destroy --stage <name>`. Read
 [deletion protection](docs/deletion-protection.md) first: stateful resources are
 kept on purpose.
 
@@ -367,8 +367,9 @@ Development also ignores custom domains, including when an explicit stage matche
 a configured production or staging name. Deployments continue to use Cloudflare
 state and the configured domains and Basin export.
 
-Deploy/destroy default to `stages.production`; plan defaults to `stages.staging`.
-An explicit `--stage` or `ALCHEMY_STAGE` takes precedence. Development keeps
+Deploy defaults to `stages.production`; plan defaults to `stages.staging`.
+An explicit `--stage` or `ALCHEMY_STAGE` takes precedence for both commands.
+Destroy requires a stage on the command line. Development keeps
 Alchemy's local stage default. Production domains only attach to the production
 stage; use `stagingDomain` for staging. Existing installations must preserve their
 current stage name.
@@ -441,17 +442,18 @@ Opt-in legacy shared-token artifacts use `<teamId|slug|default>/<hash>`; verifie
 `@repo/infra` declares every resource; the root `alchemy.run.ts` composes them and
 the API Worker binds them:
 
-| Resource               | Binding                                                                | Purpose                                                             |
-| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| R2 bucket `Artifacts`  | `Artifacts`                                                            | Cache artifacts, with lifecycle rules                               |
-| D1 database `Database` | `Database`                                                             | System of record                                                    |
-| KV namespace `Cache`   | `Cache`                                                                | Rebuildable caches only (auth secondary storage, JWKS, drill-downs) |
-| Durable Object         | `Coordinator`                                                          | Revocation epochs and other strongly consistent primitives          |
-| Secrets Store secrets  | `SigningKey`, `BetterAuthSecret`, `GitHubOAuthSecret`, `BasinSqlToken` | Stored as `<stage>_<ENV_NAME>` in the account store                 |
-| Rate Limiting          | `RATE_LIMITER`                                                         | Request ceilings (`@repo/ratelimit`)                                |
-| Static assets          | `ASSETS`                                                               | Dashboard build in `apps/dashboard/dist`                            |
+| Resource               | Binding                                                                                    | Purpose                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| R2 bucket `Artifacts`  | `Artifacts`                                                                                | Cache artifacts, with lifecycle rules                               |
+| D1 database `Database` | `Database`                                                                                 | System of record                                                    |
+| KV namespace `Cache`   | `Cache`                                                                                    | Rebuildable caches only (auth secondary storage, JWKS, drill-downs) |
+| Durable Object         | `Coordinator`                                                                              | Revocation epochs and other strongly consistent primitives          |
+| Secrets Store secrets  | `SigningKey`, `BetterAuthSecret`, `GitHubOAuthSecret`, `BasinSqlToken`, `R2LifecycleToken` | Stored as `<stage>_<ENV_NAME>` in the account store                 |
+| Rate Limiting          | `RATE_LIMITER`                                                                             | Request ceilings (`@repo/ratelimit`)                                |
+| Static assets          | `ASSETS`                                                                                   | Dashboard build in `apps/dashboard/dist`                            |
 
-The GitHub OAuth and Basin secrets are created only when their variables are set.
+The GitHub OAuth, Basin SQL and R2 lifecycle secrets are created only when their
+variables are set.
 Cloudflare allows one Secrets Store per account; Alchemy adopts it and never deletes it.
 
 Persistent resources use Alchemy retention outside explicitly named preview/PR
@@ -468,6 +470,11 @@ multipart uploads are aborted after a day. Cloudflare applies the bucket maximum
 bounded retention sweep, with optional native prefix rules; see [project retention](docs/projects.md#retention). Choose `jurisdiction` before creating the bucket;
 changing residency of existing data needs a separate migration.
 
+The project maintenance tick prunes expired D1 notifications and upload
+operation records in batches of up to 500 rows per table. Set
+`limits.maintenanceRetentionDays` in `deploy.config.ts` to change the 90-day
+default. This is independent of artifact and audit event retention.
+
 ## Edge caching
 
 Downloads are stored in the datacenter's Workers Cache (`packages/artifacts/src/edge-cache.ts`) for an hour, so repeat downloads skip R2. The cache is looked up _after_ authentication and keyed by the credential’s organization + project + cache generation + hash. Artifacts over 512 MB bypass edge caching. Project purges invalidate copies across locations within five seconds; see [purge semantics](docs/cache-credentials.md#purging-edge-copies). Uploads evict the local copy. Responses carry `x-edge-cache: HIT|MISS`.
@@ -482,12 +489,12 @@ isolation and retention freshness limits.
 
 ## Testing
 
-| Layer          | Command                                                 | Needs                                                        |
-| -------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
-| Unit           | `bun run test`                                          | nothing: no Wrangler, credentials, or network                |
-| Running Worker | `TURBO_API=<url> TURBO_TOKEN=<token> bun run test:live` | `bun run dev` or a deployed URL                              |
-| Local stack    | `bun run test:stack`                                    | `deploy.config.ts` and `.env` secrets; runs workerd locally  |
-| Deployed stage | `bun run test:deployed`                                 | Cloudflare credentials; deploys, then destroys, a test stage |
+| Layer          | Command                                                 | Needs                                                                       |
+| -------------- | ------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Unit           | `bun run test`                                          | nothing: no Wrangler, credentials, or network                               |
+| Running Worker | `TURBO_API=<url> TURBO_TOKEN=<token> bun run test:live` | `bun run dev` or a deployed URL                                             |
+| Local stack    | `bun run test:stack`                                    | `deploy.config.ts` and `.env` secrets; runs workerd locally                 |
+| Deployed stage | `bun run test:deployed`                                 | Cloudflare credentials; deploys a test stage and runs policy-based teardown |
 
 Every layer runs the same shared suites from `apps/server/tests/support`:
 
@@ -505,7 +512,11 @@ in-memory bucket, and serve it on a local port for the turbo round trip. The
 stack suites (`tests/stack.test.ts`) deploy the root `alchemy.run.ts` with
 Alchemy's `Test` harness: locally by default (workerd with local R2/D1/KV, the
 `alchemy dev` topology), or to a real stage with `ALCHEMY_TEST_DEV=0`, named by
-`ALCHEMY_TEST_STAGE` (default `test_$USER`). Set `NO_DESTROY=1` to keep it.
+`ALCHEMY_TEST_STAGE` (default `test_$USER`). Teardown removes disposable
+resources. The default stage retains the Worker, database, Backups and
+AuditCheckpoints buckets, and stage secrets. Use an explicit preview stage
+such as `ALCHEMY_TEST_STAGE=preview-test_$USER` for preview cleanup, subject
+to Cloudflare retention locks. Set `NO_DESTROY=1` to skip teardown.
 Explicit local test runs enable the legacy-token fixture in memory, without
 changing the operator config; normal dev and deployed stages keep the configured flag.
 Deploy a real stage only when you intend to. All suites use unique team names

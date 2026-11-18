@@ -88,3 +88,42 @@ test("pure decisions enforce tenant, scope, lifetime and instance clamps before 
     ).reason,
   ).toBe("instance_policy");
 });
+
+test("API-key duration allows one second of timestamp rounding", () => {
+  const issuedAtMs = 999;
+  const maxApiKeyLifetimeDays = 1;
+  const expiresAtMs = issuedAtMs + maxApiKeyLifetimeDays * 86_400_000 + 1;
+  const apiKey = {
+    ...credential,
+    kind: "apiKey" as const,
+    issuedAt: Math.floor(issuedAtMs / 1000),
+    expiresAt: Math.floor(expiresAtMs / 1000),
+  };
+  const keyPolicy = { ...policy, maxApiKeyLifetimeDays };
+  expect(decide(apiKey, "cache:read", resource, facts, keyPolicy, 1).allowed).toBe(true);
+  expect(decide(apiKey, "cache:read", resource, facts, keyPolicy, apiKey.expiresAt).reason).toBe(
+    "credential_lifetime",
+  );
+  expect(
+    decide(
+      { ...apiKey, expiresAt: apiKey.expiresAt + 1 },
+      "cache:read",
+      resource,
+      facts,
+      keyPolicy,
+      1,
+    ).reason,
+  ).toBe("credential_lifetime");
+});
+
+test("API-key management requires an organization permission for project admins", () => {
+  const session = { userId: "admin", sessionId: "session" };
+  const projectAdmin = { ...facts, projectRole: "project:admin" as const };
+  for (const action of ["apiKey:create", "apiKey:revoke"] as const) {
+    expect(decide(session, action, resource, projectAdmin, policy, 1).allowed).toBe(false);
+    expect(
+      decide(session, action, resource, { ...projectAdmin, orgPermission: true }, policy, 1)
+        .allowed,
+    ).toBe(true);
+  }
+});
