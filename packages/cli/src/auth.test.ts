@@ -44,7 +44,8 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
     const script = join(directory, "child.ts");
     await Bun.write(
       script,
-      `const api = Bun.env.TURBO_API!;
+      `if (Object.hasOwn(Bun.env, 'TCACHE_API_KEY')) process.exit(5);
+      const api = Bun.env.TURBO_API!;
       const bad = await fetch(api + '/v8/artifacts/hash');
       if (bad.status !== 401) process.exit(2);
       const headers = {authorization: 'Bearer ' + Bun.env.TURBO_TOKEN};
@@ -97,6 +98,48 @@ test("exec streams upload, authenticates locally, preserves HEAD and cleans up l
     await expect(fetch(report.api)).rejects.toThrow();
   } finally {
     await server.stop(true);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("exec runs locally without an API key in the child environment after CI authentication fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tcache-exec-local-"));
+
+  try {
+    const script = join(directory, "check-env.ts");
+    await Bun.write(
+      script,
+      `if (Object.hasOwn(Bun.env, "TCACHE_API_KEY")) process.exit(2);
+      if (Bun.env.TURBO_CACHE !== "local:rw" || Bun.env.TURBO_TOKEN !== "") process.exit(3);`,
+    );
+
+    const child = Bun.spawn(
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY
+          ? [Bun.env.TCACHE_TEST_BINARY]
+          : ["bun", new URL("./bin.ts", import.meta.url).pathname]),
+        "exec",
+        "--",
+        "bun",
+        script,
+      ],
+      {
+        cwd: directory,
+        env: {
+          PATH: Bun.env.PATH,
+          TCACHE_API: "https://cache.example",
+          TCACHE_TEAM: "org",
+          TCACHE_PROJECT: "project",
+          TCACHE_API_KEY: "fixture-key",
+          TCACHE_CI_PROVIDER: "gitlab",
+        },
+        stderr: "pipe",
+      },
+    );
+
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stderr).text()).toContain("CI ID token is unavailable");
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -262,7 +305,7 @@ test("proxy refreshes in background and retries safe reads without replaying upl
   }
 }, 10_000);
 
-test("default exec exchanges a saved developer session and forwards bearer credentials", async () => {
+test("linked exec exchanges a saved developer session at its login origin", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tcache-developer-exec-"));
   let exchanges = 0;
   let reads = 0;
@@ -303,6 +346,11 @@ test("default exec exchanges a saved developer session and forwards bearer crede
       JSON.stringify({ api: server.url.origin, token: "saved-session" }),
       { mode: 0o600 },
     );
+    await writeFile(
+      join(directory, ".turbo-cache.json"),
+      JSON.stringify({ api: server.url.origin, team: "org", project: "project" }),
+    );
+
     const script = join(directory, "child.ts");
     await Bun.write(
       script,
@@ -319,13 +367,15 @@ test("default exec exchanges a saved developer session and forwards bearer crede
         script,
       ],
       {
+        cwd: directory,
         env: {
           ...Bun.env,
           GITHUB_ACTIONS: undefined,
           HOME: directory,
-          TCACHE_API: server.url.origin,
-          TCACHE_TEAM: "org",
-          TCACHE_PROJECT: "project",
+          USERPROFILE: directory,
+          TCACHE_API: undefined,
+          TCACHE_TEAM: undefined,
+          TCACHE_PROJECT: undefined,
           TCACHE_API_KEY: undefined,
           TCACHE_CI_PROVIDER: undefined,
         },

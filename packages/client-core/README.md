@@ -31,6 +31,9 @@ accepts `api`, organization ID in `team`, project ID in `project`, and optional
 `projectSlug`/`audience`. It contains no credentials. `TCACHE_API_KEY` is read only
 from the injected environment and wrapped in `Redacted`. HTTP is allowed only on
 loopback; API URLs must be origins without paths, credentials, query or fragments.
+`TokenCache` requires an explicit API origin from flags or `TCACHE_API` before
+acquiring CI credentials or accepting an API key. The linked file can still
+provide the team and project.
 `TCACHE_STRICT=true|1` enables strict failure; a flag takes precedence.
 
 ## Job authentication and refresh

@@ -51,6 +51,13 @@ const make = Effect.gen(function* () {
   const acquire = Effect.gen(function* () {
     const detected = yield* provider.detect;
 
+    if (config.apiFromLinkedFile && (detected !== undefined || config.apiKey !== undefined))
+      return yield* new ClientAuthError({
+        reason: "configuration",
+        message:
+          "Set --api or TCACHE_API to use CI credentials or TCACHE_API_KEY with a linked project.",
+      });
+
     if (detected !== undefined) {
       const token = yield* provider.token;
 
