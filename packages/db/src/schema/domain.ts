@@ -181,13 +181,20 @@ export const orgLifecycle = sqliteTable("org_lifecycle", {
 });
 
 /** Durable fallback for transactional alerts when mail delivery is unavailable. */
-export const notification = sqliteTable("notification", {
-  id: text().primaryKey(),
-  userId: text("user_id").notNull(),
-  kind: text().notNull(),
-  detail: text().notNull(),
-  createdAt: integer("created_at").notNull(),
-});
+export const notification = sqliteTable(
+  "notification",
+  {
+    id: text().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text().notNull(),
+    detail: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("notification_user_kind_created_at").on(t.userId, t.kind, t.createdAt),
+    index("notification_created_at").on(t.createdAt),
+  ],
+);
 
 export const invitationClaim = sqliteTable("invitation_claim", {
   invitationId: text("invitation_id").primaryKey(),
@@ -244,13 +251,17 @@ export const cacheApiKey = sqliteTable("cache_api_key", {
 });
 
 /** Durable incident-response scans and bounded deletion checkpoints. */
-export const artifactPurgeJob = sqliteTable("artifact_purge_job", {
-  id: text().primaryKey(),
-  projectId: text("project_id").notNull(),
-  state: text().notNull(),
-  leaseUntil: integer("lease_until").notNull().default(0),
-  data: text().notNull(),
-});
+export const artifactPurgeJob = sqliteTable(
+  "artifact_purge_job",
+  {
+    id: text().primaryKey(),
+    projectId: text("project_id").notNull(),
+    state: text().notNull(),
+    leaseUntil: integer("lease_until").notNull().default(0),
+    data: text().notNull(),
+  },
+  (t) => [index("artifact_purge_job_state").on(t.state)],
+);
 
 /** Upload provenance stays queryable before the full M7 analytics sink is enabled. */
 export const artifactOperation = sqliteTable(
@@ -264,7 +275,10 @@ export const artifactOperation = sqliteTable(
     createdAt: integer("created_at").notNull(),
     provenance: text({ mode: "json" }).$type<Readonly<Record<string, string>>>().notNull(),
   },
-  (t) => [index("artifact_operation_project_hash").on(t.projectId, t.hash, t.status)],
+  (t) => [
+    index("artifact_operation_project_hash").on(t.projectId, t.hash, t.status),
+    index("artifact_operation_created_at").on(t.createdAt),
+  ],
 );
 
 /** Mutable delivery state; immutable intent and resolution events live in audit_event. */
@@ -466,12 +480,16 @@ export const anomalyHour = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.projectId, t.hour] })],
 );
-export const anomalyIncident = sqliteTable("anomaly_incident", {
-  id: text().primaryKey(),
-  orgId: text("org_id").notNull(),
-  projectId: text("project_id").notNull(),
-  code: text().notNull(),
-  detail: text().notNull(),
-  createdAt: integer("created_at").notNull(),
-  delivered: integer({ mode: "boolean" }).notNull().default(false),
-});
+export const anomalyIncident = sqliteTable(
+  "anomaly_incident",
+  {
+    id: text().primaryKey(),
+    orgId: text("org_id").notNull(),
+    projectId: text("project_id").notNull(),
+    code: text().notNull(),
+    detail: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+    delivered: integer({ mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [index("anomaly_incident_project_created_at").on(t.projectId, t.createdAt)],
+);

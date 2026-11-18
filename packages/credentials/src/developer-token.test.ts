@@ -1,5 +1,6 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun exercises live composed services at this boundary. */
 import { expect, test } from "bun:test";
+import { DeveloperTokenRequest } from "@repo/api-spec";
 import { AuthTest } from "@repo/auth/testing";
 import { AuthorizationDatabaseLive } from "@repo/authz";
 import { AuditLogTest } from "@repo/audit/testing";
@@ -7,10 +8,14 @@ import { Database, ProjectRepoLive, InstanceSettingsRepoLive, schema } from "@re
 import { DatabaseTest } from "@repo/db/testing";
 import { CanonicalOrigin, defaultInstancePolicy } from "@repo/deploy-config";
 import { RateLimiterTest } from "@repo/ratelimit";
-import { Effect, Layer, Redacted } from "effect";
+import { Effect, Layer, Redacted, Schema } from "effect";
 import { eq } from "drizzle-orm";
 import { DeveloperTokens, DeveloperTokensLive } from "./developer-token.ts";
-import { CacheTokensTest, CacheTokenVerifier } from "./cache-token.ts";
+import {
+  CacheTokensTest,
+  CacheTokenVerifier,
+  DEFAULT_CACHE_TOKEN_TTL_SECONDS,
+} from "./cache-token.ts";
 import {
   ArtifactEncryptionSecret,
   ArtifactSigning,
@@ -88,7 +93,16 @@ test("developer tokens default to read, require both write policy and grants, an
         origin: "http://localhost",
         "cf-connecting-ip": "192.0.2.1",
       });
-      const request = { team: "org", project: "project", ttlSeconds: 43200 };
+      const request = {
+        team: "org",
+        project: "project",
+        ttlSeconds: DEFAULT_CACHE_TOKEN_TTL_SECONDS,
+      };
+      const decode = Schema.decodeUnknownSync(DeveloperTokenRequest);
+      expect(decode(request)).toEqual(request);
+      const overLimit = { ...request, ttlSeconds: request.ttlSeconds + 1 };
+      expect(() => decode(overLimit)).toThrow();
+      expect((yield* Effect.flip(tokens.issue(overLimit, headers))).status).toBe(400);
       const signing = yield* ArtifactSigning;
       yield* signing.rotate("org", "project", {
         scope: "org",

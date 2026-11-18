@@ -116,9 +116,11 @@ export const decide = (
     if (principal.orgId !== resource.orgId || principal.projectId !== resource.projectId)
       return deny("credential_tenant");
 
+    // The API-key lookup checks the millisecond duration. Flooring its
+    // two timestamps independently can add one second to that duration.
     const lifetime =
       principal.kind === "apiKey"
-        ? (policy.maxApiKeyLifetimeDays ?? 30) * 86400
+        ? (policy.maxApiKeyLifetimeDays ?? 30) * 86400 + 1
         : policy.maxTokenTtlSeconds;
 
     if (
@@ -169,8 +171,6 @@ export const decide = (
       "trustPolicy:create",
       "trustPolicy:update",
       "trustPolicy:delete",
-      "apiKey:create",
-      "apiKey:revoke",
     ].includes(action)
   )
     return allow;

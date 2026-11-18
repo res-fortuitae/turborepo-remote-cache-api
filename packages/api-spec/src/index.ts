@@ -42,7 +42,7 @@ export {
   UploadedPart,
 } from "./uploads.ts";
 
-export { DeveloperTokenRequest, DeveloperTokenApi } from "./oidc.ts";
+export { DeveloperTokenRequest, DeveloperTokenApi, MAX_CACHE_TOKEN_TTL_SECONDS } from "./oidc.ts";
 export { HealthReport, SelfTestReport } from "./health.ts";
 export { CacheEventRecord, ArtifactOperationRecord } from "./analytics-events.ts";
 export {

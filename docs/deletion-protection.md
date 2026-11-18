@@ -27,6 +27,8 @@ a backup job or populate any backups.
 
 ## Stage selection
 
+The root destroy command requires an explicit `--stage <name>`.
+
 Configured `stages.production` and `stages.staging` always retain persistent
 resources. Every other stage also retains them unless its name matches one of:
 

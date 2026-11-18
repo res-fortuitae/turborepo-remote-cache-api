@@ -25,6 +25,7 @@ export class ProjectLimits extends Context.Service<
   ProjectLimits,
   {
     readonly retentionDays: number;
+    readonly maintenanceRetentionDays?: number;
     readonly maxArtifactBytes: number;
   }
 >()("@repo/projects/ProjectLimits") {}
