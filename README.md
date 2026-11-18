@@ -2,6 +2,9 @@
 
 A self-hosted [Turborepo Remote Cache](https://turborepo.dev/docs/openapi) running on Cloudflare Workers + R2, provisioned with [Alchemy](https://alchemy.run) and written with [Effect](https://effect.website).
 
+New here? Follow the [self-hosting guide](#self-hosting-guide): Cloudflare account,
+Alchemy deploy, GitHub App for sign-in, and connecting your first CI build.
+
 ## Workspace
 
 This Bun + Turborepo monorepo contains:
@@ -84,7 +87,221 @@ different cache. Compatibility and lifecycle probes retain their isolated fixtur
 Live server suites require `bun run test:live`; ordinary tests never activate them
 merely because runner or proxy cache credentials exist.
 
-## Setup
+## Self-hosting guide
+
+This walks you from nothing to a working cache that your GitHub Actions builds can
+use. Plan on about 30 minutes. The sections after this one cover each topic in more
+depth.
+
+### 1. What you need
+
+- **Bun 1.4.3** (the version pinned in `package.json`) and Git.
+- **A Cloudflare account.** The Workers Free plan is enough to start. Workers Paid
+  unlocks Basin analytics, audit export, transactional email and custom CPU limits
+  (see [instance capabilities](#instance-capabilities)). In the Cloudflare dashboard:
+  - Open **Workers & Pages** once so the account gets a `*.workers.dev` subdomain.
+  - Open **R2** and enable it. Cloudflare asks you to accept the R2 terms, even on
+    the free tier.
+  - Optional: to serve the cache from your own domain, the domain's zone must be
+    active in this account.
+- **A GitHub account or organization.** It hosts your fork and the GitHub App that
+  people use to sign in. The dashboard has no password sign-in, so the GitHub App
+  is required.
+
+You don't need to install Alchemy or Wrangler. Alchemy is a dev dependency, and the
+root scripts run it for you.
+
+### 2. Fork, clone and install
+
+```sh
+git clone https://github.com/<you>/turborepo-remote-cache-api.git
+cd turborepo-remote-cache-api
+bun install
+```
+
+### 3. Choose your cache URL
+
+Every part of the instance (API, dashboard, sign-in, OIDC audience) uses one URL,
+called the origin. Pick it now, because the GitHub App callback depends on it.
+
+- **workers.dev:** pick a Worker name, e.g. `acme-turbo-cache`. Your URL is
+  `https://acme-turbo-cache.<account-subdomain>.workers.dev`. The subdomain appears
+  under **Workers & Pages → Settings**.
+- **Custom domain:** e.g. `https://cache.acme.com`, on a zone in this Cloudflare
+  account. Alchemy attaches the domain to the production stage during deploy.
+
+### 4. Create `deploy.config.ts`
+
+```sh
+bun run setup
+```
+
+The prompts ask for the production domain (leave it blank for workers.dev), the R2
+jurisdiction (`default`, `eu` or `fedramp`; you can't change this once the bucket
+exists), edge caching, and stage names. Setup writes `deploy.config.ts` and never
+overwrites an existing one. Then edit it:
+
+```ts
+export default defineDeployConfig({
+  productionWorkerName: "acme-turbo-cache", // workers.dev only: keeps the URL stable
+  // domain: "cache.acme.com",             // custom domain only
+  bootstrapOwnerEmail: "you@acme.com", // a verified email on your GitHub account
+  githubApp: { appId: 0, clientId: "", slug: "" }, // filled in step 5
+  jurisdiction: "default",
+  limits: { artifactRetentionDays: 30 },
+  features: { edgeCache: true },
+  stages: { production: "production", staging: "staging" },
+});
+```
+
+The first person who signs in with `bootstrapOwnerEmail` becomes the instance owner.
+That works only while the instance has no users. After you have signed in, you can
+remove the setting. `deploy.config.example.ts` documents every option.
+
+### 5. Create the GitHub App for sign-in
+
+On GitHub, go to **Settings → Developer settings → GitHub Apps → New GitHub App**.
+For an organization, use **Organization settings → Developer settings → GitHub Apps**.
+
+| Field                                     | Value                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| GitHub App name                           | anything, e.g. `Acme Turbo Cache`                                        |
+| Homepage URL                              | your origin, e.g. `https://cache.acme.com`                               |
+| Callback URL                              | `<origin>/api/auth/callback/github`                                      |
+| Expire user authorization tokens          | leave checked                                                            |
+| Request user authorization during install | leave unchecked                                                          |
+| Webhook → Active                          | **uncheck** (the cache doesn't use webhooks)                             |
+| Account permissions → Email addresses     | **Read-only**                                                            |
+| Where can this app be installed?          | Only on this account (or Any account, if others outside need to sign in) |
+
+If you plan to limit sign-up to members of a GitHub organization, also grant
+**Organization permissions → Members: Read-only**.
+
+After you create the app:
+
+1. Copy the **App ID** and **Client ID** from the app's page. The **slug** is the last
+   part of the app's URL (`github.com/apps/<slug>`).
+2. Click **Generate a new client secret** and copy it right away. GitHub shows it
+   only once.
+3. Put the public identifiers in `deploy.config.ts`:
+
+   ```ts
+   githubApp: { appId: 1234567, clientId: "Iv23liExample", slug: "acme-turbo-cache" },
+   ```
+
+4. Put the secret in `.env` (next step) as `GITHUB_OAUTH_CLIENT_SECRET`.
+
+Set both halves, or neither: a deploy with only one of them fails at planning. For a
+staging stage, add its callback URL to the same app (GitHub allows several) or create
+a second app. More detail: [GitHub sign-in](docs/github-sign-in.md).
+
+### 6. Create secrets in `.env`
+
+```sh
+cp .env.example .env
+openssl rand -hex 32   # use for BETTER_AUTH_SECRET
+openssl rand -hex 32   # use for TURBO_TOKEN (doctor/admin bearer)
+bun run keygen --out ~/secure/tcache-signing-key.json
+```
+
+Fill in the root `.env`:
+
+```sh
+TURBO_TOKEN=<random hex>
+BETTER_AUTH_SECRET=<random hex>
+CACHE_TOKEN_SIGNING_KEY=<the single-line JSON from the keygen file>
+GITHUB_OAUTH_CLIENT_SECRET=<GitHub App client secret>
+```
+
+`CACHE_TOKEN_SIGNING_KEY` must be the Ed25519 key JSON from `keygen`; a random string
+fails validation. Store the key file outside the repository. Deploy uploads each
+secret to the account's Cloudflare Secrets Store as `<stage>_<NAME>`. Bun loads
+`.env` automatically, and Git ignores it. Never commit it.
+
+### 7. Try it locally (optional)
+
+```sh
+bun run dev
+```
+
+This runs the Worker, R2, D1, KV and Durable Objects in local workerd, with no
+Cloudflare login. GitHub sign-in works locally only if the GitHub App also lists
+the local callback URL (`http://localhost:<port>/api/auth/callback/github`).
+
+### 8. Deploy with Alchemy
+
+```sh
+bun run plan     # preview the staging stage (optional)
+bun run deploy   # deploy the production stage
+```
+
+On the first deploy, Alchemy asks how to connect to Cloudflare:
+
+- **OAuth (recommended on a laptop):** Alchemy opens a browser to authorize, then
+  asks which account to use. It saves the credentials in a local Alchemy profile
+  (`bunx alchemy profile show` / `profile edit`).
+- **API token:** create one under **My Profile → API Tokens** with permissions for
+  Workers Scripts, Workers R2 Storage, D1, Workers KV Storage, Secrets Store and,
+  for custom domains, Workers Routes and Zone Read. Non-interactive runs read
+  `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the environment.
+
+The first deploy also bootstraps Alchemy's state store in your Cloudflare account.
+It then builds the dashboard, creates the R2 buckets, D1 database (with migrations),
+KV namespace, Durable Object, Secrets Store secrets, rate limiter and Worker, and
+prints the Worker `url`. Run the same command again to apply changes. Deploy and
+destroy target `stages.production`; pass `--stage <name>` for another stage.
+
+### 9. Sign in and create your first project
+
+1. Open the printed URL and choose **Continue with GitHub**. Sign in with the account
+   whose verified email matches `bootstrapOwnerEmail`. You become the instance owner.
+2. The onboarding wizard walks you through **Organization → Project → Connect →
+   First cache hit**. The organization slug is your `TURBO_TEAM`.
+3. On **Connect**, choose **GitHub Action** and enter your repository (`owner/name`).
+   Public repositories resolve automatically. For a private one, look up its IDs
+   with `gh api repos/OWNER/REPO --jq '.id, .owner.id, .default_branch'`. The wizard
+   creates two trust policies: read/write for pushes to the default branch, and
+   read-only for pull requests.
+4. Copy the generated `.github/workflows/ci.yml` snippet into your repository and
+   push. The Action exchanges GitHub's OIDC token for a short-lived cache token, so
+   you don't need a cache secret in GitHub. The workflow needs
+   `permissions: id-token: write`.
+5. The wizard confirms when the first artifact arrives.
+
+To check the server from your terminal:
+
+```sh
+TURBO_API=<url> TURBO_TOKEN=<TURBO_TOKEN from .env> bun packages/cli/src/bin.ts doctor --server
+```
+
+### 10. Use it from other places
+
+- **Developers' machines:** `tcache login --api <url>`, then
+  `tcache exec -- turbo run build`. See the [CLI guide](packages/cli/README.md) and
+  [device login](docs/device-login.md).
+- **Other CI providers (GitLab, CircleCI, Buildkite):** see
+  [CI authentication](docs/ci-auth.md).
+- **Static credentials:** organization API keys (`tcache_…`) work as `TURBO_TOKEN`
+  for systems without OIDC. See [API keys](docs/api-keys.md).
+- **Teammates:** invite them from **Members** in the dashboard.
+
+### Troubleshooting
+
+| Symptom                                      | Fix                                                                                           |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `signing key` validation error before deploy | `CACHE_TOKEN_SIGNING_KEY` must be the single-line JSON from `bun run keygen`.                 |
+| Planning fails about `githubApp`             | Set both `githubApp` and `GITHUB_OAUTH_CLIENT_SECRET`, or neither.                            |
+| GitHub says "redirect_uri is not associated" | The callback URL must be exactly `<origin>/api/auth/callback/github` for the deployed stage.  |
+| Signed in but not owner                      | `bootstrapOwnerEmail` must be set before the first sign-in and match a verified GitHub email. |
+| R2 errors on the first deploy                | Enable R2 in the Cloudflare dashboard, then deploy again.                                     |
+| Capabilities show `unknown` plan             | Your token can't read billing. Set `workersPlan` in `deploy.config.ts`.                       |
+| CI falls back to local cache                 | Check `id-token: write`, the `api`/`team`/`project` inputs, and the project's trust policies. |
+
+To remove a deployment, run `bun run destroy`. Read
+[deletion protection](docs/deletion-protection.md) first: stateful resources are
+kept on purpose.
+
+## Setup reference
 
 Fork this repository into your organization's GitHub account. Deploy the fork
 into your own Cloudflare account. Upstream owns `apps/`, `packages/`, the Alchemy
