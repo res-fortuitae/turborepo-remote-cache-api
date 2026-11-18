@@ -2,6 +2,7 @@ import { ArtifactSigningTest } from "./testing.ts";
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun boundary runs real migrated SQLite and Web Crypto. */
 import { expect, test } from "bun:test";
 import { Database, schema } from "@repo/db";
+import { eq } from "drizzle-orm";
 
 import { Effect, Redacted } from "effect";
 import { ArtifactSigning, encryptArtifactKey, decryptArtifactKey } from "./artifact-signing.ts";
@@ -21,6 +22,65 @@ const event = {
   metadata: {},
 };
 const layer = ArtifactSigningTest;
+
+test("concurrent rotation preserves exactly one current key and one overlap", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const signing = yield* ArtifactSigning;
+      const db = yield* Database;
+      const initial = yield* signing.rotate("org", "project", event);
+      const rotations = yield* Effect.all(
+        Array.from({ length: 4 }, () => Effect.result(signing.rotate("org", "project", event))),
+        { concurrency: "unbounded" },
+      );
+      expect(rotations.filter((rotation) => rotation._tag === "Success")).toHaveLength(1);
+      const keys = yield* db.query("test.keys", (q) =>
+        q
+          .select()
+          .from(schema.artifactSigningKey)
+          .where(eq(schema.artifactSigningKey.projectId, "project")),
+      );
+      expect(keys.filter((key) => key.retiredAt === null)).toHaveLength(1);
+      expect(keys.filter((key) => key.retiredAt !== null).map((key) => key.id)).toEqual([
+        initial.id,
+      ]);
+      expect((yield* signing.deliver("org", "project", event))?.previousSignatureKeys).toHaveLength(
+        1,
+      );
+      const audit = yield* db.query("test.audit", (q) => q.select().from(schema.auditEvent));
+      expect(audit.filter((row) => row.payload.action === "artifact.signing.rotate")).toHaveLength(
+        2,
+      );
+    }).pipe(Effect.provide(layer)),
+  ));
+
+test("delivery caps the overlap at the newest previous key", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const signing = yield* ArtifactSigning;
+      const db = yield* Database;
+      yield* signing.rotate("org", "project", event);
+      const previous = (yield* signing.deliver("org", "project", event))!.signatureKey;
+      yield* signing.rotate("org", "project", event);
+
+      const envelope = yield* Effect.promise(() =>
+        encryptArtifactKey(secret, "older-key", "org", "project", "older"),
+      );
+      // Even with an extra retired row, delivery must fit the exchange contract.
+      yield* db.query("test.legacyKey", (q) =>
+        q.insert(schema.artifactSigningKey).values({
+          id: "older",
+          orgId: "org",
+          projectId: "project",
+          envelope,
+          createdAt: 0,
+          retiredAt: Date.now() + 60_000,
+        }),
+      );
+      const keys = yield* signing.deliver("org", "project", event);
+      expect(keys?.previousSignatureKeys.map(Redacted.value)).toEqual([Redacted.value(previous)]);
+    }).pipe(Effect.provide(layer)),
+  ));
 
 test("envelopes authenticate tenant, project and key ID and never contain plaintext", async () => {
   const key = "random-artifact-hmac-key-at-least-32-bytes";

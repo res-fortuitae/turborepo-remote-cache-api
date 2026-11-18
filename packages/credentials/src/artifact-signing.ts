@@ -123,7 +123,7 @@ const make = Effect.gen(function* () {
           sql`case when retired_at is null then 0 else 1 end`,
           desc(schema.artifactSigningKey.createdAt),
         )
-        .limit(3),
+        .limit(2),
     );
   return {
     status: (project: string) =>
@@ -205,7 +205,7 @@ const make = Effect.gen(function* () {
     deliver: (org: string, project: string, event: AuditInput) =>
       Effect.gen(function* () {
         const keys = yield* active(org, project, yield* Clock.currentTimeMillis);
-        if (keys.length === 0) return undefined;
+        if (keys[0]?.retiredAt !== null) return undefined;
         const secret = Redacted.value(yield* encryption.get);
         const values = yield* Effect.forEach(keys, (row) =>
           Effect.tryPromise(() => decryptArtifactKey(secret, row.envelope, org, project, row.id)),

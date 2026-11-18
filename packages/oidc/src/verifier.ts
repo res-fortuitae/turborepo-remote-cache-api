@@ -112,6 +112,17 @@ interface KeyState {
   readonly expiresAt: number;
 }
 
+const makeKeyState = () => ({
+  states: new Map<string, KeyState>(),
+  attempts: new Map<string, number>(),
+  gate: Semaphore.makeUnsafe(1),
+});
+
+class OidcVerifierKeyState extends Context.Service<
+  OidcVerifierKeyState,
+  ReturnType<typeof makeKeyState>
+>()("@repo/oidc/OidcVerifierKeyState") {}
+
 export const OidcVerifierLive = Layer.effect(
   OidcVerifier,
   Effect.gen(function* () {
@@ -126,9 +137,8 @@ export const OidcVerifierLive = Layer.effect(
     if (audiences.length === 0)
       return yield* Effect.die(new Error("OIDC audience allowlist must not be empty"));
 
-    const states = new Map<string, KeyState>();
-    const attempts = new Map<string, number>();
-    const gate = yield* Semaphore.make(1);
+    const shared = yield* Effect.serviceOption(OidcVerifierKeyState);
+    const { states, attempts, gate } = Option.getOrElse(shared, makeKeyState);
 
     const getJson = Effect.fn("OidcVerifier.getJson")(function* (url: string) {
       // The injected client must not install redirect-following middleware.
@@ -359,6 +369,10 @@ export const OidcVerifierLive = Layer.effect(
     };
   }),
 );
+
+/** Keep the JWKS and cooldown across request layer builds without retaining request services. */
+export const makeIsolateOidcVerifierLayer = () =>
+  OidcVerifierLive.pipe(Layer.provide(Layer.succeed(OidcVerifierKeyState, makeKeyState())));
 
 /** Use in the host's cron to delete replay IDs after the entire acceptance window. */
 export const pruneOidcReplayIds = Effect.gen(function* () {

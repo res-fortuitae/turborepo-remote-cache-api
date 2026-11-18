@@ -3,6 +3,9 @@ import { expect, test } from "bun:test";
 import { ExchangeResponse } from "@repo/api-spec";
 import { AuditLogD1Only } from "@repo/audit";
 import {
+  ArtifactEncryptionSecret,
+  ArtifactSigning,
+  ArtifactSigningLive,
   CacheTokensTest,
   CacheTokenVerifier,
   DpopVerifierLive,
@@ -38,8 +41,17 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { generateKeyPair, exportJWK, SignJWT, decodeJwt, type JWTPayload } from "jose";
-import { oidcApi } from "../src/oidc-route.ts";
+import {
+  compactVerify,
+  createLocalJWKSet,
+  generateKeyPair,
+  exportJWK,
+  SignJWT,
+  decodeJwt,
+  type JSONWebKeySet,
+  type JWTPayload,
+} from "jose";
+import { cacheTokenJwksRoute, oidcApi } from "../src/oidc-route.ts";
 
 const issuer = GITHUB_ACTIONS_ISSUER;
 const api = "https://cache.test";
@@ -98,6 +110,16 @@ const deps = (issuer: string) =>
     CacheTokensTest,
     DpopVerifierLive.pipe(Layer.provide(ReplayGuardLive)),
     AuditLogD1Only,
+    ArtifactSigningLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          AuditLogD1Only,
+          Layer.succeed(ArtifactEncryptionSecret, {
+            get: Effect.succeed(Redacted.make("test-secret")),
+          }),
+        ),
+      ),
+    ),
     ProjectRepoLive,
     TrustPolicyRepoLive,
     InstanceSettingsRepoLive,
@@ -123,11 +145,11 @@ const deps = (issuer: string) =>
     Layer.succeed(OidcAudience, [api]),
   );
 
-type Env = Database | CacheTokenVerifier | OidcExchange;
+type Env = Database | CacheTokenVerifier | OidcExchange | ArtifactSigning;
 
 type Serve = (
   body: unknown,
-  options?: { raw?: string; dpop?: string; method?: string },
+  options?: { raw?: string; dpop?: string; method?: string; path?: string },
 ) => Effect.Effect<Response, unknown, OidcExchange>;
 
 const scenario = (
@@ -181,7 +203,7 @@ const scenario = (
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
             HttpServerRequest.fromWeb(
-              new Request(`${api}/oidc/exchange`, {
+              new Request(`${api}${options.path ?? "/oidc/exchange"}`, {
                 method: options.method ?? "POST",
                 headers: {
                   "cf-connecting-ip": "127.0.0.1",
@@ -264,6 +286,91 @@ test("only requested project policies grant; denials retain closest failed claim
     }),
   ));
 
+test("required signing delivers the key to writers and omits it from downgraded exchanges", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const db = yield* Database;
+      yield* db.batch((db) => [
+        db.insert(schema.instanceSettings).values({
+          id: 1,
+          settings: {
+            ...defaultInstancePolicy,
+            allowedEmailDomains: [],
+            allowedGithubOrgs: [],
+            allowedOidcIssuers: [issuer],
+            requireArtifactSigning: true,
+          },
+          schemaVersion: 1,
+          updatedAt: 0,
+        }),
+      ]);
+      const signing = yield* ArtifactSigning;
+      yield* signing.rotate("org", "p", {
+        scope: "org",
+        orgId: "org",
+        projectId: "p",
+        actor: { type: "user", id: "admin", display: "Admin" },
+        action: "artifact.signing.rotate",
+        target: { type: "project", id: "p" },
+        outcome: "allow",
+        ip: "",
+        userAgent: "",
+        requestId: "rotation",
+        metadata: {},
+      });
+      const write = yield* serve(body(yield* token()));
+      expect(write.status).toBe(200);
+      expect(yield* Effect.promise(() => write.json())).toMatchObject({
+        scope: "read write",
+        signatureKey: expect.any(String),
+      });
+
+      const read = yield* serve(body(yield* token({ fork: true })));
+      expect(read.status).toBe(200);
+      const payload = yield* Effect.promise(() => read.json());
+      expect(payload).toMatchObject({ scope: "read" });
+      expect(payload).not.toHaveProperty("signatureKey");
+      expect(payload).not.toHaveProperty("previousSignatureKeys");
+      expect(
+        (yield* auditRows).filter((row) => row.payload.action === "artifact.signing.access"),
+      ).toHaveLength(1);
+    }),
+  ));
+
+test("public JWKS serves only public verification keys for cache JWTs", () =>
+  scenario((serve) =>
+    Effect.gen(function* () {
+      const exchange = yield* serve(body(yield* token()));
+      expect(exchange.status).toBe(200);
+      const result = Schema.decodeUnknownSync(ExchangeResponse)(
+        yield* Effect.promise(() => exchange.json()),
+      );
+      const verifier = yield* CacheTokenVerifier;
+      const route = cacheTokenJwksRoute(Layer.succeed(CacheTokenVerifier, verifier));
+      const request = (method: string) =>
+        route.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(new Request(`${api}/.well-known/jwks.json`, { method })),
+          ),
+          Effect.map(HttpServerResponse.toWeb),
+        );
+      const response = yield* request("GET");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const jwks = (yield* Effect.promise(() => response.json())) as JSONWebKeySet;
+      expect(jwks.keys).toHaveLength(1);
+      expect(jwks.keys[0]).toMatchObject({ kty: "OKP", crv: "Ed25519", alg: "EdDSA", use: "sig" });
+      expect(jwks.keys[0]).not.toHaveProperty("d");
+      yield* Effect.promise(() =>
+        compactVerify(Redacted.value(result.token), createLocalJWKSet(jwks)),
+      );
+      const post = yield* request("POST");
+      expect(post.status).toBe(405);
+      expect(post.headers.get("allow")).toBe("GET");
+    }),
+  ));
+
 test("archived project is read-only; deleted projects and archived orgs cannot exchange", () =>
   scenario((serve) =>
     Effect.gen(function* () {
@@ -322,6 +429,8 @@ test("IP/org limits, invalid or oversized JSON and methods have safe no-store re
       limit("oidc:ip:127.0.0.1");
       expect((yield* serve(body(yield* token()))).status).toBe(429);
       limit("oidc:org:org");
+      expect((yield* serve(body("invalid"))).status).toBe(403);
+      expect((yield* serve(body(yield* token(), "other"))).status).toBe(403);
       const org = yield* serve(body(yield* token()));
       expect(org.status).toBe(429);
       expect(org.headers.get("retry-after")).toBe("60");
@@ -488,37 +597,40 @@ test("Google assertion without jti/nbf exchanges through real policy, signer and
   );
 });
 
-test("exchange binds cache JWT to verified ephemeral key and rejects proof reuse", () =>
-  scenario((serve) =>
-    Effect.gen(function* () {
-      const pair = yield* Effect.promise(() => generateKeyPair("ES256"));
-      const publicKey = yield* Effect.promise(() => exportJWK(pair.publicKey));
-      const proof = yield* Effect.promise(() =>
-        new SignJWT({ htm: "POST", htu: `${api}/oidc/exchange` })
-          .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk: publicKey })
-          .setIssuedAt(1000)
-          .setJti(crypto.randomUUID())
-          .sign(pair.privateKey),
-      );
-      const db = yield* Database;
-      yield* db.batch((db) => [
-        db.update(schema.trustPolicy).set({ body: { ...policy, requireBoundTokens: true } }),
-      ]);
-      const response = yield* serve(body(yield* token()), { dpop: proof });
-      expect(response.status).toBe(200);
-      const result = Schema.decodeUnknownSync(ExchangeResponse)(
-        yield* Effect.promise(() => response.json()),
-      );
-      const verifier = yield* CacheTokenVerifier;
-      const principal = yield* verifier.verify(Redacted.value(result.token));
-      expect(principal.cnf?.jkt).toHaveLength(43);
-      expect(principal.uploadIdentity?.repositoryId).toBe("1");
-      expect(principal.uploadIdentity?.ref).toBe("refs/heads/main");
-      expect(decodeJwt(Redacted.value(result.token)).cnf).toEqual(principal.cnf);
-      expect((yield* serve(body(yield* token()), { dpop: proof })).status).toBe(403);
-      expect((yield* serve(body(yield* token()))).status).toBe(403);
-    }),
-  ));
+test.each(["/oidc/exchange", "/api/oidc/exchange"])(
+  "exchange binds JWTs to the ephemeral key on %s",
+  (path) =>
+    scenario((serve) =>
+      Effect.gen(function* () {
+        const pair = yield* Effect.promise(() => generateKeyPair("ES256"));
+        const publicKey = yield* Effect.promise(() => exportJWK(pair.publicKey));
+        const proof = yield* Effect.promise(() =>
+          new SignJWT({ htm: "POST", htu: `${api}${path}` })
+            .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk: publicKey })
+            .setIssuedAt(1000)
+            .setJti(crypto.randomUUID())
+            .sign(pair.privateKey),
+        );
+        const db = yield* Database;
+        yield* db.batch((db) => [
+          db.update(schema.trustPolicy).set({ body: { ...policy, requireBoundTokens: true } }),
+        ]);
+        const response = yield* serve(body(yield* token()), { dpop: proof, path });
+        expect(response.status).toBe(200);
+        const result = Schema.decodeUnknownSync(ExchangeResponse)(
+          yield* Effect.promise(() => response.json()),
+        );
+        const verifier = yield* CacheTokenVerifier;
+        const principal = yield* verifier.verify(Redacted.value(result.token));
+        expect(principal.cnf?.jkt).toHaveLength(43);
+        expect(principal.uploadIdentity?.repositoryId).toBe("1");
+        expect(principal.uploadIdentity?.ref).toBe("refs/heads/main");
+        expect(decodeJwt(Redacted.value(result.token)).cnf).toEqual(principal.cnf);
+        expect((yield* serve(body(yield* token()), { dpop: proof, path })).status).toBe(403);
+        expect((yield* serve(body(yield* token()), { path })).status).toBe(403);
+      }),
+    ),
+);
 
 test("anomaly containment denies a verified writer before issuing a cache token", () => {
   const observations: boolean[] = [];

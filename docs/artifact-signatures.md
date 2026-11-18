@@ -9,12 +9,19 @@ separation isolates this use from authentication and multipart tickets. AAD bind
 both encrypted payloads to organization, project and key ID. Preserve the wrapping
 secret with D1 backups; changing it requires rewrapping existing envelopes first.
 
-Successful, authorized OIDC exchanges and developer-token requests deliver the
-current key and, during rotation, one previous key. Access and rotation are audited
-without key material. Clients mask every returned key. The CLI/Action already
-export `TURBO_REMOTE_CACHE_SIGNATURE_KEY`; repositories must also set
-`remoteCache: { signature: true }` in `turbo.json` to make Turbo verify downloads.
-API-key and legacy clients must manage their signing secret themselves.
+OIDC exchanges and developer-token requests with effective `read write` scope
+receive the current key and, during rotation, one previous key. Access and
+rotation are audited without key material. Clients mask every returned key.
+Signing enforcement requires a key for write-scoped issuance. Read-only issuance,
+including policy downgrades, omits both key fields.
+
+Turbo uses the same HMAC secret to verify downloads and sign uploads. With
+`remoteCache: { signature: true }`, a job needs
+`TURBO_REMOTE_CACHE_SIGNATURE_KEY` to restore signed artifacts. The CLI and
+Action export the key when the exchange supplies it. For a trusted read-only job
+using signed caching, provision the key separately. Use local caching for
+untrusted jobs that require signature verification. API-key and legacy clients
+manage their signing secret themselves.
 
 `GET /projects/:id/signing` returns metadata only. `POST` with `{ required: true }`
 requires a generated key; `POST /projects/:id/signing/rotate` generates/rotates it.

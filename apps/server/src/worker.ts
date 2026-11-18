@@ -116,7 +116,7 @@ import { isProjectsPath, projectsRoute } from "./projects-route.ts";
 import {
   pruneOidcReplayIds,
   OidcExchangeLive,
-  OidcVerifierLive,
+  makeIsolateOidcVerifierLayer,
   OidcVerifierConfig,
   ConfiguredIssuerRegistry,
   CustomIssuerConfig,
@@ -127,7 +127,7 @@ import {
 } from "@repo/oidc";
 import { ExchangeRateLimiter, RateLimiter as RequestRateLimiter } from "@repo/ratelimit";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { oidcRoute } from "./oidc-route.ts";
+import { cacheTokenJwksRoute, oidcRoute } from "./oidc-route.ts";
 import {
   AuthConfig,
   IdentityCeilings,
@@ -266,6 +266,7 @@ interface DeploymentEnvironment {
 }
 
 const decodeAuthEnvironment = Schema.decodeUnknownEffect(AuthEnvironment);
+const isolateOidcVerifierLayer = makeIsolateOidcVerifierLayer();
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
@@ -801,6 +802,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
     );
+
+    const jwks = cacheTokenJwksRoute(verifierLayer);
 
     const rateLimitLayer = RateLimiterLive.pipe(
       Layer.provide(
@@ -1489,7 +1492,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const projects = projectsRoute(Layer.mergeAll(authLayer, projectsLayer));
 
-    const oidcVerifierLayer = OidcVerifierLive.pipe(
+    const oidcVerifierLayer = isolateOidcVerifierLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
           FetchHttpClient.layer,
@@ -1737,6 +1740,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const { pathname } = new URL(request.url, "http://localhost");
+
+        if (pathname === "/.well-known/jwks.json") return yield* jwks;
 
         if (pathname === "/oidc/exchange" || pathname === "/api/oidc/exchange") {
           const denied = yield* oidcExchangeGuard.pipe(

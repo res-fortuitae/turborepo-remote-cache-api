@@ -42,10 +42,11 @@ manual redirects and omits credentials. Inject an HTTP client without
 redirect-following middleware.
 
 `JwksCacheLive` uses the rebuildable KV cache; `JwksCacheTest` uses in-memory KV.
-The verifier retains keys and imported public-key resolvers in its layer for one
-hour. Reuse that layer within an isolate to retain its cache and cooldown state.
+The verifier retains keys and imported public-key resolvers for one hour. The
+Worker creates `makeIsolateOidcVerifierLayer()` once per isolate to retain only
+the key cache and cooldown state across request layer builds.
 Unknown key IDs can force a refresh, at most once per issuer per 30 seconds per
-verifier layer. Failed network attempts count against the cooldown. Concurrent
+isolate. Failed network attempts count against the cooldown. Concurrent
 loads are coalesced; key refresh limits are local, not globally coordinated.
 KV errors fall back to the issuer, and cached key sets are subject to the same
 public-key restrictions as network results. Briefly stale public keys are
@@ -142,7 +143,8 @@ verification remain mandatory before any real exchange.
 
 ## CI exchange
 
-`POST /oidc/exchange` accepts `{ token, team, project }`, where `team` and `project`
+`POST /oidc/exchange` (also `POST /api/oidc/exchange`) accepts
+`{ token, team, project }`, where `team` and `project`
 are immutable organization/project IDs. No browser session is needed. The endpoint
 is mounted by the Worker; `OidcExchangeLive` owns the use case and receives verifier,
 matcher, guardrails, signer, audit, repositories and rate limiting as Effect services.
@@ -164,11 +166,15 @@ details stay in audit metadata. Limiter rejection returns 429 with Retry-After;
 service/audit failure returns 503. All responses use `Cache-Control: no-store`.
 Bodies are stream-bounded to 24 KiB, individual CI tokens to 16 KiB and IDs to 256
 characters. The native Rate Limiting binding uses separate `oidc:ip:` and `oidc:org:`
-keys (edge-local approximate protection, not an exact global quota).
+keys for approximate, edge-local protection. The IP bucket applies before
+verification. The organization bucket applies after verification, policy
+matching, and any required proof validation.
 
 DPoP verification and binding are enforced as described below. Missing/invalid proofs
-never downgrade a required binding to bearer. Signature-key delivery
-follows STV-475; mandatory artifact signing also fails closed until available.
+never downgrade a required binding to bearer. Artifact signing keys are
+delivered only with effective `read write` scope. With mandatory signing, write
+exchanges fail closed until a key is available. See
+[artifact signatures](../../docs/artifact-signatures.md) for read-only Turbo jobs.
 `ExchangeConfig` carries deployment identity ceilings; hosts must supply real rate
 limits. No infrastructure is provisioned by this service or its tests.
 
@@ -332,8 +338,9 @@ and [AKS federation](https://learn.microsoft.com/en-us/azure/aks/workload-identi
 ## Sender-constrained tokens
 
 Exchange accepts an ES256 `DPoP` proof and binds the cache JWT using `cnf.jkt`.
-The proof must name POST and the canonical `/oidc/exchange` URL, with no `ath` at
-exchange. Instance/trust policies requiring binding reject exchanges without it.
+The proof must name POST and the configured canonical origin plus the path
+used for the request (`/oidc/exchange` or `/api/oidc/exchange`), with no `ath`
+at exchange. Instance/trust policies requiring binding reject exchanges without it.
 Env mode requests no binding and therefore cannot obtain write credentials from
 a binding-required policy. Optional binding still binds when a proof is supplied.
 
