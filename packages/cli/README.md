@@ -88,8 +88,9 @@ With `--paced` (250 MiB/s source), the same fixture measured 301.72 ms direct /
 298.32 ms proxy, no measurable loss. That fixture meets the 5% target; it does not
 erase the unpaced result or establish a production WAN guarantee.
 
-`doctor --server [URL] [--json]` reads validated instance capabilities using
-TURBO_API/TURBO_TOKEN. Other doctor checks follow in STV-489.
+`doctor --server [URL] [--json]` runs the instance self-test after sign-in.
+See [diagnostics and runner hardening](../../docs/doctor.md) for the required
+role and checks.
 
 ## Developer commands
 

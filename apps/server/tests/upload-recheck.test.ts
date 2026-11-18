@@ -12,7 +12,7 @@ for (const scenario of ["transient", "concurrent", "revoked", "purge"] as const)
   test(`post-upload ${scenario} preserves only permitted objects`, async () => {
     const bucket = memoryBucket();
     let calls = 0;
-    let failures = 0;
+    let attempts = 0;
     let cleanups = 0;
     const scope = { prefix: "team", maxUploadBytes: 100, cacheGeneration: 0 };
     const handler = artifactApi({
@@ -25,8 +25,8 @@ for (const scenario of ["transient", "concurrent", "revoked", "purge"] as const)
       edgeCacheEnabled: false,
       cache: createArtifactCache(false),
       waitUntil: () => Effect.void,
-      guardAuthFailure: Effect.sync(() => {
-        failures++;
+      guardAuthentication: Effect.sync(() => {
+        attempts++;
       }),
       authorize: () =>
         Effect.suspend(() => {
@@ -67,7 +67,7 @@ for (const scenario of ["transient", "concurrent", "revoked", "purge"] as const)
     expect(bucket.objects.has("team/aa")).toBe(
       scenario === "transient" || scenario === "concurrent",
     );
-    expect(failures).toBe(0);
+    expect(attempts).toBe(1);
     expect(cleanups).toBe(scenario === "revoked" || scenario === "purge" ? 1 : 0);
   });
 }

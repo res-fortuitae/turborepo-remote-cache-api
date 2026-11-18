@@ -1,14 +1,18 @@
 import type { HealthReport } from "@repo/shared";
 import { Effect } from "effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { guardErrorResponse, healthGuard } from "./request-guards.ts";
 
 type Probe<R> = Effect.Effect<unknown, unknown, R>;
+
 /** Read-only probes; fixed public statuses never include exception text or configuration. */
 export const healthRoute = <R>(
   checks: { d1: Probe<R>; r2: Probe<R>; kv: Probe<R>; coordinator: Probe<R> },
   capabilities: typeof HealthReport.Type.capabilities,
 ) =>
   Effect.gen(function* () {
+    yield* healthGuard;
+
     const status = (probe: Probe<R>) =>
       probe.pipe(
         Effect.timeout("3 seconds"),
@@ -30,4 +34,4 @@ export const healthRoute = <R>(
       },
       { status: healthy ? 200 : 503, headers: { "cache-control": "no-store" } },
     );
-  });
+  }).pipe(Effect.catchTags({ ApiError: guardErrorResponse }));

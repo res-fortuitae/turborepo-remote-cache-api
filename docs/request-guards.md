@@ -11,7 +11,9 @@ not the strict D1 usage quotas planned in STV-476.
 | Traffic                                            | Counter identity                         | Default budget                                                      |
 | -------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------- |
 | Authorized cache requests (JWT and API key)        | Credential type and credential ID        | 600 per 60 seconds                                                  |
-| Invalid cache authentication                       | Trusted connecting IP                    | 30 failures per 60 seconds                                          |
+| Cache authentication attempts                      | Trusted connecting IP                    | 600 requests per 60 seconds                                         |
+| `GET /api/instance/capabilities`                   | Trusted connecting IP                    | 30 requests per 60 seconds                                          |
+| `GET /healthz`                                     | Trusted connecting IP                    | 30 requests per 60 seconds                                          |
 | Better Auth, including custom cache-key management | Trusted connecting IP, across auth paths | 60 per 60 seconds                                                   |
 | Better Auth endpoint rules                         | Better Auth's IP/path key                | Existing endpoint/plugin rules, rounded down to a binding threshold |
 | `/oidc/exchange`                                   | Trusted connecting IP                    | 30 per 60 seconds                                                   |
@@ -21,6 +23,23 @@ budget name. Raw bearer secrets are never counter keys. All cache routes share a
 credential's budget, including status, events and metadata queries. Upload
 reauthorization does not charge twice. Legacy migration traffic shares one
 credential budget. OPTIONS preflights do not consume cache budgets.
+
+The IP budget runs before cache authentication. Both successful and failed
+attempts consume it because the Workers binding checks and increments in one
+operation. The 600-request ceiling gives shared CI egress more headroom than the
+old failure-only budget. Jobs behind the same IP still share it, and requests
+above it receive 429 before credential verification. The per-credential budget
+applies separately after authorization.
+
+Capabilities accepts a signed-in browser session. The instance bearer token is
+accepted only when the legacy token feature is enabled. The capabilities limit
+applies before either authentication path. Health checks keep their public
+status response, and the rate limiter runs before the D1, R2, KV and Coordinator
+probes. These two endpoints have independent IP budgets.
+
+On legacy cache requests, empty `teamId` and `slug` values are treated as absent.
+A non-empty `teamId` takes precedence over `slug`. When both are absent or
+empty, requests use the `default` scope.
 
 IP guards trust only `CF-Connecting-IP`, which Cloudflare overwrites. Changing
 `X-Forwarded-For` does not change the budget. Missing trusted IPs share an
