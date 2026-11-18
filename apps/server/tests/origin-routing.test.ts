@@ -72,6 +72,22 @@ test("API errors carry the security baseline and no CORS grants", async () => {
   }
 });
 
+test.each([Effect.fail("private failure"), Effect.die("private defect")])(
+  "unhandled fetch errors produce a secured 500",
+  async (handler) => {
+    const response = await serve(new Request("https://cache.example.com/api/unavailable"), handler);
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
+    expect(response.headers.get("content-security-policy")).toBe(
+      SECURITY_HEADERS["content-security-policy"],
+    );
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await response.text()).toBe("");
+  },
+);
+
 test("auth response bodies and multiple session cookies survive the header middleware", async () => {
   const headers = new Headers({ location: "/dashboard" });
   headers.append("set-cookie", "session=one; Path=/; Secure; HttpOnly; SameSite=Lax");

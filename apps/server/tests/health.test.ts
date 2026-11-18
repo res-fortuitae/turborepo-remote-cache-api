@@ -15,6 +15,14 @@ import { healthRoute } from "../src/health-route.ts";
 import { selftestRoute } from "../src/selftest-route.ts";
 import { memoryBucket } from "./support/in-process.ts";
 
+const healthRequest = HttpServerRequest.fromWeb(new Request("http://localhost/healthz"));
+const healthCapabilities = {
+  analytics: false,
+  auditHistory: false,
+  directUploads: false,
+  emailSending: false,
+};
+
 for (const failing of [false, true])
   test(`health reports fixed status with a ${failing ? "failed" : "healthy"} binding`, async () => {
     const response = await Effect.runPromise(
@@ -25,7 +33,10 @@ for (const failing of [false, true])
           kv: Effect.void,
           coordinator: Effect.void,
         },
-        { analytics: false, auditHistory: false, directUploads: false, emailSending: false },
+        healthCapabilities,
+      ).pipe(
+        Effect.provide(RateLimiterTest),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, healthRequest),
       ),
     );
     expect(response.status).toBe(failing ? 503 : 200);
@@ -35,6 +46,26 @@ for (const failing of [false, true])
     expect(Schema.decodeUnknownSync(HealthReport)(JSON.parse(text)).healthy).toBe(!failing);
     expect(web.headers.get("cache-control")).toBe("no-store");
   });
+test("a rate-limited health request skips all binding probes", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      let calls = 0;
+      const probe = Effect.sync(() => {
+        calls++;
+      });
+      const health = healthRoute(
+        { d1: probe, r2: probe, kv: probe, coordinator: probe },
+        healthCapabilities,
+      ).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, healthRequest));
+      for (let i = 0; i < 30; i++) expect((yield* health).status).toBe(200);
+      const limited = yield* health;
+      expect(limited.status).toBe(429);
+      expect(limited.headers["retry-after"]).toBe("60");
+      expect(limited.headers["cache-control"]).toBe("no-store");
+      expect(calls).toBe(120);
+    }).pipe(Effect.provide(RateLimiterTest)),
+  ));
+
 const layer = Layer.mergeAll(
   AuthTest,
   AuditLogTest,

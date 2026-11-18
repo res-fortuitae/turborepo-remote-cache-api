@@ -46,7 +46,7 @@ import { purgeRoute, purgePath } from "./purge-route.ts";
 import { RateLimiterLive, RateLimitBinding } from "@repo/ratelimit";
 import {
   cacheCredentialGuard,
-  cacheAuthenticationFailureGuard,
+  cacheAuthenticationGuard,
   oidcExchangeGuard,
 } from "./request-guards.ts";
 import * as Cloudflare from "@alchemy.run/cloudflare";
@@ -1349,7 +1349,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           ),
         ),
       guard: (scope) => cacheCredentialGuard(scope).pipe(Effect.provide(rateLimitLayer)),
-      guardAuthFailure: cacheAuthenticationFailureGuard.pipe(Effect.provide(rateLimitLayer)),
+      guardAuthentication: cacheAuthenticationGuard.pipe(Effect.provide(rateLimitLayer)),
       authorize: (credential, url, action, request) =>
         authorizeProjectCache(credential, url, action, request).pipe(
           Effect.provide(cacheAuthorizationLayer),
@@ -1632,7 +1632,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         directUploads: capabilities.directUploads.enabled,
         emailSending: capabilities.emailSending.enabled,
       },
-    );
+    ).pipe(Effect.provide(rateLimitLayer));
     const selftest = selftestRoute(bucket).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -1723,8 +1723,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
     );
-    const report = capabilitiesRoute(capabilities, token).pipe(
-      Effect.provide(authLayer),
+    const report = capabilitiesRoute(
+      capabilities,
+      authEnvironment.LEGACY_TOKEN_ENABLED === "true" ? token : undefined,
+      authLayer,
+    ).pipe(
+      Effect.provide(rateLimitLayer),
       Effect.catch(() =>
         HttpServerResponse.json(
           { code: "internal_error" },
@@ -1779,7 +1783,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (isProjectsPath(pathname)) return yield* projects;
 
         return yield* isAuthPath(pathname) ? auth : artifacts;
-      }).pipe(withSecurityHeaders, Effect.provide(originLayer)),
+      }).pipe(Effect.provide(originLayer), withSecurityHeaders),
     };
   }).pipe(
     Effect.provide(

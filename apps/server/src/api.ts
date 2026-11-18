@@ -149,7 +149,7 @@ export interface ApiDependencies<R> {
     R | HttpServerRequest.HttpServerRequest
   >;
   readonly guard?: (scope: ArtifactScope) => Effect.Effect<void, ApiError, R>;
-  readonly guardAuthFailure?: Effect.Effect<
+  readonly guardAuthentication?: Effect.Effect<
     void,
     ApiError,
     R | HttpServerRequest.HttpServerRequest
@@ -203,10 +203,8 @@ export const safeEqual = (a: string, b: string) => {
 };
 
 /** Artifacts are scoped per team (`teamId` or `slug` query param). */
-const teamScope = (url: URL) => {
-  const team = url.searchParams.get("teamId") ?? url.searchParams.get("slug");
-
-  if (team === null || team === "") return Effect.succeed("default");
+export const legacyTeamScope = (url: URL) => {
+  const team = url.searchParams.get("teamId") || url.searchParams.get("slug") || "default";
 
   return /^[\w.-]+$/.test(team)
     ? Effect.succeed(team)
@@ -244,7 +242,7 @@ export const artifactApi = <R>({
   emitArtifactOp = () => Effect.void,
   auditDenial = () => Effect.void,
   guard = () => Effect.void,
-  guardAuthFailure = Effect.void,
+  guardAuthentication = Effect.void,
   recordUploadCleanup = () => Effect.void,
 }: ApiDependencies<R>) => {
   const storeLayer = ArtifactStoreLive.pipe(
@@ -312,7 +310,7 @@ export const artifactApi = <R>({
         });
       }
 
-      return { prefix: yield* teamScope(url), maxUploadBytes };
+      return { prefix: yield* legacyTeamScope(url), maxUploadBytes };
     });
 
   const status = HttpServerResponse.json({ status: "enabled" });
@@ -590,6 +588,8 @@ export const artifactApi = <R>({
     if (request.method === "OPTIONS")
       return HttpServerResponse.empty({ status: 204, headers: TURBO_PREFLIGHT_HEADERS });
 
+    yield* guardAuthentication;
+
     const validityAt = yield* Clock.currentTimeMillis;
     const scope = yield* authenticate();
     const team = scope.prefix;
@@ -746,7 +746,6 @@ export const artifactApi = <R>({
       ApiError: (error) =>
         Effect.gen(function* () {
           if (error.status === 401) {
-            yield* guardAuthFailure;
             yield* auditDenial(error).pipe(
               Effect.mapError(
                 () =>

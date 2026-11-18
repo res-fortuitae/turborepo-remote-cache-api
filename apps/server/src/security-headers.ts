@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as HttpServerError from "effect/http/HttpServerError";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -17,7 +18,20 @@ export const withSecurityHeaders = Effect.fn("Server.withSecurityHeaders")(funct
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const response = yield* handler;
+
+  const response = yield* handler.pipe(
+    Effect.catchCause((cause) =>
+      HttpServerError.causeResponse(cause).pipe(
+        Effect.tap(([response]) =>
+          response.status >= 500 ? Effect.logError("Worker fetch failed", cause) : Effect.void,
+        ),
+        Effect.map(([response]) =>
+          HttpServerResponse.setHeader(response, "cache-control", "no-store"),
+        ),
+      ),
+    ),
+  );
+
   const secured = HttpServerResponse.setHeaders(response, SECURITY_HEADERS);
 
   return request.originalUrl.startsWith("https://")
