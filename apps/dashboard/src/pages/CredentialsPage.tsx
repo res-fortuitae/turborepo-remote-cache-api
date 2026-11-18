@@ -39,7 +39,9 @@ import {
 import { ConfirmDialog, NativeSelect, useAction } from "../components/forms.tsx";
 import { PolicyEditor } from "../components/oidc/PolicyEditor.tsx";
 import {
+  clampKeyDays,
   createKey,
+  maxKeyDays,
   credentialPolicy,
   deletePolicy,
   keyAttention,
@@ -129,7 +131,8 @@ function TrustPolicies({ projectId }: { readonly projectId: string }) {
   );
   const [editing, setEditing] = useState<typeof TrustPolicy.Type | "new">();
   const [removing, setRemoving] = useState<typeof TrustPolicy.Type>();
-  const action = useAction();
+  const [toggling, setToggling] = useState<typeof TrustPolicy.Type>();
+  const toggleLabel = toggling?.enabled ? "Disable" : "Enable";
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -182,22 +185,7 @@ function TrustPolicies({ projectId }: { readonly projectId: string }) {
                     <Button variant="outline" size="sm" onClick={() => setEditing(policy)}>
                       Edit
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={action.busy}
-                      onClick={() =>
-                        void action
-                          .run(() =>
-                            savePolicy(
-                              projectId,
-                              { ...policy, enabled: !policy.enabled },
-                              policy.id,
-                            ),
-                          )
-                          .then(resource.reload)
-                      }
-                    >
+                    <Button variant="outline" size="sm" onClick={() => setToggling(policy)}>
                       {policy.enabled ? "Disable" : "Enable"}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => setRemoving(policy)}>
@@ -208,9 +196,27 @@ function TrustPolicies({ projectId }: { readonly projectId: string }) {
               ))}
             </div>
           )}
-          {action.error === undefined ? null : <ErrorState error={action.error} />}
         </CardContent>
       </Card>
+      <ConfirmDialog
+        open={toggling !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setToggling(undefined);
+        }}
+        title={`${toggleLabel} ${toggling?.label || toggling?.provider || "trust policy"}?`}
+        description={
+          toggling?.enabled
+            ? "New exchanges can no longer use this policy. Existing credentials remain valid until expiry or revocation."
+            : "Matching CI identities will be able to exchange for new cache credentials."
+        }
+        confirmLabel={`${toggleLabel} policy`}
+        destructive={toggling?.enabled}
+        onConfirm={async () => {
+          if (!toggling) return;
+          await savePolicy(projectId, { ...toggling, enabled: !toggling.enabled }, toggling.id);
+          resource.reload();
+        }}
+      />
       <Sheet
         open={editing !== undefined}
         onOpenChange={(open) => {
@@ -275,11 +281,13 @@ function ApiKeys({
   );
   const [secret, setSecret] = useState<string>();
   const [name, setName] = useState("");
-  const [days, setDays] = useState("30");
+  const [days, setDays] = useState<string>();
   const [write, setWrite] = useState(false);
   const [revoking, setRevoking] = useState<string>();
   const action = useAction();
   const disallowed = policy.data?.policy.apiKeys === "disallowed";
+  const maximum = maxKeyDays(policy.data?.policy.maxApiKeyLifetimeDays ?? 90);
+  const expiry = days ?? String(Math.min(30, maximum));
   return (
     <Card>
       <CardHeader>
@@ -380,7 +388,7 @@ function ApiKeys({
                   projectId,
                   name.trim(),
                   write,
-                  Number(days),
+                  clampKeyDays(Number(expiry), maximum),
                 );
                 setSecret(created.key);
                 setName("");
@@ -406,9 +414,13 @@ function ApiKeys({
                   required
                   type="number"
                   min={1}
-                  max={policy.data?.policy.maxApiKeyLifetimeDays ?? 90}
-                  value={days}
+                  max={maximum}
+                  step={1}
+                  value={expiry}
                   onChange={(e) => setDays(e.target.value)}
+                  onBlur={() => {
+                    if (expiry !== "") setDays(String(clampKeyDays(Number(expiry), maximum)));
+                  }}
                 />
               </Field>
               <Field>
@@ -423,7 +435,14 @@ function ApiKeys({
                 </NativeSelect>
               </Field>
             </FieldGroup>
-            <Button className="self-start" disabled={action.busy || !name.trim()} type="submit">
+            {policy.status === "error" ? (
+              <ErrorState error={policy.error} onRetry={policy.reload} />
+            ) : null}
+            <Button
+              className="self-start"
+              disabled={action.busy || policy.status !== "ready" || !name.trim()}
+              type="submit"
+            >
               Create API key
             </Button>
           </form>

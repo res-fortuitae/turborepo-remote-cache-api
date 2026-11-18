@@ -220,7 +220,11 @@ export function App() {
   )
     return (
       <Standalone>
-        <DevicePage />
+        <DevicePage
+          key={session.data?.user.id}
+          user={session.data?.user}
+          pending={session.isPending}
+        />
       </Standalone>
     );
 

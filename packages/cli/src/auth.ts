@@ -13,11 +13,18 @@ import {
   TokenCache,
   ProxyTransport,
   ProxySession,
+  hasProxyAuthorization,
   type ClientFlags,
   type ClientCredential,
 } from "@repo/client-core";
 import { Effect, Layer, Redacted, ManagedRuntime } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+
+export const childEnvironment = (overrides: Record<string, string | undefined> = {}) => ({
+  ...Bun.env,
+  ...overrides,
+  TCACHE_API_KEY: undefined,
+});
 
 export const makeAuthRuntime = (flags: ClientFlags = {}, developerWrites = false) => {
   const adapters = Layer.mergeAll(
@@ -33,7 +40,12 @@ export const makeAuthRuntime = (flags: ClientFlags = {}, developerWrites = false
       run: (executable, args) =>
         Effect.tryPromise({
           try: async () => {
-            const child = Bun.spawn([executable, ...args], { stdout: "pipe", stderr: "ignore" });
+            const child = Bun.spawn([executable, ...args], {
+              env: childEnvironment(),
+              stdout: "pipe",
+              stderr: "ignore",
+            });
+
             const timer = setTimeout(() => child.kill(), 10_000);
 
             try {
@@ -153,7 +165,7 @@ export const startProxy = async (
       if (
         new URL(request.url).pathname === "/_tcache/stop" &&
         request.method === "POST" &&
-        request.headers.get("authorization") === `Bearer ${secret}`
+        hasProxyAuthorization(request.headers, secret)
       ) {
         setTimeout(onStop, 25);
 

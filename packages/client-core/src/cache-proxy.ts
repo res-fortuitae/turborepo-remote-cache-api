@@ -54,6 +54,10 @@ const equal = (left: string, right: string) => {
   return difference === 0;
 };
 
+/** Compare every character when the header has the expected length. */
+export const hasProxyAuthorization = (headers: Headers, secret: string) =>
+  equal(headers.get("authorization") ?? "", `Bearer ${secret}`);
+
 const make = Effect.gen(function* () {
   const cache = yield* TokenCache;
   const config = yield* ClientConfig;
@@ -99,12 +103,7 @@ const make = Effect.gen(function* () {
   return {
     stats: Effect.sync(() => ({ ...stats })),
     handle: Effect.fn("CacheProxy.handle")(function* (request: Request) {
-      if (
-        !equal(
-          request.headers.get("authorization") ?? "",
-          `Bearer ${Redacted.value(session.secret)}`,
-        )
-      )
+      if (!hasProxyAuthorization(request.headers, Redacted.value(session.secret)))
         return new Response(null, { status: 401 });
       const incoming = new URL(request.url);
 

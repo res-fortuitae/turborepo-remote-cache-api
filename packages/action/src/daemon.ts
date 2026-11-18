@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { CacheProxy, TokenCache, ProxySession } from "@repo/client-core";
+import { CacheProxy, TokenCache, ProxySession, hasProxyAuthorization } from "@repo/client-core";
 import { Effect, Redacted } from "effect";
 import { actionRuntime } from "./runtime.ts";
 
@@ -66,7 +66,7 @@ const main = async () => {
         if (
           incoming.url === "/_tcache/stop" &&
           incoming.method === "POST" &&
-          headers.get("authorization") === `Bearer ${secret}`
+          hasProxyAuthorization(headers, secret)
         ) {
           outgoing.writeHead(200, { "content-type": "application/json" });
           outgoing.end(JSON.stringify(await runtime.runPromise(proxy.stats)));

@@ -17,6 +17,14 @@ bun packages/cli/src/bin.ts proxy-stop --state "$RUNNER_TEMP/tcache-session.json
 
 Flags before `--`: `--api`, `--team`, `--project`, `--audience`, `--strict`,
 `--unbound-tokens`. Config precedence remains flags > TCACHE_* > .turbo-cache.json.
+For CI OIDC or `TCACHE_API_KEY`, set a trusted cache origin with `--api` or
+`TCACHE_API`. The linked file can still supply the team and project. If it is the
+only source for the API origin, the CLI warns and disables remote caching
+(or exits with an error in strict mode). Developer sessions can use the linked
+origin when it matches the saved login. When running the CLI from source in an
+untrusted checkout, use `bun --no-env-file` to keep Bun from loading the checkout's
+dotenv settings.
+
 Proxy/exec use DPoP by default; `--unbound-tokens` explicitly opts out for legacy
 servers or policies permitting bearer tokens. Env mode always requests an unbound
 token, so policies requiring binding refuse it. Static API keys remain bearer tokens.
@@ -24,6 +32,8 @@ token, so policies requiring binding refuse it. Static API keys remain bearer to
 Exec binds a random loopback port, passes a random per-session token to the child,
 streams requests/responses, preserves Content-Length and HEAD, and closes the
 listener when the child exits or is signalled. The real cache token stays in memory.
+Exec removes `TCACHE_API_KEY` from the child's environment, including when it
+falls back to the local cache.
 A per-process maintenance loop checks refresh every second, with client-core's
 coalescing, expiry margin and failed-acquisition cooldown. Requests only peek at
 memory; they never perform an exchange. If refresh fails, cache requests return
@@ -111,5 +121,7 @@ list|create|get|update|delete`, `admin keys list|create|revoke`, and `admin poli
 list|create|update|delete|test`; pass `--team`, `--project`, `--id` as appropriate and
 `--json '<request body>'` for mutations. Key bodies use `organizationId` and the
 server's scoped key contract. A key creation response is intentionally secret;
-never log it. Project deletion requires the server's confirmation body. Purge
-retains its preview/confirm workflow and session-cookie adapter.
+never log it. Project deletion requires the server's confirmation body.
+`admin purge PROJECT` previews by default. Use `--job ID` to check the preview
+and `--job ID --confirm` to confirm it. Purge uses the saved `tcache login` session
+and its origin, regardless of `TURBO_API`.

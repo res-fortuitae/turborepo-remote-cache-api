@@ -17,6 +17,11 @@ export const authClient = createAuthClient({
   ],
 });
 
+export async function signOut() {
+  const result = await authClient.signOut();
+  if (result.error) throw new Error(result.error.message || "Unable to sign out. Try again.");
+}
+
 export type Session = NonNullable<ReturnType<typeof authClient.useSession>["data"]>;
 
 export const signInWithGitHub = async (callbackURL = window.location.href) => {

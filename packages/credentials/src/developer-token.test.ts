@@ -16,11 +16,26 @@ import {
   CacheTokenVerifier,
   DEFAULT_CACHE_TOKEN_TTL_SECONDS,
 } from "./cache-token.ts";
+import {
+  ArtifactEncryptionSecret,
+  ArtifactSigning,
+  ArtifactSigningLive,
+} from "./artifact-signing.ts";
 
 const dependencies = Layer.mergeAll(
   AuthTest,
   AuthorizationDatabaseLive,
   AuditLogTest,
+  ArtifactSigningLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        AuditLogTest,
+        Layer.succeed(ArtifactEncryptionSecret, {
+          get: Effect.succeed(Redacted.make("test-secret")),
+        }),
+      ),
+    ),
+  ),
   ProjectRepoLive,
   InstanceSettingsRepoLive,
   CacheTokensTest,
@@ -88,8 +103,24 @@ test("developer tokens default to read, require both write policy and grants, an
       const overLimit = { ...request, ttlSeconds: request.ttlSeconds + 1 };
       expect(() => decode(overLimit)).toThrow();
       expect((yield* Effect.flip(tokens.issue(overLimit, headers))).status).toBe(400);
+      const signing = yield* ArtifactSigning;
+      yield* signing.rotate("org", "project", {
+        scope: "org",
+        orgId: "org",
+        projectId: "project",
+        actor: { type: "user", id: "u", display: "User" },
+        action: "artifact.signing.rotate",
+        target: { type: "project", id: "project" },
+        outcome: "allow",
+        ip: "",
+        userAgent: "",
+        requestId: "rotation",
+        metadata: {},
+      });
       const read = yield* tokens.issue(request, headers);
       expect(read.scope).toBe("read");
+      expect(read.signatureKey).toBeUndefined();
+      expect(read.previousSignatureKeys).toBeUndefined();
       const principal = yield* verifier.verify(Redacted.value(read.token));
       expect(principal.subject).toBe("user:u");
       yield* db.query("test.removeMember", (db) => db.delete(schema.member));
@@ -128,6 +159,7 @@ test("developer tokens default to read, require both write policy and grants, an
       );
       const write = yield* tokens.issue({ ...request, write: true }, headers);
       expect(write.scope).toBe("read write");
+      expect(write.signatureKey).toBeDefined();
       expect(
         (yield* Effect.flip(tokens.issue({ ...request, team: "other" }, headers))).status,
       ).toBe(403);
@@ -149,6 +181,7 @@ test("developer tokens default to read, require both write policy and grants, an
       expect((yield* Effect.flip(tokens.issue(request, headers))).status).toBe(401);
       const events = yield* db.query("test.events", (db) => db.select().from(schema.auditEvent));
       expect(events.filter((e) => e.payload.action === "token.developer.issue")).toHaveLength(2);
+      expect(events.filter((e) => e.payload.action === "artifact.signing.access")).toHaveLength(1);
       expect(JSON.stringify(events)).not.toContain(Redacted.value(read.token));
     }).pipe(Effect.provide(layer)),
   );

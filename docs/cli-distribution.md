@@ -1,47 +1,79 @@
 # tcache
 
-`tcache` is the CLI for a self-hosted Turborepo remote cache. It is MIT licensed.
+`tcache` is the MIT-licensed CLI for a self-hosted Turborepo remote cache.
+Res Fortuitae publishes [`@resfortuitae/tcache`](https://www.npmjs.com/package/@resfortuitae/tcache/v/0.1.1)
+and its `@resfortuitae/tcache-<target>` platform packages.
 
 ## Install
 
 ```sh
 npm i -g @resfortuitae/tcache
 tcache --version
+tcache --help
 ```
 
 npm installs one native binary for your platform through optional dependencies,
 so keep optional dependencies enabled. Node 22 or later runs the launcher.
 Supported targets: Linux x64/arm64 (glibc and musl), macOS x64/arm64 and Windows x64.
 
-In CI, pin the version: `npm i -g @resfortuitae/tcache@0.1.0`.
+In CI, pin the version with `npm i -g @resfortuitae/tcache@0.1.1`. Configure
+[CI authentication](https://github.com/res-fortuitae/turborepo-remote-cache-api/blob/main/docs/ci-auth.md),
+then run `tcache exec --strict -- turbo run build`.
 Upgrade with `npm i -g @resfortuitae/tcache@latest`. Uninstall with
 `npm rm -g @resfortuitae/tcache`.
 
 Without npm, download a binary and `SHA256SUMS` from a
-[GitHub Release](https://github.com/res-fortuitae/turborepo-remote-cache-api/releases)
-(tags `cli-vX.Y.Z`), or use the version-pinned `install.sh` from the same release.
+versioned [GitHub Release](https://github.com/res-fortuitae/turborepo-remote-cache-api/releases/tag/cli-v0.1.1),
+or download the release's `install.sh` and run `sh install.sh v0.1.1` on Linux
+or macOS. The installer checks the binary against the release's SHA-256 manifest
+before placing it in `~/.local/bin`.
 
 ## First use
+
+From your Turborepo checkout, sign in to your instance and approve the device
+login in your browser. Link the checkout using your organization slug and the
+project's ID from the instance. The link writes a credential-free
+`.turbo-cache.json`.
 
 ```sh
 tcache login --api https://cache.example.com
 tcache link --team ORG --project PROJECT_ID
-tcache exec -- turbo run build
+tcache exec --strict --write -- turbo run build
 ```
+
+`--write` explicitly requests a developer write token. Your project grant must
+allow writes, and the instance's effective `developerCacheWrites` policy must
+enable them. `--strict` stops before running the build if the initial credential
+request fails. Omit `--write` for the default read-only developer token.
+
+### Sharing cache entries with CI
+
+Turborepo computes task hashes from your repository's inputs. Pin the build
+toolchain and match runtime versions between developer machines and CI. Put
+runtime versions and other output-affecting environment values in Turbo's
+hashed inputs so changing them produces a different key.
+
+For tasks that produce platform-specific outputs, include the target OS and
+architecture in the task hash, plus libc or other ABI differences where
+applicable. Portable tasks can share entries across platforms when their
+outputs are identical for the same inputs. The CLI's own binary target only
+determines where the CLI can run. See [Turborepo's caching guide](https://turborepo.dev/docs/crafting-your-repository/caching).
 
 ## Verify a release
 
-npm packages carry npm provenance. Release binaries carry GitHub build
-attestations, and `SHA256SUMS` has a Sigstore bundle:
+npm packages carry npm provenance. For direct downloads, verify the binary's
+GitHub build attestation and the signature on `SHA256SUMS`. This example checks
+the Linux x64 binary for `cli-v0.1.1`. Substitute your downloaded asset name
+in both commands that use it.
 
 ```sh
 gh attestation verify ./tcache-linux-x64 \
   --repo res-fortuitae/turborepo-remote-cache-api \
   --signer-workflow res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-release.yml
 cosign verify-blob --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity 'https://github.com/res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-release.yml@refs/tags/cli-vX.Y.Z' \
+  --certificate-identity 'https://github.com/res-fortuitae/turborepo-remote-cache-api/.github/workflows/cli-release.yml@refs/tags/cli-v0.1.1' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
-sha256sum --check SHA256SUMS
+awk '$2 == "tcache-linux-x64"' SHA256SUMS | shasum -a 256 --check
 ```
 
 ## Build from source

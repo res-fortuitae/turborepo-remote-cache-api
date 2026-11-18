@@ -33,6 +33,7 @@ import {
   DeveloperCredentialsUnavailable,
   ClientCoreLive,
   authOrDisabled,
+  hasProxyAuthorization,
   type ClientFlags,
 } from "./index.ts";
 
@@ -42,6 +43,7 @@ const cacheSecret = "secret-cache-token";
 
 const config = {
   api,
+  apiFromLinkedFile: false,
   audience: api,
   team: "org",
   project: "prj",
@@ -175,13 +177,18 @@ const configure = (
 
 test("config resolves flags > environment > linked project and keeps keys redacted", async () => {
   const layer = configure(
-    { project: "flag", strict: false },
-    { TCACHE_TEAM: "env", TCACHE_STRICT: "true", TCACHE_API_KEY: "key" },
+    { api: `${api}/`, project: "flag", strict: false },
+    {
+      TCACHE_API: "https://env.example",
+      TCACHE_TEAM: "env",
+      TCACHE_STRICT: "true",
+      TCACHE_API_KEY: "key",
+    },
     {
       ".turbo-cache.json": JSON.stringify({
-        api: `${api}/`,
+        api: "https://linked.example",
         team: "file",
-        project: "file",
+        audience: "linked-audience",
         projectSlug: "friendly",
       }),
     },
@@ -191,9 +198,77 @@ test("config resolves flags > environment > linked project and keeps keys redact
     ClientConfig.use(Effect.succeed).pipe(Effect.provide(layer)),
   );
 
-  expect(value).toMatchObject({ api, audience: api, team: "env", project: "flag", strict: false });
+  expect(value).toMatchObject({
+    api,
+    audience: "linked-audience",
+    team: "env",
+    project: "flag",
+    strict: false,
+  });
   expect(JSON.stringify(value)).not.toContain('"key"');
   expect(Redacted.value(value.apiKey!)).toBe("key");
+});
+
+test("linked project needs an explicitly configured API before CI or API-key authentication", async () => {
+  const files = {
+    ".turbo-cache.json": JSON.stringify({ api, team: "org", project: "prj" }),
+  };
+
+  const cases: { env: Record<string, string>; source: "apiKey" | "oidc" }[] = [
+    { env: { TCACHE_API_KEY: "fixture-key" }, source: "apiKey" },
+    { env: { CACHE_ID_TOKEN: ciSecret }, source: "oidc" },
+  ];
+
+  const live = (f: ReturnType<typeof fixture>, flags: ClientFlags) =>
+    ClientCoreLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          f.adapters,
+          DeveloperCredentialsUnavailable,
+          Layer.succeed(ClientOptions, { flags }),
+        ),
+      ),
+    );
+
+  for (const { env, source } of cases) {
+    for (const strict of [false, true]) {
+      const f = fixture({ env, files });
+
+      await Effect.runPromise(
+        TokenCache.use((cache) =>
+          Effect.gen(function* () {
+            if (strict) expect(yield* reason(cache.get)).toBe("configuration");
+            else expect(yield* cache.get).toBeUndefined();
+            expect(yield* cache.peek).toBeUndefined();
+          }),
+        ).pipe(Effect.provide(live(f, { strict }))),
+      );
+      expect(f.warnings).toEqual([expect.stringContaining("Set --api or TCACHE_API")]);
+      expect(f.requests).toHaveLength(0);
+      expect(f.masks).toHaveLength(0);
+    }
+
+    const f = fixture({ env: { ...env, TCACHE_API: api }, files });
+
+    const credential = await Effect.runPromise(
+      TokenCache.use((cache) => cache.get).pipe(Effect.provide(live(f, {}))),
+    );
+
+    expect(credential?.source).toBe(source);
+  }
+});
+
+test("proxy authorization checks the complete bearer value", () => {
+  const headers = new Headers();
+  expect(hasProxyAuthorization(headers, "session-secret")).toBe(false);
+
+  for (const value of ["Bearer session", "Bearer session-secreu", "Basic session-secret"]) {
+    headers.set("authorization", value);
+    expect(hasProxyAuthorization(headers, "session-secret")).toBe(false);
+  }
+
+  headers.set("authorization", "Bearer session-secret");
+  expect(hasProxyAuthorization(headers, "session-secret")).toBe(true);
 });
 
 test("invalid config and oversized files become actionable failures; startup can fail open", async () => {

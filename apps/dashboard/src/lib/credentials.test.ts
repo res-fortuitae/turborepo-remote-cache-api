@@ -1,5 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { createKey, keyAttention, savePolicy, testPolicies } from "./credentials.ts";
+import {
+  clampKeyDays,
+  createKey,
+  keyAttention,
+  maxKeyDays,
+  savePolicy,
+  testPolicies,
+} from "./credentials.ts";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -57,6 +64,15 @@ test("API key defaults remain project-scoped, expiring and read-only", async () 
     expiresIn: 604800,
     permissions: { project: ["project"], cache: ["read"] },
   });
+});
+
+test("key expiry clamps to a whole day within the effective policy and server cap", () => {
+  expect(maxKeyDays(365)).toBe(90);
+  expect(maxKeyDays(7)).toBe(7);
+  expect(clampKeyDays(99, maxKeyDays(365))).toBe(90);
+  expect(clampKeyDays(8.7, maxKeyDays(7))).toBe(7);
+  expect(clampKeyDays(4.9, maxKeyDays(7))).toBe(4);
+  expect(clampKeyDays(0.9, maxKeyDays(7))).toBe(1);
 });
 
 test("disabled API-key policy errors remain visible to the client", async () => {

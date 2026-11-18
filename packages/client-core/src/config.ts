@@ -51,6 +51,7 @@ export const ClientMessagesTest = Layer.succeed(ClientMessages, {
 
 export interface ResolvedClientConfig {
   readonly api: string;
+  readonly apiFromLinkedFile: boolean;
   readonly audience: string;
   readonly team: string;
   readonly project: string;
@@ -103,7 +104,8 @@ export const ClientConfigLive = Layer.effect(
       return yield* decodeLinkedProject(yield* readFileText(fs, path));
     }).pipe(Effect.mapError(invalid));
 
-    const api = options.flags.api ?? env.get("TCACHE_API") ?? linked.api;
+    const explicitApi = options.flags.api ?? env.get("TCACHE_API");
+    const api = explicitApi ?? linked.api;
 
     const values = yield* decodeConfig({
       api,
@@ -137,6 +139,7 @@ export const ClientConfigLive = Layer.effect(
     return {
       ...values,
       api: url.origin,
+      apiFromLinkedFile: explicitApi === undefined,
       audience: values.audience === values.api ? url.origin : values.audience,
       strict: options.flags.strict ?? (strict === "true" || strict === "1"),
       boundTokens: options.flags.boundTokens ?? false,

@@ -45,9 +45,11 @@ export interface CustomRole {
   readonly permission: OrganizationPermissions | string;
 }
 
-export const listMembers = (organizationId: string, signal?: AbortSignal) =>
+export const MEMBER_PAGE_SIZE = 200;
+
+export const listMembers = (organizationId: string, signal?: AbortSignal, offset?: number) =>
   api<{ readonly members: ReadonlyArray<Member>; readonly total: number }>(
-    `${auth}/list-members${query({ organizationId, limit: "200" })}`,
+    `${auth}/list-members${query({ organizationId, limit: String(MEMBER_PAGE_SIZE), ...(offset === undefined ? {} : { offset: String(offset), sortBy: "id" }) })}`,
     { signal },
   );
 

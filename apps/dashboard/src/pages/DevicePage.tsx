@@ -11,7 +11,13 @@ import {
   CardFooter,
 } from "@repo/ui/components/card";
 
-export function DevicePage() {
+export function DevicePage({
+  user,
+  pending,
+}: {
+  readonly user?: { readonly name: string; readonly email: string };
+  readonly pending: boolean;
+}) {
   const [code, setCode] = useState(
     () => new URLSearchParams(location.search).get("user_code") ?? "",
   );
@@ -90,6 +96,15 @@ export function DevicePage() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
+        {user ? (
+          <p className="text-sm">
+            Signed in as <strong>{user.name}</strong> ({user.email}).
+          </p>
+        ) : pending ? (
+          <p role="status">Checking which account is signed in…</p>
+        ) : (
+          <p className="text-sm">Sign in to review and approve a device.</p>
+        )}
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="device-code">Code shown in your terminal</FieldLabel>
@@ -103,7 +118,7 @@ export function DevicePage() {
             />
           </Field>
         </FieldGroup>
-        {review ? (
+        {review && user ? (
           <>
             <dl>
               <dt>Client</dt>
@@ -115,22 +130,28 @@ export function DevicePage() {
             </dl>
             <p>Confirm that the code above matches your terminal before approving.</p>
             <div className="flex gap-3">
-              <Button disabled={busy} onClick={() => void decide("approve")}>
+              <Button disabled={busy || pending} onClick={() => void decide("approve")}>
                 Approve this device
               </Button>
-              <Button variant="outline" disabled={busy} onClick={() => void decide("deny")}>
+              <Button
+                variant="outline"
+                disabled={busy || pending}
+                onClick={() => void decide("deny")}
+              >
                 Deny
               </Button>
             </div>
           </>
         ) : (
           <div className="flex gap-3">
-            <Button disabled={busy || !code} onClick={() => void verify()}>
+            <Button disabled={busy || pending || !user || !code} onClick={() => void verify()}>
               Check code
             </Button>
-            <Button variant="outline" disabled={busy} onClick={() => void signIn()}>
-              Sign in with GitHub
-            </Button>
+            {!user && !pending ? (
+              <Button variant="outline" disabled={busy} onClick={() => void signIn()}>
+                Sign in with GitHub
+              </Button>
+            ) : null}
           </div>
         )}
         <p role="status">{message}</p>

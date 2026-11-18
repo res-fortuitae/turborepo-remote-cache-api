@@ -15,11 +15,19 @@ export const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export async function lookupRepository(repository: string): Promise<GitHubRepository> {
   if (!repositoryPattern.test(repository))
     throw new Error("Use the owner/name form, e.g. acme/web.");
-  const response = await fetch(`https://api.github.com/repos/${repository}`, {
-    headers: { accept: "application/vnd.github+json" },
-    credentials: "omit",
-    referrerPolicy: "no-referrer",
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`https://api.github.com/repos/${repository}`, {
+      headers: { accept: "application/vnd.github+json" },
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+    });
+  } catch (cause) {
+    throw new Error("Could not reach GitHub. Try again or enter the repository IDs manually.", {
+      cause,
+    });
+  }
 
   if (response.status === 404)
     throw new Error("Repository not found. Private repositories need their IDs entered manually.");

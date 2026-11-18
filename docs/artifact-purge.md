@@ -71,10 +71,9 @@ commits an audit event and the job state in one D1 batch, with filters and total
 
 ## CLI
 
-Until the device-login credential store is implemented, supply an existing
-session cookie privately in `TCACHE_SESSION_COOKIE` (never commit it or pass it
-as a command-line argument). `TURBO_API` selects the server. The API-key token in
-`TURBO_TOKEN` does not grant management access.
+Sign in with `tcache login --api https://cache.example.com` before purging. The
+command uses the saved login session and its origin. A cache API key grants
+artifact access only.
 
 ```sh
 bun packages/cli/src/bin.ts admin purge PROJECT --filter '{"runId":"123"}'
