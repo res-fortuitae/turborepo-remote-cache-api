@@ -18,7 +18,7 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { EmptyState, ErrorState, LoadingRows } from "../../components/common.tsx";
-import { NativeSelect, useAction } from "../../components/forms.tsx";
+import { ConfirmDialog, NativeSelect, useAction } from "../../components/forms.tsx";
 import { accessActions, explainAccess, type AccessAction } from "../../lib/access.ts";
 import {
   accessDirectory,
@@ -59,6 +59,7 @@ export function AccessTab({
   const [who, setWho] = useState("");
   const [explainAction, setExplainAction] = useState<AccessAction>("cache:write");
   const action = useAction();
+  const [removing, setRemoving] = useState<NonNullable<typeof grants.data>[number]>();
   const members = directory.data?.members ?? [];
   const groups = directory.data?.groups ?? [];
   const name = (type: "user" | "team", id: string) =>
@@ -146,11 +147,7 @@ export function AccessTab({
                         size="icon"
                         aria-label={`Remove grant for ${name(item.principalType, item.principalId)}`}
                         disabled={action.busy}
-                        onClick={() =>
-                          void action
-                            .run(() => removeGrant(projectId, item.principalType, item.principalId))
-                            .then(grants.reload)
-                        }
+                        onClick={() => setRemoving(item)}
                       >
                         <Trash2 />
                       </Button>
@@ -160,6 +157,25 @@ export function AccessTab({
               </TableBody>
             </Table>
           )}
+          <ConfirmDialog
+            open={removing !== undefined}
+            onOpenChange={(open) => {
+              if (!open) setRemoving(undefined);
+            }}
+            title={
+              removing
+                ? `Remove grant for ${name(removing.principalType, removing.principalId)}?`
+                : "Remove grant?"
+            }
+            description="This removes the selected project grant. Access from other grants may still apply."
+            confirmLabel="Remove grant"
+            destructive
+            onConfirm={async () => {
+              if (!removing) return;
+              await removeGrant(projectId, removing.principalType, removing.principalId);
+              grants.reload();
+            }}
+          />
           <form
             onSubmit={(event) => void grant(event)}
             className="grid gap-2 sm:grid-cols-[1fr_12rem_auto]"

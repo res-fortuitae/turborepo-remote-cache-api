@@ -17,7 +17,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/components/ta
 import { CodeBlock, ErrorState, PageHeader, formatBytes } from "../components/common.tsx";
 import { Stepper } from "../components/stepper.tsx";
 import { api } from "../lib/api.ts";
-import { createCacheKey, type CreatedCacheKey } from "../lib/cache-keys.ts";
+import {
+  createKey,
+  credentialPolicy,
+  maxKeyDays,
+  type CreatedCacheKey,
+} from "../lib/credentials.ts";
 import {
   idsCommand,
   lookupRepository,
@@ -26,7 +31,7 @@ import {
 } from "../lib/github.ts";
 import { orgPath, useOrg, type Org } from "../lib/org.tsx";
 import { navigate, splitLocation, useLocation } from "../lib/router.tsx";
-import { githubDefaultPolicies, githubWorkflow } from "../lib/trust-policies.ts";
+import { ensureGithubPolicies, githubWorkflow } from "../lib/trust-policies.ts";
 import { useResource } from "../lib/use-resource.ts";
 import { slugify } from "./NewOrgPage.tsx";
 
@@ -167,11 +172,7 @@ function GitHubOption({
     setError(undefined);
 
     try {
-      for (const policy of githubDefaultPolicies(resolved, origin))
-        await api(`/projects/${encodeURIComponent(projectId)}/trust-policies`, {
-          method: "POST",
-          body: policy,
-        });
+      await ensureGithubPolicies(projectId, resolved, origin);
       setStatus("saved");
       onReady();
     } catch (cause) {
@@ -201,6 +202,7 @@ function GitHubOption({
             {repo ? (
               <Button
                 variant="outline"
+                disabled={status === "busy"}
                 onClick={() => {
                   setRepo(undefined);
                   setStatus("idle");
@@ -289,15 +291,21 @@ function GitHubOption({
       ) : null}
       {error === undefined ? null : <ErrorState error={error} />}
       {status === "saved" && resolved ? (
-        <CodeBlock
-          label="Workflow file .github/workflows/ci.yml"
-          code={githubWorkflow({
-            api: origin,
-            orgId: org.id,
-            projectId,
-            defaultBranch: resolved.defaultBranch,
-          })}
-        />
+        <>
+          <p className="text-xs text-muted-foreground">
+            The GitHub Action’s <code>team</code> input uses the organization ID. The CLI and{" "}
+            <code>TURBO_TEAM</code> use its slug.
+          </p>
+          <CodeBlock
+            label="Workflow file .github/workflows/ci.yml"
+            code={githubWorkflow({
+              api: origin,
+              orgId: org.id,
+              projectId,
+              defaultBranch: resolved.defaultBranch,
+            })}
+          />
+        </>
       ) : null}
     </div>
   );
@@ -319,6 +327,11 @@ function CliOption({ org, projectId }: { readonly org: Org; readonly projectId: 
 }
 
 function ApiKeyOption({ org, projectId }: { readonly org: Org; readonly projectId: string }) {
+  const policy = useResource(`credential-policy:${org.id}`, (signal) =>
+    credentialPolicy(org.id, signal),
+  );
+  const days = Math.min(30, maxKeyDays(policy.data?.policy.maxApiKeyLifetimeDays ?? 90));
+  const disallowed = policy.data?.policy.apiKeys === "disallowed";
   const [created, setCreated] = useState<CreatedCacheKey>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -328,15 +341,7 @@ function ApiKeyOption({ org, projectId }: { readonly org: Org; readonly projectI
     setError(undefined);
 
     try {
-      setCreated(
-        await createCacheKey({
-          organizationId: org.id,
-          projectId,
-          name: "Onboarding CI key",
-          scope: "read write",
-          expiresInDays: 30,
-        }),
-      );
+      setCreated(await createKey(org.id, projectId, "Onboarding CI key", true, days));
     } catch (cause) {
       setError(cause);
     } finally {
@@ -358,7 +363,10 @@ function ApiKeyOption({ org, projectId }: { readonly org: Org; readonly projectI
         <>
           <p className="text-sm">
             Copy this key now. It is shown <strong>once</strong> and expires{" "}
-            {created.expiresAt ? new Date(created.expiresAt).toLocaleDateString() : "in 30 days"}.
+            {created.expiresAt
+              ? new Date(created.expiresAt).toLocaleDateString()
+              : `in ${days} days`}
+            .
           </p>
           <CodeBlock label="API key" code={created.key} />
           <CodeBlock
@@ -366,17 +374,22 @@ function ApiKeyOption({ org, projectId }: { readonly org: Org; readonly projectI
             code={`TURBO_API=${window.location.origin}\nTURBO_TEAM=${org.slug}\nTURBO_TOKEN=<the key above, from your secret store>\n\nbunx turbo run build`}
           />
         </>
+      ) : disallowed ? (
+        <p role="status">API-key creation is disabled by policy.</p>
       ) : (
         <Button
           variant="outline"
           className="self-start"
-          disabled={busy}
+          disabled={busy || policy.status !== "ready"}
           onClick={() => void create()}
         >
           <KeyRound data-icon="inline-start" />
-          {busy ? "Creating…" : "Create a 30-day read/write key"}
+          {busy ? "Creating…" : `Create a ${days}-day read/write key`}
         </Button>
       )}
+      {policy.status === "error" ? (
+        <ErrorState error={policy.error} onRetry={policy.reload} />
+      ) : null}
       {error === undefined ? null : <ErrorState error={error} />}
     </div>
   );

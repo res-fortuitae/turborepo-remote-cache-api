@@ -50,6 +50,16 @@ export const listKeys = (org: string, signal?: AbortSignal) =>
     body: { organizationId: org },
     signal,
   });
+export interface CreatedCacheKey {
+  readonly id: string;
+  readonly key: string;
+  readonly expiresAt: string | null;
+}
+
+export const maxKeyDays = (policyDays: number) => Math.min(90, policyDays);
+export const clampKeyDays = (days: number, maximum: number) =>
+  Math.min(maximum, Math.max(1, Math.floor(days)));
+
 export const createKey = (
   org: string,
   project: string,
@@ -57,12 +67,12 @@ export const createKey = (
   write: boolean,
   days: number,
 ) =>
-  api<{ readonly id: string; readonly key: string }>("/api/auth/cache-keys/create", {
+  api<CreatedCacheKey>("/api/auth/cache-keys/create", {
     method: "POST",
     body: {
       organizationId: org,
       name,
-      expiresIn: days * 86400,
+      expiresIn: Math.floor(days) * 86400,
       permissions: { project: [project], cache: write ? ["read", "write"] : ["read"] },
     },
   });

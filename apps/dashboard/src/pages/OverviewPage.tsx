@@ -1,5 +1,4 @@
 import { FolderGit2, GitBranch, Terminal } from "lucide-react";
-import { ProjectList } from "@repo/shared";
 import {
   Card,
   CardContent,
@@ -16,7 +15,7 @@ import {
   LoadingRows,
   PageHeader,
 } from "../components/common.tsx";
-import { api } from "../lib/api.ts";
+import { listProjects } from "../lib/projects.ts";
 import { orgPath, useOrg } from "../lib/org.tsx";
 import { href } from "../lib/router.tsx";
 import { Button } from "@repo/ui/components/button";
@@ -26,9 +25,7 @@ export function OverviewPage() {
   const org = useOrg();
   const origin = window.location.origin;
 
-  const projects = useResource(`projects:${org.id}`, (signal) =>
-    api(`/orgs/${encodeURIComponent(org.id)}/projects?limit=100`, { schema: ProjectList, signal }),
-  );
+  const projects = useResource(`projects:${org.id}`, (signal) => listProjects(org.id, signal));
 
   const project = projects.data?.items[0]?.id ?? "<project-id>";
   const local = `tcache login --api ${origin}\ntcache link --team ${org.slug} --project ${project}\ntcache exec -- turbo run build`;
@@ -69,7 +66,11 @@ export function OverviewPage() {
               <TabsContent value="local" className="pt-4">
                 <CodeBlock code={local} label="Laptop setup commands" />
               </TabsContent>
-              <TabsContent value="ci" className="pt-4">
+              <TabsContent value="ci" className="flex flex-col gap-3 pt-4">
+                <p className="text-xs text-muted-foreground">
+                  The GitHub Action’s <code>team</code> input uses the organization ID. The CLI and{" "}
+                  <code>TURBO_TEAM</code> use its slug.
+                </p>
                 <CodeBlock code={ci} label="GitHub Actions steps" />
               </TabsContent>
             </Tabs>

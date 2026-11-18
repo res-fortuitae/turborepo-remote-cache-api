@@ -357,7 +357,7 @@ function Users() {
   );
   const [selected, setSelected] = useState<{
     user: InstanceUser;
-    action: "ban" | "deactivate" | "unban" | "sessions";
+    action: "ban" | "unban" | "sessions";
   }>();
   const [reason, setReason] = useState("");
   return (
@@ -365,8 +365,7 @@ function Users() {
       <CardHeader>
         <CardTitle>Users</CardTitle>
         <CardDescription>
-          Ban or deactivate to prevent access and revoke sessions. Deactivation uses a permanent ban
-          and can be reversed with Restore.
+          Banning prevents access and revokes sessions until an administrator restores the user.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -434,16 +433,6 @@ function Users() {
                             </Button>
                             <Button
                               size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setReason("");
-                                setSelected({ user, action: "deactivate" });
-                              }}
-                            >
-                              Deactivate
-                            </Button>
-                            <Button
-                              size="sm"
                               variant="ghost"
                               onClick={() => setSelected({ user, action: "sessions" })}
                             >
@@ -492,15 +481,12 @@ function Users() {
           else if (selected.action === "sessions") await revokeSessions(selected.user.id);
           else {
             if (!reason.trim()) throw new Error("Enter a reason.");
-            await banUser(
-              selected.user.id,
-              selected.action === "deactivate" ? `Deactivated: ${reason.trim()}` : reason.trim(),
-            );
+            await banUser(selected.user.id, reason.trim());
           }
           resource.reload();
         }}
       >
-        {selected?.action === "ban" || selected?.action === "deactivate" ? (
+        {selected?.action === "ban" ? (
           <Field>
             <FieldLabel htmlFor="user-ban-reason">Reason</FieldLabel>
             <Textarea

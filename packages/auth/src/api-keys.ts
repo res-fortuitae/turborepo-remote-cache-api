@@ -211,8 +211,11 @@ export const makeApiKeys = (input: {
       const limits = await policy(body.organizationId);
       if (limits.apiKeys === "disallowed") throw forbidden();
       const expiresIn = body.expiresIn ?? Math.min(30, limits.maxApiKeyLifetimeDays) * 86400;
-      if (expiresIn > Math.min(90, limits.maxApiKeyLifetimeDays) * 86400)
-        throw new APIError("BAD_REQUEST");
+      const maxDays = Math.min(90, limits.maxApiKeyLifetimeDays);
+      if (expiresIn > maxDays * 86400)
+        throw new APIError("BAD_REQUEST", {
+          message: `API-key expiry cannot exceed ${maxDays} days under the current policy.`,
+        });
       const projectId = body.permissions.project[0]!;
       const [project] = await db
         .select()
