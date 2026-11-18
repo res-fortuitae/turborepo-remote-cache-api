@@ -185,7 +185,7 @@ export const runDoctor = async (options: {
         );
       }
     }
-    if ((options.policy || !options.server) && resolved.project && claims) {
+    if (options.policy && resolved.project && claims) {
       try {
         policy = await (
           await sessionRequest(

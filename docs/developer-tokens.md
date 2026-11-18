@@ -26,7 +26,7 @@ use the existing epoch revocation path to invalidate already issued tokens.
 Policies requiring artifact signing or sender binding fail closed until the
 corresponding developer credential capability is available.
 
-`tcache token --refresh` always obtains a fresh token using a new CLI runtime.
+Each `tcache token` invocation obtains a fresh developer cache token.
 It prints a secret for script compatibility; prefer `exec`. `env` is also an
 explicit secret-export mode. Do not send either command's output to CI logs.
 

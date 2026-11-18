@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { TokenCache, CiProvider, ClientConfig } from "@repo/client-core";
+import * as NodeOS from "node:os";
 import {
   childEnvironment,
   formatEnvironment,
@@ -7,6 +8,10 @@ import {
   startProxy,
   turboEnvironment,
 } from "./auth.ts";
+
+const execGraceMs = 10_000;
+const terminateGraceMs = 2_000;
+type ShutdownSignal = "SIGINT" | "SIGTERM";
 
 const option = (args: string[], name: string) => {
   const index = args.indexOf(name);
@@ -81,30 +86,63 @@ export const runAuthCommand = async (args: string[]) => {
 
   let proxy: Awaited<ReturnType<typeof startProxy>>;
   let child: ReturnType<typeof Bun.spawn> | undefined;
+  let interrupted: ShutdownSignal | undefined;
+  let escalation: ReturnType<typeof setTimeout> | undefined;
   let removeState = false;
-  let finish: (() => void) | undefined;
+  const { promise: done, resolve: finish } = Promise.withResolvers<void>();
 
-  const done = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-
-  const shutdown = () => {
-    child?.kill();
-    finish?.();
+  const separateGroup = process.platform !== "win32";
+  const signalChild = (signal: ShutdownSignal | "SIGKILL") => {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    if (!separateGroup) {
+      child.kill(signal);
+      return;
+    }
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      // The child can exit before the kernel delivers the signal.
+      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    }
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  const shutdown = (signal: ShutdownSignal) => {
+    if (interrupted) return;
+    interrupted = signal;
+    if (!child) {
+      finish();
+      return;
+    }
+    signalChild(signal);
+    escalation = setTimeout(() => {
+      if (signal === "SIGTERM") {
+        signalChild("SIGKILL");
+      } else {
+        signalChild("SIGTERM");
+        escalation = setTimeout(() => signalChild("SIGKILL"), terminateGraceMs);
+      }
+    }, execGraceMs);
+  };
 
-  const spawn = (env: Record<string, string | undefined>) => {
+  const onInterrupt = () => shutdown("SIGINT");
+  const onTerminate = () => shutdown("SIGTERM");
+  process.on("SIGTERM", onTerminate);
+  process.on("SIGINT", onInterrupt);
+
+  const spawn = async (env: Record<string, string | undefined>) => {
+    if (interrupted) return 128 + NodeOS.constants.signals[interrupted];
+    // Give the wrapper sole ownership of terminal signals on POSIX.
     child = Bun.spawn(command, {
       env: childEnvironment(env),
+      detached: separateGroup,
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
     });
 
-    return child.exited;
+    const code = await child.exited;
+    const signal = child.signalCode;
+    return typeof signal === "string" ? 128 + NodeOS.constants.signals[signal] : code;
   };
 
   try {
@@ -142,7 +180,7 @@ export const runAuthCommand = async (args: string[]) => {
     }
 
     try {
-      proxy = await startProxy(runtime, shutdown);
+      proxy = await startProxy(runtime, onTerminate);
     } catch {
       if (
         options.includes("--strict") ||
@@ -198,9 +236,9 @@ export const runAuthCommand = async (args: string[]) => {
 
     return 1;
   } finally {
-    process.off("SIGTERM", shutdown);
-    process.off("SIGINT", shutdown);
-    child?.kill();
+    process.off("SIGTERM", onTerminate);
+    process.off("SIGINT", onInterrupt);
+    clearTimeout(escalation);
 
     if (proxy) {
       proxy.stop();

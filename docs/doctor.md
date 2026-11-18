@@ -8,10 +8,10 @@ signatures, session tokens or API keys. It does not acquire a fresh CI assertion
 just to display claims; providers that expose no local assertion are reported
 without claim details. Detection cannot prove a runner is ephemeral.
 
-When local claims and a project are available, doctor attempts the existing
-session-authorized policy tester. `--policy` explicitly requests it in server
-mode. This is a simulation, not proof of authentication or authorization. Only
-project admins can inspect policy match details. Anonymous and ordinary CI failures
+Pass `--policy` to request a session-authorized policy dry run when local claims
+and a project are available. It works with or without `--server`. The dry run
+simulates policy matching. Only project admins can inspect policy match details.
+Anonymous and ordinary CI failures
 remain generic. Follow the audit-log link or ask a project admin to test stable
 repository/issuer claims; never loosen a policy based solely on decoded claims.
 

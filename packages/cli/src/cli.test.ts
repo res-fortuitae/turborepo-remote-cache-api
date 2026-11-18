@@ -231,3 +231,31 @@ test("Effect CLI handles account, linking, permissions, and command exit codes w
     await rm(directory, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("token rejects the removed refresh option", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tcache-token-options-"));
+  try {
+    const child = Bun.spawn(
+      [
+        ...(Bun.env.TCACHE_TEST_BINARY ? [Bun.env.TCACHE_TEST_BINARY] : [process.execPath, bin]),
+        "token",
+        "--refresh",
+      ],
+      {
+        cwd: directory,
+        env: { HOME: directory, PATH: Bun.env.PATH },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(code).toBe(1);
+    expect(stdout + stderr).toContain("Unrecognized flag: --refresh");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

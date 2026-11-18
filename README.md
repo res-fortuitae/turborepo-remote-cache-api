@@ -200,7 +200,7 @@ a second app. More detail: [GitHub sign-in](docs/github-sign-in.md).
 ```sh
 cp .env.example .env
 openssl rand -hex 32   # use for BETTER_AUTH_SECRET
-openssl rand -hex 32   # use for TURBO_TOKEN (doctor/admin bearer)
+openssl rand -hex 32   # use for TURBO_TOKEN (instance bearer)
 bun run keygen --out ~/secure/tcache-signing-key.json
 ```
 
@@ -268,10 +268,11 @@ destroy target `stages.production`; pass `--stage <name>` for another stage.
    `permissions: id-token: write`.
 5. The wizard confirms when the first artifact arrives.
 
-To check the server from your terminal:
+To run the admin self-test from your terminal, sign in to the instance first:
 
 ```sh
-TURBO_API=<url> TURBO_TOKEN=<TURBO_TOKEN from .env> bun packages/cli/src/bin.ts doctor --server
+bun packages/cli/src/bin.ts login --api https://cache.example.com
+bun packages/cli/src/bin.ts doctor --server https://cache.example.com
 ```
 
 ### 10. Use it from other places
@@ -526,12 +527,6 @@ cross-device cache, integrity and audit journeys, fixes found, and remaining gat
 Open **Capabilities** in the console (`/#capabilities`), or query
 `GET /api/instance/capabilities` with a signed-in session or the instance's bearer
 token. Responses use `Cache-Control: no-store` and a versioned shared contract.
-The server capability part of doctor is available now:
-
-```sh
-TURBO_API=https://cache.example.com TURBO_TOKEN='<token>' bun packages/cli/src/bin.ts doctor --server
-# Add --json for the same report used by the console.
-```
 
 Deployment detects Workers billing and the serving custom domain's zone plan
 separately, using Alchemy's selected account and credentials. It makes read-only

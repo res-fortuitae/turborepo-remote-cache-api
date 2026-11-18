@@ -62,7 +62,7 @@ even if the configured shared secret has that shape. Legacy resolver results use
 synthetic `legacy` identity fields; only the migration route selects its old team
 prefix.
 
-The instance capability/doctor bearer remains a separate use of `TURBO_TOKEN`.
+The instance capability endpoint also accepts the instance `TURBO_TOKEN`.
 Disabling legacy cache access does not change doctor authentication.
 
 ## Services and verification

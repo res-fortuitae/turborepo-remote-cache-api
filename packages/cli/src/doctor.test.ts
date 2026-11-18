@@ -1,88 +1,111 @@
 import { expect, test } from "bun:test";
 import { diagnosticClaims, localWarnings } from "./doctor.ts";
-import type { CapabilityReport } from "@repo/shared";
-import { doctorServer, formatCapabilities } from "./index.ts";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { HealthReport, SelfTestReport } from "@repo/shared";
 
-const feature = {
-  enabled: false,
-  reason: "Workers Paid required",
-  fallback: "D1 only",
-  upgrade: "Enable Workers Paid",
-};
-
-const report: CapabilityReport = {
-  schemaVersion: 1,
-  workersPlan: "unknown",
-  zonePlan: "none",
-  emailSending: feature,
-  analytics: feature,
-  auditHistory: feature,
-  directUploads: feature,
-  analyticsMode: "lite",
-  auditRetentionDays: 365,
-  warnings: ["Probe denied"],
-};
-
-test("doctor reads and validates the server contract and redacts credentials from output", async () => {
-  const requests: { url: string; authorization: string | null }[] = [];
-
+test("doctor checks public health by default and uses the saved session for opt-in requests", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tcache-doctor-"));
+  const requests: [string, string, string | null][] = [];
+  const claims = { sub: "repo:org/repo" };
+  const health: typeof HealthReport.Type = {
+    version: "test",
+    schema_version: 1,
+    healthy: true,
+    checks: { d1: "ok", r2: "ok", kv: "ok", coordinator: "ok" },
+    capabilities: {
+      analytics: false,
+      auditHistory: false,
+      directUploads: false,
+      emailSending: false,
+    },
+  };
+  const selftest: typeof SelfTestReport.Type = {
+    ok: true,
+    requestId: "fixture",
+    auth: { github: false, orgCreation: "admin" },
+    steps: [],
+  };
+  const policyPath = "/projects/project/trust-policies/test";
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
-      requests.push({ url: request.url, authorization: request.headers.get("authorization") });
-
-      return Response.json(report);
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      requests.push([request.method, path, request.headers.get("authorization")]);
+      if (path === "/healthz") return Response.json(health);
+      if (path === "/api/instance/selftest") return Response.json(selftest);
+      if (path === policyPath) {
+        expect(await request.json()).toEqual({ claims });
+        return Response.json({ matched: true });
+      }
+      return new Response(null, { status: 404 });
     },
   });
-
+  const execute = async (...args: string[]) => {
+    const bin = new URL("./bin.ts", import.meta.url).pathname;
+    const cli = Bun.env.TCACHE_TEST_BINARY ? [Bun.env.TCACHE_TEST_BINARY] : [process.execPath, bin];
+    const child = Bun.spawn([...cli, "doctor", server.url.origin, ...args], {
+      cwd: directory,
+      env: {
+        HOME: directory,
+        PATH: Bun.env.PATH,
+        TCACHE_TEAM: "org",
+        TCACHE_PROJECT: "project",
+        CACHE_ID_TOKEN: `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`,
+        TURBO_TOKEN: "unused-cache-token",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect(code).toBe(0);
+    expect(stdout + stderr).not.toContain("private-session");
+    expect(stdout + stderr).not.toContain("unused-cache-token");
+    return stdout;
+  };
   try {
-    const result = await doctorServer({ server: server.url.origin, token: "test-secret" });
-    expect(result).toEqual(report);
-    expect(new URL(requests[0]!.url).pathname).toBe("/api/instance/capabilities");
-    expect(requests[0]!.authorization).toBe("Bearer test-secret");
-    const output = formatCapabilities(result);
-    expect(output).toContain("Fallback: D1 only");
-    expect(output).toContain("Warning: Probe denied");
-    expect(output).not.toContain("test-secret");
-  } finally {
-    await server.stop(true);
-  }
-});
-
-test("doctor rejects a legacy response, redirects, and unauthorized servers", async () => {
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      const auth = request.headers.get("authorization");
-
-      if (auth === "Bearer redirect") return Response.redirect("https://example.com");
-
-      if (auth === "Bearer legacy") return Response.json({ status: "enabled" });
-
-      return new Response("unauthorized", { status: 401 });
-    },
-  });
-
-  try {
-    await expect(doctorServer({ server: server.url.origin, token: "bad" })).rejects.toThrow(
-      "HTTP 401",
+    await mkdir(join(directory, ".config/tcache"), { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(directory, ".config/tcache/session.json"),
+      JSON.stringify({ api: server.url.origin, token: "private-session" }),
+      { mode: 0o600 },
     );
-    await expect(doctorServer({ server: server.url.origin, token: "legacy" })).rejects.toThrow();
-    await expect(doctorServer({ server: server.url.origin, token: "redirect" })).rejects.toThrow();
+
+    const healthRequest: (typeof requests)[number] = ["GET", "/healthz", null];
+    const policyRequest: (typeof requests)[number] = ["POST", policyPath, "Bearer private-session"];
+    expect(await execute()).toContain(
+      "Use --policy to request an authorized project policy dry run.",
+    );
+    expect(requests.splice(0)).toEqual([healthRequest]);
+
+    expect(JSON.parse(await execute("--server", "--json"))).toMatchObject({ health, selftest });
+    expect(requests.splice(0)).toEqual([
+      healthRequest,
+      ["POST", "/api/instance/selftest", "Bearer private-session"],
+    ]);
+
+    expect(await execute("--policy")).toContain('Policy dry run: {"matched":true}');
+    expect(requests.splice(0)).toEqual([healthRequest, policyRequest]);
+
+    expect(JSON.parse(await execute("--server", "--policy", "--json"))).toMatchObject({
+      selftest,
+      policy: { matched: true },
+    });
+    expect(requests.splice(0)).toEqual([
+      healthRequest,
+      ["POST", "/api/instance/selftest", "Bearer private-session"],
+      policyRequest,
+    ]);
   } finally {
     await server.stop(true);
+    await rm(directory, { recursive: true, force: true });
   }
-});
-
-test.each([
-  "http://example.com",
-  "https://user:pass@example.com",
-  "https://example.com/path",
-  "https://example.com?token=x",
-])("doctor rejects unsafe origin %s before sending credentials", async (server) => {
-  await expect(doctorServer({ server, token: "test" })).rejects.toThrow();
 });
 
 test("doctor emits selected unverified claims and fixed runner warnings without secrets", () => {
