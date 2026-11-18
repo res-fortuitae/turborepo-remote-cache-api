@@ -105,22 +105,7 @@ const admin = Command.make("admin").pipe(
       },
       (options) =>
         run(async () => {
-          const args = [
-            options.project,
-            ...(options.filter ? ["--filter", options.filter] : []),
-            ...(options.job ? ["--job", options.job] : []),
-            ...(options.confirm ? ["--confirm"] : []),
-          ];
-          console.log(
-            JSON.stringify(
-              await adminPurge(args, {
-                server: Bun.env.TURBO_API,
-                cookie: Bun.env.TCACHE_SESSION_COOKIE,
-              }),
-              null,
-              2,
-            ),
-          );
+          console.log(JSON.stringify(await adminPurge(options.project, options), null, 2));
         }),
     ),
   ]),

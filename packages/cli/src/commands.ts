@@ -1,6 +1,12 @@
 import { Effect } from "effect";
 import { TokenCache, CiProvider, ClientConfig } from "@repo/client-core";
-import { formatEnvironment, makeAuthRuntime, startProxy, turboEnvironment } from "./auth.ts";
+import {
+  childEnvironment,
+  formatEnvironment,
+  makeAuthRuntime,
+  startProxy,
+  turboEnvironment,
+} from "./auth.ts";
 
 const option = (args: string[], name: string) => {
   const index = args.indexOf(name);
@@ -91,7 +97,12 @@ export const runAuthCommand = async (args: string[]) => {
   process.on("SIGINT", shutdown);
 
   const spawn = (env: Record<string, string | undefined>) => {
-    child = Bun.spawn(command, { env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+    child = Bun.spawn(command, {
+      env: childEnvironment(env),
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
 
     return child.exited;
   };
@@ -150,7 +161,6 @@ export const runAuthCommand = async (args: string[]) => {
       }
 
       return await spawn({
-        ...Bun.env,
         TURBO_API: "http://127.0.0.1:1",
         TURBO_TOKEN: "",
         TURBO_REMOTE_CACHE_SIGNATURE_KEY: undefined,
@@ -159,8 +169,7 @@ export const runAuthCommand = async (args: string[]) => {
       });
     }
 
-    if (mode === "exec")
-      return await spawn({ ...Bun.env, TCACHE_API_KEY: undefined, ...proxy.environment });
+    if (mode === "exec") return await spawn(proxy.environment);
     // Publish a fully written file atomically without replacing an existing path/symlink.
     const { open, unlink, link } = await import("node:fs/promises");
     const temporary = `${state!}.${crypto.randomUUID()}.tmp`;

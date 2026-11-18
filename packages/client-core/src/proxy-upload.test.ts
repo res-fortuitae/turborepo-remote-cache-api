@@ -88,6 +88,7 @@ test.each(["oidc", "developer", "unbound-oidc"] as const)(
           Layer.succeed(ProxySession, { secret: Redacted.make("session") }),
           Layer.succeed(ClientConfig, {
             api: credential.api,
+            apiFromLinkedFile: false,
             audience: credential.api,
             team: "org",
             project: "p",
