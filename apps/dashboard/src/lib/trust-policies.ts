@@ -1,3 +1,5 @@
+import { savePolicy } from "./credentials.ts";
+import { listTrustPolicies } from "./projects.ts";
 import type { GitHubRepository } from "./github.ts";
 
 export const GITHUB_ISSUER = "https://token.actions.githubusercontent.com";
@@ -35,6 +37,35 @@ export const githubDefaultPolicies = (repo: GitHubRepository, audience: string) 
     },
   ];
 };
+
+/** Resume a partial setup without changing an equivalent policy an admin already configured. */
+export async function ensureGithubPolicies(
+  projectId: string,
+  repo: GitHubRepository,
+  audience: string,
+) {
+  const existing = await listTrustPolicies(projectId);
+  for (const policy of githubDefaultPolicies(repo, audience)) {
+    const claims = Object.entries(policy.claims);
+    const matches = existing.filter(
+      (entry) =>
+        entry.provider === policy.provider &&
+        entry.issuer === policy.issuer &&
+        entry.scope === policy.scope &&
+        Object.keys(entry.claims).length === claims.length &&
+        claims.every(([name, values]) => {
+          const actual = entry.claims[name];
+          return (
+            actual?.length === values.length && values.every((value) => actual.includes(value))
+          );
+        }),
+    );
+    if (matches.some((entry) => entry.enabled)) continue;
+    if (matches.length > 0)
+      throw new Error(`${policy.label} is disabled. Enable it in Credentials to finish setup.`);
+    await savePolicy(projectId, policy);
+  }
+}
 
 export const githubWorkflow = (input: {
   readonly api: string;

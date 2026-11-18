@@ -1,6 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import type { AuditEvent } from "@repo/shared";
-import { auditExport, auditParams, mergeAudit, readAudit, searchAudit } from "./audit.ts";
+import {
+  auditExport,
+  auditParams,
+  formatAuditDate,
+  mergeAudit,
+  readAudit,
+  searchAudit,
+} from "./audit.ts";
 
 const filter = {
   from: "2026-10-20T00:00:00.000Z",
@@ -80,4 +87,15 @@ test("live tail catches up across pages with the same query window", async () =>
   expect(requests).toHaveLength(2);
   expect(requests[1]?.searchParams.get("cursor")).toBe("next");
   expect(requests[1]?.searchParams.get("to")).toBe(filter.to);
+});
+
+test("audit displays the UTC date and time even across a date boundary", () => {
+  const format = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  });
+  expect(formatAuditDate("2026-11-18T01:05:00+11:00")).toBe(
+    format.format(new Date("2026-11-17T14:05:00Z")),
+  );
 });

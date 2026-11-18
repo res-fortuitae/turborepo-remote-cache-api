@@ -1,6 +1,5 @@
-import { expect, test } from "bun:test";
-import { keyPermissions } from "./cache-keys.ts";
-import { githubDefaultPolicies, githubWorkflow } from "./trust-policies.ts";
+import { afterEach, expect, test } from "bun:test";
+import { ensureGithubPolicies, githubDefaultPolicies, githubWorkflow } from "./trust-policies.ts";
 
 const repo = {
   repository: "acme/web",
@@ -41,10 +40,31 @@ test("the workflow requests an OIDC token and names the org and project IDs", ()
   expect(yaml).not.toContain("secrets.");
 });
 
-test("API key permissions parse from Better Auth's JSON text", () => {
-  expect(keyPermissions({ permissions: '{"project":["p1"],"cache":["read","write"]}' })).toEqual({
-    projects: ["p1"],
-    cache: ["read", "write"],
-  });
-  expect(keyPermissions({ permissions: "not json" })).toEqual({ projects: [], cache: [] });
+const originalFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+test("resuming GitHub setup writes only the missing default policy", async () => {
+  const [write, read] = githubDefaultPolicies(repo, "https://cache.example.com");
+  const row = {
+    id: "write",
+    projectId: "p",
+    createdBy: "u",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    errors: [],
+    warnings: [],
+    ...write!,
+    label: "Customized display name",
+  };
+  const posted: unknown[] = [];
+  globalThis.fetch = (async (_url, init) => {
+    if (init?.method === "GET") return Response.json([row]);
+    const body = JSON.parse(String(init?.body));
+    posted.push(body);
+    return Response.json({ ...row, ...body, id: "read" });
+  }) as typeof fetch;
+
+  await ensureGithubPolicies("p", repo, "https://cache.example.com");
+  expect(posted).toEqual([read]);
 });

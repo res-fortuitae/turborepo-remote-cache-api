@@ -46,6 +46,7 @@ import {
   invite,
   listInvitations,
   listMembers,
+  MEMBER_PAGE_SIZE,
   listRoles,
   removeMember,
   updateMemberRole,
@@ -219,7 +220,7 @@ function MemberRow({
 }) {
   const org = useOrg();
   const [removing, setRemoving] = useState(false);
-  const action = useAction();
+  const [pendingRole, setPendingRole] = useState<string>();
   const owner = member.role.split(",").includes("owner");
   const options = roles.includes(member.role) ? roles : [member.role, ...roles];
 
@@ -247,11 +248,7 @@ function MemberRow({
           <NativeSelect
             aria-label={`Role for ${member.user.name}`}
             value={member.role}
-            disabled={action.busy}
-            onChange={(event) => {
-              const role = event.target.value;
-              void action.run(() => updateMemberRole(org.id, member.id, role)).then(onChanged);
-            }}
+            onChange={(event) => setPendingRole(event.target.value)}
           >
             {options.map((name) => (
               <option key={name} value={name}>
@@ -262,11 +259,20 @@ function MemberRow({
         ) : (
           <Badge variant={owner ? "default" : "secondary"}>{member.role}</Badge>
         )}
-        {action.error === undefined ? null : (
-          <p role="alert" className="mt-1 text-xs text-destructive">
-            Role change refused.
-          </p>
-        )}
+        <ConfirmDialog
+          open={pendingRole !== undefined}
+          onOpenChange={(open) => {
+            if (!open) setPendingRole(undefined);
+          }}
+          title={`Change role for ${member.user.name}?`}
+          description={`Their organization role will change from ${member.role} to ${pendingRole ?? ""}.`}
+          confirmLabel="Change role"
+          onConfirm={async () => {
+            if (!pendingRole) return;
+            await updateMemberRole(org.id, member.id, pendingRole);
+            onChanged();
+          }}
+        />
       </TableCell>
       <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
         {formatDate(member.createdAt)}
@@ -311,6 +317,7 @@ function InvitationRow({
   readonly onChanged: () => void;
 }) {
   const [link, setLink] = useState<string>();
+  const [cancelling, setCancelling] = useState(false);
   const action = useAction();
 
   return (
@@ -344,15 +351,26 @@ function InvitationRow({
                 size="icon"
                 aria-label={`Cancel invitation for ${invitation.email}`}
                 disabled={action.busy}
-                onClick={() =>
-                  void action.run(() => cancelInvitation(invitation.id)).then(onChanged)
-                }
+                onClick={() => setCancelling(true)}
               >
                 <Trash2 />
               </Button>
             </>
           ) : null}
         </span>
+        <ConfirmDialog
+          open={cancelling}
+          onOpenChange={setCancelling}
+          title={`Cancel the invitation for ${invitation.email}?`}
+          description="The invitation link will stop working."
+          confirmLabel="Cancel invitation"
+          destructive
+          onConfirm={async () => {
+            await cancelInvitation(invitation.id);
+            setLink(undefined);
+            onChanged();
+          }}
+        />
         {link ? (
           <div className="mt-2 text-left">
             <CodeBlock label="Invitation link" code={link} />
@@ -374,7 +392,12 @@ export function MembersPage() {
   const session = authClient.useSession();
   const roles = useAssignableRoles();
   const [inviting, setInviting] = useState(false);
-  const members = useResource(`members:${org.id}`, (signal) => listMembers(org.id, signal));
+  const [offset, setOffset] = useState(0);
+  const members = useResource(`members:${org.id}:${offset}`, async (signal) => ({
+    ...(await listMembers(org.id, signal, offset)),
+    offset,
+  }));
+  const page = members.data?.offset === offset ? members.data : undefined;
   const invitations = useResource(
     permissions.can("invitation", "create") ? `invitations:${org.id}` : null,
     (signal) => listInvitations(org.id, signal),
@@ -408,8 +431,10 @@ export function MembersPage() {
         <CardContent>
           {members.status === "error" ? (
             <ErrorState error={members.error} onRetry={members.reload} />
-          ) : !members.data ? (
+          ) : !page ? (
             <LoadingRows />
+          ) : page.members.length === 0 ? (
+            <EmptyState icon={<Users />} title="No members on this page" />
           ) : (
             <Table>
               <TableHeader>
@@ -423,7 +448,7 @@ export function MembersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {members.data.members.map((member) => (
+                {page.members.map((member) => (
                   <MemberRow
                     key={member.id}
                     member={member}
@@ -437,6 +462,29 @@ export function MembersPage() {
               </TableBody>
             </Table>
           )}
+          {offset > 0 || (page && offset + MEMBER_PAGE_SIZE < page.total) ? (
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <Button
+                variant="outline"
+                disabled={offset === 0 || members.status === "loading"}
+                onClick={() => setOffset(Math.max(0, offset - MEMBER_PAGE_SIZE))}
+              >
+                Previous
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Page {offset / MEMBER_PAGE_SIZE + 1}
+              </span>
+              <Button
+                variant="outline"
+                disabled={
+                  !page || members.status !== "ready" || offset + MEMBER_PAGE_SIZE >= page.total
+                }
+                onClick={() => setOffset(offset + MEMBER_PAGE_SIZE)}
+              >
+                Next
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       {permissions.can("invitation", "create") ? (

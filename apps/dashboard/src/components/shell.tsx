@@ -14,13 +14,15 @@ import {
 } from "@repo/ui/components/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/components/sheet";
 import { cn } from "@repo/ui/lib/utils";
-import { authClient, type Session } from "../lib/auth-client.ts";
+import { authClient, signOut, type Session } from "../lib/auth-client.ts";
 import { navItems, type NavItem } from "../lib/nav.ts";
 import { orgPath, useOptionalOrg } from "../lib/org.tsx";
 import { href, navigate, splitLocation, useLocation } from "../lib/router.tsx";
 import { ElevationBanner } from "./ElevationBanner.tsx";
 import { BrandMark } from "./brand.tsx";
 import { ThemeToggle } from "./theme-toggle.tsx";
+import { ErrorState } from "./common.tsx";
+import { useAction } from "./forms.tsx";
 
 const initials = (name: string) =>
   name
@@ -88,7 +90,15 @@ function OrgSwitcher() {
   );
 }
 
-function UserMenu({ session }: { readonly session: Session }) {
+function UserMenu({
+  session,
+  onSignOut,
+  signingOut,
+}: {
+  readonly session: Session;
+  readonly onSignOut: () => void;
+  readonly signingOut: boolean;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -111,14 +121,7 @@ function UserMenu({ session }: { readonly session: Session }) {
           </DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() =>
-            void authClient.signOut().then(() => {
-              navigate("/", { replace: true });
-              window.location.reload();
-            })
-          }
-        >
+        <DropdownMenuItem disabled={signingOut} onClick={onSignOut}>
           <LogOut />
           Sign out
         </DropdownMenuItem>
@@ -235,6 +238,15 @@ export function AppShell({
 }) {
   const [open, setOpen] = useState(false);
   const org = useOptionalOrg();
+  const signOutAction = useAction();
+
+  function handleSignOut() {
+    void signOutAction.run(async () => {
+      await signOut();
+      navigate("/", { replace: true });
+      window.location.reload();
+    });
+  }
 
   useEffect(() => {
     document.title = `${title} · ${org?.name ?? "Instance"} · Remote Cache`;
@@ -285,7 +297,11 @@ export function AppShell({
             </div>
             <div className="flex items-center gap-1">
               <ThemeToggle />
-              <UserMenu session={session} />
+              <UserMenu
+                session={session}
+                onSignOut={handleSignOut}
+                signingOut={signOutAction.busy}
+              />
             </div>
           </header>
           <main
@@ -293,6 +309,9 @@ export function AppShell({
             tabIndex={-1}
             className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 outline-none md:px-8 lg:py-10"
           >
+            {signOutAction.error === undefined ? null : (
+              <ErrorState error={signOutAction.error} onRetry={handleSignOut} />
+            )}
             <ElevationBanner role={session.user.role} />
             {children}
           </main>

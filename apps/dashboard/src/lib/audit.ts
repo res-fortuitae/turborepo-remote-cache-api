@@ -1,6 +1,13 @@
 import { AuditPage, type AuditEvent } from "@repo/shared";
 import { api } from "./api.ts";
 
+const utcDateTime = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
+export const formatAuditDate = (value: string) => utcDateTime.format(new Date(value));
+
 export interface AuditFilter {
   readonly from: string;
   readonly to: string;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, ScrollText } from "lucide-react";
 import type { AuditEvent } from "@repo/shared";
 import { Badge } from "@repo/ui/components/badge";
@@ -27,11 +27,11 @@ import {
   ErrorState,
   LoadingRows,
   PageHeader,
-  formatDate,
 } from "../components/common.tsx";
 import { NativeSelect } from "../components/forms.tsx";
 import {
   auditExport,
+  formatAuditDate,
   mergeAudit,
   readAudit,
   searchAudit,
@@ -59,6 +59,7 @@ function AuditTimeline({
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<AuditEvent>();
   const [updated, setUpdated] = useState<string>();
+  const pagination = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,7 +80,11 @@ function AuditTimeline({
       .finally(() => {
         if (!controller.signal.aborted) setBusy(false);
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      pagination.current?.abort();
+      pagination.current = null;
+    };
   }, [orgId, filter, attempt]);
 
   // Sequential tail reads avoid overlap on a slow history backend. A remount on
@@ -116,17 +121,23 @@ function AuditTimeline({
   }, [live, busy, orgId, filter, tick, items]);
 
   async function more() {
-    if (!cursor || busy) return;
+    if (!cursor || busy || pagination.current) return;
+    const controller = new AbortController();
+    pagination.current = controller;
     setBusy(true);
     try {
-      const page = await readAudit(orgId, filter, cursor);
+      const page = await readAudit(orgId, filter, cursor, controller.signal);
+      if (controller.signal.aborted) return;
       setItems((previous) => mergeAudit(previous, page.items));
       setCursor(page.nextCursor);
       setError(undefined);
     } catch (cause) {
-      setError(cause);
+      if (!controller.signal.aborted) setError(cause);
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) {
+        pagination.current = null;
+        setBusy(false);
+      }
     }
   }
   const visible = searchAudit(items, query);
@@ -204,7 +215,9 @@ function AuditTimeline({
           <TableBody>
             {visible.map((event) => (
               <TableRow key={event.id}>
-                <TableCell className="whitespace-nowrap text-xs">{formatDate(event.ts)}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs">
+                  {formatAuditDate(event.ts)}
+                </TableCell>
                 <TableCell>
                   <span>{event.actor.display}</span>
                   <p className="font-mono text-xs text-muted-foreground">{event.actor.type}</p>
@@ -238,7 +251,7 @@ function AuditTimeline({
       ) : null}
       <div className="flex items-center justify-between gap-3">
         <p role="status" className="text-xs text-muted-foreground">
-          {items.length} loaded{updated ? ` · Updated ${formatDate(updated)}` : ""}
+          {items.length} loaded{updated ? ` · Updated ${formatAuditDate(updated)}` : ""}
           {live ? " · Live" : ""}
         </p>
         {cursor ? (
@@ -257,7 +270,7 @@ function AuditTimeline({
           <SheetHeader>
             <SheetTitle>{selected?.action ?? "Audit event"}</SheetTitle>
             <SheetDescription>
-              {selected ? formatDate(selected.ts) : "Event details"}
+              {selected ? formatAuditDate(selected.ts) : "Event details"}
             </SheetDescription>
           </SheetHeader>
           {selected ? (

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { connectedRepositories, EVERYTHING } from "./projects.ts";
+import { afterEach, expect, test } from "bun:test";
+import { connectedRepositories, EVERYTHING, listProjects } from "./projects.ts";
 
 const policy = (repository: string, scope: "read" | "read write", enabled = true) => ({
   id: crypto.randomUUID(),
@@ -32,4 +32,22 @@ test("groups trust policies by repository with their strongest enabled scope", (
 test("the whole-cache purge filter is non-empty and selects every upload", () => {
   expect(Object.keys(EVERYTHING)).toEqual(["since"]);
   expect(Date.parse(EVERYTHING.since)).toBe(0);
+});
+
+const originalFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+test("project enumeration follows the server cursor", async () => {
+  const cursors: Array<string | null> = [];
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input), "https://example.test");
+    const cursor = url.searchParams.get("cursor");
+    cursors.push(cursor);
+    return Response.json({ items: [], nextCursor: cursor === null ? "next+/=" : null });
+  }) as typeof fetch;
+
+  expect(await listProjects("org")).toEqual({ items: [], nextCursor: null });
+  expect(cursors).toEqual([null, "next+/="]);
 });
