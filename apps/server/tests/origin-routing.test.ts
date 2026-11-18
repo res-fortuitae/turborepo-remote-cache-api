@@ -123,12 +123,21 @@ test("reserved API paths bypass dashboard assets, including SPA navigation reque
 
 test("dashboard assets receive the same baseline on the assets-first path", async () => {
   const rules = await Bun.file(new URL("../../dashboard/public/_headers", import.meta.url)).text();
-  const headers = rules.toLowerCase();
+  const headers = rules.split("\n").map((line) => line.trim());
 
-  expect(headers.startsWith("/*\n")).toBe(true);
-  expect(headers).toContain("strict-transport-security: max-age=31536000");
+  expect(headers[0]).toBe("/*");
+  expect(headers).toContain("Strict-Transport-Security: max-age=31536000");
 
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
-    expect(headers).toContain(`${name}: ${value.toLowerCase()}`);
+    const matching = headers.filter((line) => line.toLowerCase().startsWith(`${name}:`));
+    expect(matching.map((line) => line.slice(name.length + 1).trim())).toEqual([value]);
   }
+});
+
+test("CSP allows dashboard connections to its origin and the GitHub API only", () => {
+  const directives = SECURITY_HEADERS["content-security-policy"].split("; ");
+
+  expect(directives.filter((directive) => directive.startsWith("connect-src "))).toEqual([
+    "connect-src 'self' https://api.github.com",
+  ]);
 });
