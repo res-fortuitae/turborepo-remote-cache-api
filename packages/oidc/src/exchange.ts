@@ -32,7 +32,7 @@ export interface ExchangeContext {
   readonly ip: string;
   readonly userAgent: string;
   readonly requestId: string;
-  readonly dpop?: string;
+  readonly dpop?: { readonly proof: string; readonly pathname: string };
 }
 
 const denied = (reason: string) => new ExchangeError({ status: 403, reason });
@@ -151,8 +151,6 @@ const makeExchange = Effect.gen(function* () {
           Effect.mapError(() => denied("malformed")),
         );
 
-        if (!(yield* limiter.allow(`oidc:org:${request.team}`)))
-          return yield* new ExchangeError({ status: 429, reason: "rate_limit_org" });
         verified = yield* verifier
           .verify(Redacted.value(request.token))
           .pipe(
@@ -223,15 +221,18 @@ const makeExchange = Effect.gen(function* () {
             ? undefined
             : yield* dpop
                 .verify({
-                  proof: context.dpop,
+                  proof: context.dpop.proof,
                   method: "POST",
-                  url: `${api}/oidc/exchange`,
+                  url: `${api}${context.dpop.pathname}`,
                 })
                 .pipe(
                   Effect.mapError((error) =>
                     error.reason === "unavailable" ? unavailable() : denied(`dpop_${error.reason}`),
                   ),
                 );
+
+        if (!(yield* limiter.allow(`oidc:org:${request.team}`)))
+          return yield* new ExchangeError({ status: 429, reason: "rate_limit_org" });
 
         if (trustedWrite && anomalies._tag === "Some") {
           const values = Object.fromEntries(
@@ -250,7 +251,7 @@ const makeExchange = Effect.gen(function* () {
         }
 
         const signing =
-          artifactSigning._tag === "Some"
+          trustedWrite && artifactSigning._tag === "Some"
             ? yield* artifactSigning.value.deliver(request.team, project.id, {
                 scope: "org",
                 orgId: request.team,
@@ -265,7 +266,7 @@ const makeExchange = Effect.gen(function* () {
                 metadata: {},
               })
             : undefined;
-        if (policy.requireArtifactSigning && !signing)
+        if (trustedWrite && policy.requireArtifactSigning && !signing)
           return yield* denied("artifact_signing_unavailable");
 
         const ttl = Math.floor(

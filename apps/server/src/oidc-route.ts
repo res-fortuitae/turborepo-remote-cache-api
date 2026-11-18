@@ -1,4 +1,5 @@
 import { ExchangeResponse } from "@repo/api-spec";
+import { CacheTokenVerifier } from "@repo/credentials";
 import { OidcExchange } from "@repo/oidc";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -32,7 +33,13 @@ export const oidcApi = Effect.gen(function* () {
     ip: request.headers["cf-connecting-ip"] ?? "",
     userAgent: request.headers["user-agent"] ?? "",
     requestId: crypto.randomUUID(),
-    dpop: request.headers.dpop,
+    dpop:
+      request.headers.dpop === undefined
+        ? undefined
+        : {
+            proof: request.headers.dpop,
+            pathname: new URL(request.url, "http://localhost").pathname,
+          },
   });
   return yield* HttpServerResponse.json(yield* encode(response));
 }).pipe(
@@ -63,6 +70,21 @@ export const oidcApi = Effect.gen(function* () {
   ),
   Effect.map((response) => HttpServerResponse.setHeader(response, "cache-control", "no-store")),
 );
+
+const cacheTokenJwksApi = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (request.method !== "GET")
+    return HttpServerResponse.empty({ status: 405, headers: { allow: "GET" } });
+  const verifier = yield* CacheTokenVerifier;
+  return yield* HttpServerResponse.json(yield* verifier.jwks);
+});
+
+export const cacheTokenJwksRoute = <E, R>(layer: Layer.Layer<CacheTokenVerifier, E, R>) =>
+  cacheTokenJwksApi.pipe(
+    Effect.provide(layer),
+    Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 503 }))),
+    Effect.map((response) => HttpServerResponse.setHeader(response, "cache-control", "no-store")),
+  );
 
 export const oidcRoute = <E, R>(layer: Layer.Layer<OidcExchange, E, R>) =>
   oidcApi.pipe(

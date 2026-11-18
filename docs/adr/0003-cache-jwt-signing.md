@@ -45,5 +45,8 @@ separately so domain migration need not break CI policies. See
 
 The secret is `{ current: kid, keys: [private Ed25519 JWK, ...] }` with one or two
 keys. To rotate: add the new key, switch `current` to it, and remove the old key once
-the longest token lifetime has passed. All keys in the set verify and appear in the
-JWKS; only `current` signs. Secrets are read per call, so rotation needs no redeploy.
+the longest token lifetime has passed. Only `current` signs. The Worker serves
+the public Ed25519 verification keys at unauthenticated
+`GET /.well-known/jwks.json`, including both keys during overlap. The endpoint
+uses `Cache-Control: no-store` so clients can observe key removal promptly.
+Secrets are read per call, so rotation needs no redeploy.

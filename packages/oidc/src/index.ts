@@ -23,6 +23,7 @@ export type { OidcIssuer } from "./issuer-registry.ts";
 export {
   OidcVerifier,
   OidcVerifierLive,
+  makeIsolateOidcVerifierLayer,
   OidcVerifierConfig,
   OidcVerifierSettings,
   OidcVerifierDefaults,

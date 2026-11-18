@@ -19,6 +19,7 @@ import {
   type Jwks,
   OidcVerifier,
   OidcVerifierLive,
+  makeIsolateOidcVerifierLayer,
   OidcVerifierConfig,
   OidcVerificationError,
   pruneOidcReplayIds,
@@ -309,6 +310,26 @@ describe("OIDC verification", () => {
 });
 
 describe("JWKS discovery and rotation", () => {
+  test("isolate cooldown survives independent request layer builds", async () => {
+    const network = http();
+    const layer = makeIsolateOidcVerifierLayer();
+    const verifyRequest = (token: string) => verify(token).pipe(Effect.provide(layer));
+    await run(
+      Effect.gen(function* () {
+        yield* verifyRequest(yield* sign());
+        network.rotate();
+        for (const jti of ["rotated-1", "rotated-2"]) {
+          expect(yield* reason(verifyRequest(yield* sign({ jti }, true)))).toBe("unknown_kid");
+        }
+        expect(network.urls).toHaveLength(2);
+        yield* TestClock.adjust(30_000);
+        yield* verifyRequest(yield* sign({ jti: "rotated-3" }, true));
+        expect(network.urls).toHaveLength(4);
+      }),
+      network,
+    );
+  });
+
   test("KV hit needs no HTTP and unknown kid refreshes/coalesces once", async () => {
     const network = http();
     network.rotate();

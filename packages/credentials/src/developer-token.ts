@@ -60,7 +60,7 @@ const make = Effect.gen(function* () {
         }
         if (policy.requireBoundTokens) return yield* denied();
         const signing =
-          artifactSigning._tag === "Some"
+          scope === "read write" && artifactSigning._tag === "Some"
             ? yield* artifactSigning.value.deliver(request.team, project.id, {
                 scope: "org",
                 orgId: request.team,
@@ -75,7 +75,8 @@ const make = Effect.gen(function* () {
                 metadata: {},
               })
             : undefined;
-        if (policy.requireArtifactSigning && !signing) return yield* denied();
+        if (scope === "read write" && policy.requireArtifactSigning && !signing)
+          return yield* denied();
         const now = yield* Clock.currentTimeMillis;
         const ttl = Math.min(
           request.ttlSeconds ?? 3600,
