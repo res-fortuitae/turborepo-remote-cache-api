@@ -46,7 +46,6 @@ const authCommands = ["exec", "env", "proxy", "proxy-stop", "token", "ci-auth"].
       ...common,
       format: textFlag("format"),
       state: textFlag("state"),
-      refresh: Flag.Boolean("refresh").pipe(Flag.withDefault(false)),
       write: Flag.Boolean("write").pipe(
         Flag.withDefault(false),
         Flag.withDescription(
@@ -62,7 +61,6 @@ const authCommands = ["exec", "env", "proxy", "proxy-stop", "token", "ci-auth"].
           ...flags(value),
           ...(value.format ? ["--format", value.format] : []),
           ...(value.state ? ["--state", value.state] : []),
-          ...(value.refresh ? ["--refresh"] : []),
           ...(value.write ? ["--write"] : []),
           ...(value.command.length ? ["--", ...value.command] : []),
         ]);

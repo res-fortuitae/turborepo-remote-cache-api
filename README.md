@@ -200,7 +200,7 @@ a second app. More detail: [GitHub sign-in](docs/github-sign-in.md).
 ```sh
 cp .env.example .env
 openssl rand -hex 32   # use for BETTER_AUTH_SECRET
-openssl rand -hex 32   # use for TURBO_TOKEN (doctor/admin bearer)
+openssl rand -hex 32   # use for TURBO_TOKEN (instance bearer)
 bun run keygen --out ~/secure/tcache-signing-key.json
 ```
 
@@ -268,8 +268,12 @@ defaults to `stages.production`. Destroy requires `--stage <name>`.
    `permissions: id-token: write`.
 5. The wizard confirms when the first artifact arrives.
 
-To check the server from your terminal, sign in with `tcache login --api <url>`
-and run `tcache doctor --server <url>`.
+To run the admin self-test from your terminal, sign in to the instance first:
+
+```sh
+tcache login --api https://cache.example.com
+tcache doctor --server https://cache.example.com
+```
 
 ### 10. Use it from other places
 

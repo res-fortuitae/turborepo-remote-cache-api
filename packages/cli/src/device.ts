@@ -2,6 +2,13 @@ import * as Schema from "effect/Schema";
 import { mkdir, chmod, writeFile, rename, lstat, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+
+const devicePollLimitMs = 15 * 60 * 1000;
+const deviceClock = {
+  now: () => performance.now(),
+  wait: (ms: number, signal?: AbortSignal) => sleep(ms, undefined, { signal }),
+};
 
 export const configDirectory = () => join(homedir(), ".config", "tcache");
 export const safeServer = (input: string) => {
@@ -66,19 +73,21 @@ export const deviceLogin = async (
   output: (message: string) => void = console.error,
   signal?: AbortSignal,
   fileSession = false,
+  clock = deviceClock,
 ) => {
   const api = safeServer(server);
-  const post = (path: string, body: object) =>
-    fetch(`${api}/api/auth${path}`, {
+  const post = (path: string, body: object, timeoutMs = 10_000) => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return fetch(`${api}/api/auth${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       redirect: "error",
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
-        : AbortSignal.timeout(10000),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
+  };
   const response = await post("/device/code", { client_id: "tcache", scope: "developer" });
+  if (!response.ok) throw new Error("Device login could not start.");
   const code = Schema.decodeUnknownSync(
     Schema.Struct({
       device_code: Schema.String,
@@ -88,30 +97,36 @@ export const deviceLogin = async (
       interval: Schema.Number,
     }),
   )(await response.json());
-  if (
-    !response.ok ||
-    typeof code.device_code !== "string" ||
-    typeof code.user_code !== "string" ||
-    typeof code.verification_uri !== "string" ||
-    typeof code.expires_in !== "number" ||
-    typeof code.interval !== "number"
-  )
+  if (!Number.isFinite(code.expires_in) || code.expires_in <= 0 || !Number.isFinite(code.interval))
     throw new Error("Device login could not start.");
   const verification = new URL(code.verification_uri);
   if (verification.origin !== api) throw new Error("Invalid verification origin");
+  const deadline = clock.now() + Math.min(devicePollLimitMs, code.expires_in * 1000);
   output(
     `Open ${verification.href}\nEnter code: ${code.user_code}\nOnly approve a device in your possession.`,
   );
-  let interval = Math.max(5, code.interval);
-  const deadline = Date.now() + Math.min(300, code.expires_in) * 1000;
-  while (Date.now() < deadline) {
-    await Bun.sleep(interval * 1000);
+  let intervalMs = Math.max(5, code.interval) * 1000;
+  while (true) {
+    const waitMs = Math.min(intervalMs, deadline - clock.now());
+    if (waitMs <= 0) break;
+    await clock.wait(Math.ceil(waitMs), signal);
     signal?.throwIfAborted();
-    const result = await post("/device/token", {
-      client_id: "tcache",
-      device_code: code.device_code,
-      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-    });
+    const remainingMs = Math.ceil(deadline - clock.now());
+    if (remainingMs <= 0) break;
+    const result = await post(
+      "/device/token",
+      {
+        client_id: "tcache",
+        device_code: code.device_code,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      },
+      Math.min(10_000, remainingMs),
+    );
+    if (result.status === 429 || result.status >= 500) {
+      await result.body?.cancel().catch(() => undefined);
+      intervalMs += 5_000;
+      continue;
+    }
     const value = Schema.decodeUnknownSync(
       Schema.Struct({
         access_token: Schema.optional(Schema.String),
@@ -123,8 +138,8 @@ export const deviceLogin = async (
       output("Signed in. Session saved privately.");
       return;
     }
-    if (value.error === "slow_down" || result.status === 429) {
-      interval += 5;
+    if (value.error === "slow_down") {
+      intervalMs += 5_000;
       continue;
     }
     if (value.error === "authorization_pending") continue;

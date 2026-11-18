@@ -31,7 +31,11 @@ token, so policies requiring binding refuse it. Static API keys remain bearer to
 
 Exec binds a random loopback port, passes a random per-session token to the child,
 streams requests/responses, preserves Content-Length and HEAD, and closes the
-listener when the child exits or is signalled. The real cache token stays in memory.
+listener after the child exits. On POSIX, exec forwards SIGINT or SIGTERM once to
+the child's process group and keeps the proxy running while the child shuts down.
+After 10 seconds, a pending SIGINT shutdown escalates to SIGTERM and gives the
+child another two seconds before SIGKILL. A pending SIGTERM shutdown escalates
+directly to SIGKILL after 10 seconds. The real cache token stays in memory.
 Exec removes `TCACHE_API_KEY` from the child's environment, including when it
 falls back to the local cache.
 A per-process maintenance loop checks refresh every second, with client-core's
@@ -88,9 +92,11 @@ With `--paced` (250 MiB/s source), the same fixture measured 301.72 ms direct /
 298.32 ms proxy, no measurable loss. That fixture meets the 5% target; it does not
 erase the unpaced result or establish a production WAN guarantee.
 
-`doctor --server [URL] [--json]` runs the instance self-test after sign-in.
-See [diagnostics and runner hardening](../../docs/doctor.md) for the required
-role and checks.
+`tcache doctor [URL] [--json]` reports local configuration, available unverified
+CI claims and public server health. `--server` adds an instance-admin self-test
+using the saved login for that origin. It requires an owner or admin session and
+may require fresh passkey verification. `--policy` separately requests an authorized
+policy dry run using the resolved project and available claims. See [diagnostics](../../docs/doctor.md).
 
 ## Developer commands
 
@@ -101,11 +107,13 @@ tcache whoami
 tcache link --team my-org --project PROJECT_ID
 tcache exec -- turbo run build
 tcache exec --strict --write -- turbo run build # explicitly request developer writes
-tcache token --refresh # prints a secret; prefer exec
+tcache token # prints a secret; prefer exec
 tcache logout
 ```
 
-Login prefers the native OS credential manager via `Bun.secrets`; when unavailable,
+Login polls until the device code expires, up to 15 minutes, and backs off on
+rate limits and transient server responses. It prefers the native OS credential
+manager via `Bun.secrets`; when unavailable,
 it warns and uses a 0600 file under a 0700 `~/.config/tcache` directory. Keychain
 metadata contains no session token. A keychain lookup failure fails closed. Logout
 revokes the session remotely before deleting local credentials, so network failure
