@@ -17,8 +17,9 @@ repository/issuer claims; never loosen a policy based solely on decoded claims.
 
 `GET /healthz` is public and returns version, schema version, fixed D1/R2/KV/DO
 statuses and feature booleans, with 200 or 503 and `Cache-Control: no-store`.
-Read-only binding probes run concurrently with a three-second timeout. Use a
-sensible monitoring interval; each poll still consumes binding operations. KV is
+Read-only binding probes run concurrently with a three-second timeout. Polls
+share a 30-per-minute budget per connecting IP. An exhausted budget returns 429
+with `Retry-After` before any binding probes run. KV is
 probed only for availability, not used as an authorization authority. The reported
 schema version identifies this API's policy schema, not a migration ledger hash.
 

@@ -1,13 +1,14 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Bun drives the HTTP adapter at the boundary. */
 import { expect, test } from "bun:test";
 import { ApiKeyVerificationError } from "@repo/auth";
-import { AuthorizationDatabaseLive } from "@repo/authz";
+import { AuthorizationCeilings, AuthorizationDatabaseLive } from "@repo/authz";
 import { AuditLogD1Only } from "@repo/audit";
 import {
   CacheTokensTest,
   CacheTokenSigner,
   DpopVerifierLive,
   CredentialResolverLive,
+  LegacyCredentialConfig,
   ApiKeyVerifierTest,
   ApiKeyVerifier,
 } from "@repo/credentials";
@@ -17,7 +18,7 @@ import { turboRoundTrip } from "./support/turbo.ts";
 import { Database, InstanceSettingsRepoLive, ReplayGuardLive, schema } from "@repo/db";
 import { DatabaseTest } from "@repo/db/testing";
 import { RateLimiter, RateLimiterTest } from "@repo/ratelimit";
-import { cacheCredentialGuard, cacheAuthenticationFailureGuard } from "../src/request-guards.ts";
+import { cacheCredentialGuard, cacheAuthenticationGuard } from "../src/request-guards.ts";
 import { defaultInstancePolicy, CanonicalOrigin } from "@repo/deploy-config";
 import { AuthorizationAuditLive, ProjectLimits } from "@repo/projects";
 import { eq } from "drizzle-orm";
@@ -464,7 +465,7 @@ test("purging one location makes another location miss or return 404 after the g
     ),
   ));
 
-test("request guards cap org policies, isolate credentials and IPs, and reject batches before R2", () =>
+test("request guards cap org policies, isolate credentials, and reject batches before R2", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -526,17 +527,10 @@ test("request guards cap org policies, isolate credentials and IPs, and reject b
         waitUntil: () => Effect.void,
         authorize: authorizeProjectCache,
         guard: cacheCredentialGuard,
-        guardAuthFailure: cacheAuthenticationFailureGuard,
+        guardAuthentication: cacheAuthenticationGuard,
       });
 
-      const request = (
-        token: string,
-        path: string,
-        method = "GET",
-        body?: string,
-        ip = "192.0.2.1",
-        spoof = "fake",
-      ) =>
+      const request = (token: string, path: string, method = "GET", body?: string) =>
         api.pipe(
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
@@ -547,8 +541,7 @@ test("request guards cap org policies, isolate credentials and IPs, and reject b
                   authorization: `Bearer ${token}`,
                   "content-type": "application/json",
                   "content-length": String(body?.length ?? 0),
-                  "cf-connecting-ip": ip,
-                  "x-forwarded-for": spoof,
+                  "cf-connecting-ip": "192.0.2.1",
                 },
                 body,
               }),
@@ -601,25 +594,125 @@ test("request guards cap org policies, isolate credentials and IPs, and reject b
         expect((yield* request(jwt, "/v8/artifacts/status")).status).toBe(200);
       expect((yield* request(jwt, "/v8/artifacts/status")).status).toBe(429);
       expect((yield* request("tcache_reader", "/v8/artifacts/status")).status).toBe(200);
-
-      for (let i = 0; i < 30; i++)
-        expect(
-          (yield* request(
-            `invalid${i}`,
-            "/v8/artifacts/status",
-            "GET",
-            undefined,
-            "192.0.2.1",
-            `spoof${i}`,
-          )).status,
-        ).toBe(401);
-      const ipLimited = yield* request("invalid", "/v8/artifacts/status");
-      expect(ipLimited.status).toBe(429);
-      expect(ipLimited.headers.get("retry-after")).toBe("60");
-      expect(
-        (yield* request("invalid", "/v8/artifacts/status", "GET", undefined, "192.0.2.2")).status,
-      ).toBe(401);
     }).pipe(Effect.provide(Layer.merge(v2Layer, RateLimiterTest))),
+  ));
+
+test("cache IP budget gates authorization until its window resets", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      let authorizations = 0;
+      const api = artifactApi({
+        bucket: memoryBucket(),
+        token: Redacted.make("unused"),
+        edgeCacheEnabled: false,
+        cache: createArtifactCache(false),
+        waitUntil: () => Effect.void,
+        guardAuthentication: cacheAuthenticationGuard,
+        authorize: () =>
+          Effect.sync(() => {
+            authorizations++;
+
+            return { prefix: "team", maxUploadBytes: 100 };
+          }),
+      });
+      const request = (ip: string, method = "GET", forwardedFor = ip) =>
+        api.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request("https://cache.test/v8/artifacts/status", {
+                method,
+                headers: {
+                  authorization: "Bearer valid",
+                  "cf-connecting-ip": ip,
+                  "x-forwarded-for": forwardedFor,
+                },
+              }),
+            ),
+          ),
+          Effect.provideService(CanonicalOrigin, "https://cache.test"),
+        );
+
+      const ip = "192.0.2.1";
+      for (let i = 0; i < 600; i++) expect((yield* request(ip)).status).toBe(200);
+      const limited = yield* request(ip, "GET", "192.0.2.2");
+      expect(limited.status).toBe(429);
+      expect(limited.headers["retry-after"]).toBe("60");
+      expect((yield* request(ip, "OPTIONS")).status).toBe(204);
+      expect(authorizations).toBe(600);
+      expect((yield* request("192.0.2.2")).status).toBe(200);
+      yield* TestClock.adjust(60_000);
+      expect((yield* request(ip)).status).toBe(200);
+      expect(authorizations).toBe(602);
+    }).pipe(Effect.provide(RateLimiterTest), Effect.provide(TestClock.layer())),
+  ));
+
+test("empty legacy team selectors resolve identically through both authorization paths", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const bucket = memoryBucket();
+      const token = Redacted.make("legacy");
+      const options = {
+        bucket,
+        token,
+        legacyTokenEnabled: true,
+        edgeCacheEnabled: false,
+        cache: createArtifactCache(false),
+        waitUntil: () => Effect.void,
+      };
+      const production = artifactApi({ ...options, authorize: authorizeProjectCache });
+      const fallback = artifactApi(options);
+      const request = (handler: typeof production, query: string, method: "PUT" | "GET") => {
+        const url = `https://cache.test/v8/artifacts/abc${query}`;
+        const headers = { authorization: "Bearer legacy" };
+        const request =
+          method === "PUT"
+            ? new Request(url, {
+                method,
+                headers: { ...headers, "content-length": "1" },
+                body: "x",
+              })
+            : new Request(url, { headers });
+
+        return handler.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(request),
+          ),
+          Effect.provideService(CanonicalOrigin, "https://cache.test"),
+        );
+      };
+
+      for (const [empty, resolved] of [
+        ["?teamId=", ""],
+        ["?slug=", ""],
+        ["?teamId=&slug=team", "?slug=team"],
+      ] as const) {
+        expect((yield* request(production, empty, "PUT")).status).toBe(202);
+        expect((yield* request(fallback, resolved, "GET")).status).toBe(200);
+        expect((yield* request(production, resolved, "GET")).status).toBe(200);
+        expect((yield* request(fallback, empty, "GET")).status).toBe(200);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          Layer.succeed(AuthorizationCeilings, {}),
+          CredentialResolverLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                CacheTokensTest,
+                ApiKeyVerifierTest(),
+                Layer.succeed(LegacyCredentialConfig, {
+                  enabled: true,
+                  token: Redacted.make("legacy"),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
   ));
 
 test("bound cache JWT cannot be used without its fresh request proof, including repeat reads", () =>

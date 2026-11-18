@@ -1,12 +1,17 @@
 /* oxlint-disable t3code/no-manual-effect-runtime-in-tests -- Exercises the HTTP adapter at the Bun/Effect boundary. */
 import { expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
+import { Auth } from "@repo/auth";
+import { Database, schema } from "@repo/db";
 import { CanonicalOrigin } from "@repo/deploy-config";
 import { DatabaseTest } from "@repo/db/testing";
 import { AuthTest } from "@repo/auth/testing";
 import { resolveCapabilities } from "@repo/infra";
 import { CapabilityReport } from "@repo/shared";
 import { AnalyticsEmitter } from "@repo/analytics";
+import { RateLimiterTest } from "@repo/ratelimit";
 import { Mailer } from "@repo/mailer";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -28,10 +33,14 @@ const report = resolveCapabilities(
 
 const token = Redacted.make("capabilities-test-token");
 
-const request = async (headers: Record<string, string> = {}, method = "GET") => {
+const request = async (
+  headers: Record<string, string> = {},
+  method = "GET",
+  legacyEnabled = true,
+) => {
   const response = await Effect.runPromise(
-    capabilitiesRoute(report, token).pipe(
-      Effect.provide(AuthTest),
+    capabilitiesRoute(report, legacyEnabled ? token : undefined, AuthTest).pipe(
+      Effect.provide(RateLimiterTest),
       Effect.provideService(
         HttpServerRequest.HttpServerRequest,
         HttpServerRequest.fromWeb(
@@ -59,6 +68,83 @@ test("capabilities reject anonymous, invalid credentials and mutations", async (
   expect(mutation.status).toBe(405);
   expect(mutation.headers.get("allow")).toBe("GET");
 });
+
+test("the configured instance token is rejected with legacy authentication disabled", async () => {
+  const response = await request({ authorization: "Bearer capabilities-test-token" }, "GET", false);
+  expect(response.status).toBe(401);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
+
+test("signed-in sessions can read capabilities when legacy authentication is disabled", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const db = yield* Database;
+      const now = yield* Clock.currentTimeMillis;
+      const token = "session-token";
+      yield* db.batch((db) => [
+        db.insert(schema.user).values({
+          id: "user",
+          email: "user@example.com",
+          name: "User",
+          createdAt: new Date(now),
+          updatedAt: new Date(now),
+        }),
+        db.insert(schema.session).values({
+          id: "session",
+          token,
+          userId: "user",
+          expiresAt: new Date(now + 60_000),
+          createdAt: new Date(now),
+          updatedAt: new Date(now),
+        }),
+      ]);
+      const signature = createHmac("sha256", "auth-test-secret-0123456789abcdef0123456789")
+        .update(token)
+        .digest("base64");
+      const response = yield* capabilitiesRoute(report, undefined, AuthTest).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(
+            new Request("http://localhost/api/instance/capabilities", {
+              headers: {
+                cookie: `better-auth.session_token=${encodeURIComponent(`${token}.${signature}`)}`,
+              },
+            }),
+          ),
+        ),
+      );
+
+      expect(response.status).toBe(200);
+    }).pipe(Effect.provide(Layer.merge(AuthTest, RateLimiterTest))),
+  ));
+
+test("capabilities return 429 before initializing session auth when the IP budget is spent", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const authLayer = Layer.effect(Auth, Effect.die("Session auth must be lazy"));
+      const call = (headers: Record<string, string>) =>
+        capabilitiesRoute(report, token, authLayer).pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request("http://localhost/api/instance/capabilities", {
+                headers: {
+                  "cf-connecting-ip": "192.0.2.1",
+                  ...headers,
+                },
+              }),
+            ),
+          ),
+        );
+      for (let i = 0; i < 30; i++)
+        expect((yield* call({ authorization: "Bearer capabilities-test-token" })).status).toBe(200);
+
+      const limited = yield* call({});
+      expect(limited.status).toBe(429);
+      expect(limited.headers["retry-after"]).toBe("60");
+      expect(limited.headers["cache-control"]).toBe("no-store");
+    }).pipe(Effect.provide(RateLimiterTest)),
+  ));
 
 test("disabled layers need no platform bindings and never pretend to deliver email", async () => {
   const layers = capabilityLayers.pipe(

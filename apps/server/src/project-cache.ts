@@ -6,7 +6,7 @@ import { CanonicalOrigin } from "@repo/deploy-config";
 import { ProjectLimits } from "@repo/projects";
 import { and, eq } from "drizzle-orm";
 import { Effect, Redacted } from "effect";
-import { ApiError } from "./api.ts";
+import { ApiError, legacyTeamScope } from "./api.ts";
 
 /** Query selectors may confirm a tenant; authenticated claims alone choose storage. */
 export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
@@ -32,14 +32,7 @@ export const authorizeProjectCache = Effect.fn("Cache.authorizeProject")(
     if (credential.credentialType === "legacy") {
       if (request?.scheme === "dpop" || request?.dpop)
         return yield* new DpopInvalid({ reason: "binding" });
-      const team = url.searchParams.get("teamId") ?? url.searchParams.get("slug") ?? "default";
-
-      if (!/^[\w.-]+$/.test(team))
-        return yield* new ApiError({
-          status: 400,
-          code: "bad_request",
-          message: "Invalid legacy team",
-        });
+      const team = yield* legacyTeamScope(url);
       const legacyPolicy = yield* (yield* InstanceSettingsRepo).policy(
         "",
         yield* AuthorizationCeilings,

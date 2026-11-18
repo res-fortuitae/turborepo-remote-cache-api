@@ -271,8 +271,8 @@ destroy target `stages.production`; pass `--stage <name>` for another stage.
 To run the admin self-test from your terminal, sign in to the instance first:
 
 ```sh
-bun packages/cli/src/bin.ts login --api https://cache.example.com
-bun packages/cli/src/bin.ts doctor --server https://cache.example.com
+tcache login --api https://cache.example.com
+tcache doctor --server https://cache.example.com
 ```
 
 ### 10. Use it from other places
@@ -525,8 +525,9 @@ cross-device cache, integrity and audit journeys, fixes found, and remaining gat
 ## Instance capabilities
 
 Open **Capabilities** in the console (`/#capabilities`), or query
-`GET /api/instance/capabilities` with a signed-in session or the instance's bearer
-token. Responses use `Cache-Control: no-store` and a versioned shared contract.
+`GET /api/instance/capabilities` with a signed-in session. Instances with the
+legacy token feature enabled also accept the instance bearer token. Responses
+use `Cache-Control: no-store` and a versioned shared contract.
 
 Deployment detects Workers billing and the serving custom domain's zone plan
 separately, using Alchemy's selected account and credentials. It makes read-only

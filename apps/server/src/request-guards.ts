@@ -1,6 +1,7 @@
 import { RateLimiter, type RateBucket } from "@repo/ratelimit";
 import { Effect } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ApiError, type ArtifactScope } from "./api.ts";
 
 const check = (key: string, bucket: RateBucket) =>
@@ -38,5 +39,21 @@ const ipGuard = (name: string, limit: number) =>
     yield* check(request.headers["cf-connecting-ip"] ?? "unknown", { name, limit, period: 60 });
   });
 
-export const cacheAuthenticationFailureGuard = ipGuard("cache-auth-failure", 30);
+export const cacheAuthenticationGuard = ipGuard("cache-authentication", 600);
+export const capabilitiesGuard = ipGuard("instance-capabilities", 30);
+export const healthGuard = ipGuard("instance-health", 30);
 export const oidcExchangeGuard = ipGuard("oidc-exchange", 30);
+
+export const guardErrorResponse = (error: ApiError) => {
+  const headers: Record<string, string> = { "cache-control": "no-store" };
+
+  if (error.retryAfter !== undefined) headers["retry-after"] = String(error.retryAfter);
+
+  return HttpServerResponse.json(
+    { code: error.code, message: error.message },
+    {
+      status: error.status,
+      headers,
+    },
+  );
+};
