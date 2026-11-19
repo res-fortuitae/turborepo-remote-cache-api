@@ -1,0 +1,21 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/*/oxlint.config.mts",
+        "$TURBO_ROOT$/oxlint.config.mts",
+        "$TURBO_ROOT$/.gitignore",
+        "$TURBO_ROOT$/packages/*/oxlint.config.mts",
+        "$TURBO_ROOT$/deploy.config.example.ts",
+        "$TURBO_ROOT$/packages/action/src/**",
+        "$TURBO_ROOT$/packages/action/dist/**",
+        "$TURBO_ROOT$/packages/cli/src/**",
+        "$TURBO_ROOT$/packages/client-core/src/**",
+        "$TURBO_ROOT$/bun.lock",
+        "$TURBO_ROOT$/package.json"
+      ]
+    }
+  }
+}

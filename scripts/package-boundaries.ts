@@ -114,12 +114,21 @@ export function checkBoundaries(root: string): string[] {
     }
   }
 
+  const rootManifest = NodePath.join(root, "package.json");
+  const rootWorkspace: Workspace = {
+    directory: root,
+    manifest: NodeFS.existsSync(rootManifest)
+      ? JSON.parse(NodeFS.readFileSync(rootManifest, "utf8"))
+      : { name: "workspace-root" },
+  };
   const errors: string[] = [];
   const byName = new Map(workspaces.map((workspace) => [workspace.manifest.name, workspace]));
   const edges = new Map<string, Set<string>>();
 
   function edge(source: Workspace, target: string, location: string, tooling = false) {
     if (source.manifest.name === target) return;
+    // Root owns composition and repository tooling, but public entry points still apply.
+    if (source === rootWorkspace && byName.has(target)) return;
     const name = source.manifest.name;
 
     if (tooling && target === "@repo/config") return;
@@ -142,10 +151,14 @@ export function checkBoundaries(root: string): string[] {
     edges.set(name, targets);
   }
 
-  for (const workspace of workspaces) {
+  for (const workspace of [...workspaces, rootWorkspace]) {
     const { manifest } = workspace;
 
-    if (!dependencies[manifest.name] && !entrypoints.has(manifest.name)) {
+    if (
+      workspace !== rootWorkspace &&
+      !dependencies[manifest.name] &&
+      !entrypoints.has(manifest.name)
+    ) {
       errors.push(`${manifest.name}: add an explicit package boundary policy`);
     }
 
@@ -166,7 +179,14 @@ export function checkBoundaries(root: string): string[] {
       }
     }
 
-    for (const file of files(workspace.directory)) {
+    const sources =
+      workspace === rootWorkspace
+        ? files(root).filter(
+            (file) =>
+              !["apps", "packages"].includes(NodePath.relative(root, file).split(NodePath.sep)[0]!),
+          )
+        : files(workspace.directory);
+    for (const file of sources) {
       const source = ts.createSourceFile(
         file,
         NodeFS.readFileSync(file, "utf8"),
@@ -215,13 +235,71 @@ export function checkBoundaries(root: string): string[] {
         } else if (value.startsWith(".") || NodePath.isAbsolute(value)) {
           const resolved = NodePath.resolve(NodePath.dirname(file), value);
 
-          if (!resolved.startsWith(workspace.directory + NodePath.sep)) {
+          if (workspace === rootWorkspace) {
+            const target = workspaces.find((candidate) =>
+              resolved.startsWith(candidate.directory + NodePath.sep),
+            );
+            // Reviewed composition adapters and repository acceptance fixtures only.
+            const rootAdapters: Record<string, readonly string[]> = {
+              "alchemy.run.ts": [
+                "apps/server/src/deployment.ts",
+                "apps/server/scripts/config.ts",
+                "apps/server/src/capabilities.ts",
+                "apps/server/src/worker.ts",
+              ],
+              "scripts/infra-identities.test.ts": [
+                "apps/server/src/worker.ts",
+                "packages/coordinator/src/durable-object.ts",
+              ],
+              "scripts/local-stack-config.test.ts": [
+                "apps/server/src/deploy-config.ts",
+                "apps/server/scripts/config.ts",
+              ],
+              "scripts/signing-key.test.ts": ["apps/server/scripts/signing-key.ts"],
+              "tests/stack.test.ts": [
+                "apps/server/tests/support/contract.ts",
+                "apps/server/tests/support/permission-matrix.ts",
+                "apps/server/tests/support/target.ts",
+                "apps/server/tests/support/turbo.ts",
+              ],
+            };
+            const rootAdapter = rootAdapters[NodePath.relative(root, file)]?.includes(
+              NodePath.relative(root, resolved),
+            );
+            if (target && !rootAdapter)
+              errors.push(`${location}: root import must use a public entry point: ${value}`);
+          } else if (!resolved.startsWith(workspace.directory + NodePath.sep)) {
             // Existing server tooling reads the organization config at the root.
             const config = ["deploy.config.ts", "deploy.config.example.ts"].map((name) =>
               NodePath.join(root, name),
             );
 
-            if (manifest.name !== "@repo/server" || !config.includes(resolved))
+            // Local acceptance tests execute these artifacts; apps/server/turbo.json hashes them.
+            const acceptanceAsset =
+              ["apps/server/tests/oidc-e2e.test.ts", "apps/server/tests/support/turbo.ts"].includes(
+                NodePath.relative(root, file),
+              ) &&
+              ["packages/action/dist", "packages/cli/src/bin.ts", "node_modules/.bin/turbo"].some(
+                (path) => resolved === NodePath.join(root, path),
+              );
+            const repositoryAssets: Record<string, readonly string[]> = {
+              "apps/server/tests/origin-routing.test.ts": ["apps/dashboard/public/_headers"],
+              "apps/server/tests/deploy-config.test.ts": ["."],
+              "apps/server/scripts/setup.ts": [".", "package.json"],
+              "apps/server/scripts/upstream-sync.ts": ["."],
+              "apps/server/scripts/alchemy.ts": ["."],
+              "packages/infra/src/index.ts": ["apps/dashboard/dist"],
+              "packages/cli/scripts/package.ts": ["LICENSE", "docs/cli-distribution.md"],
+              "packages/cli/scripts/build.ts": ["."],
+            };
+            const repositoryAsset = repositoryAssets[NodePath.relative(root, file)]?.some(
+              (path) => resolved === NodePath.resolve(root, path),
+            );
+            if (
+              !acceptanceAsset &&
+              !repositoryAsset &&
+              (manifest.name !== "@repo/server" || !config.includes(resolved))
+            )
               errors.push(`${location}: relative import escapes workspace: ${value}`);
           }
         } else if (value.startsWith("#"))
@@ -229,6 +307,16 @@ export function checkBoundaries(root: string): string[] {
       }
 
       function visit(node: ts.Node) {
+        if (
+          ts.isNewExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "URL"
+        ) {
+          const [path, base] = node.arguments ?? [];
+          if (base?.getText(source) === "import.meta.url") {
+            if (path && ts.isStringLiteralLike(path)) specifier(path.text, node);
+          }
+        }
         if (
           (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
           node.moduleSpecifier &&
@@ -253,7 +341,10 @@ export function checkBoundaries(root: string): string[] {
         if (
           ts.isCallExpression(node) &&
           (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-            (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+            (ts.isIdentifier(node.expression) && node.expression.text === "require") ||
+            (ts.isPropertyAccessExpression(node.expression) &&
+              node.expression.expression.getText(source) === "mock" &&
+              node.expression.name.text === "module"))
         ) {
           const argument = node.arguments[0];
 
